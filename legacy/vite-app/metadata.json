@@ -1,0 +1,6 @@
+{
+  "name": "LogiXpress Tunisie",
+  "description": "Plateforme moderne de gestion logistique et de livraison express en Tunisie : colis, runsheets, dépôts, inter-dépôts, ramassages et paiements.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

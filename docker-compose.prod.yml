@@ -1,0 +1,51 @@
+# ==============================================================================
+# LogiXpress Tunisie - Stack complète conteneurisée (production / recette)
+#
+# À utiliser en complément de docker-compose.yml :
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# En développement, on ne lance QUE l'infrastructure (postgres + redis) et les
+# processus Node tournent sur la machine hôte via `npm run dev:api` / `dev:web`.
+# ==============================================================================
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: logixpress-api
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      API_PORT: 4000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-logixpress_user}:${POSTGRES_PASSWORD:-logixpress_secret_pwd}@postgres:5432/${POSTGRES_DB:-logixpress_db}?schema=public
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      CORS_ORIGIN: http://localhost:3000
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - logixpress-network
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    container_name: logixpress-web
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: http://localhost:4000/api/v1
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    networks:
+      - logixpress-network

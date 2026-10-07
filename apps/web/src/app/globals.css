@@ -1,0 +1,230 @@
+@import 'tailwindcss';
+
+/* Le design system vit dans packages/ui : ses classes utilitaires doivent être
+   incluses dans le bundle Tailwind.
+
+   Le chemin se compte depuis ce fichier (`apps/web/src/app/globals.css`), pas
+   depuis la racine du dépôt. Il visait `apps/packages/ui/src`, qui n'existe pas :
+   Tailwind ignorait silencieusement le répertoire, et toutes les classes
+   utilisées uniquement dans le design system disparaissaient du bundle — les
+   largeurs fixes, les alignements de chiffres des montants, les tailles de
+   cibles tactiles. Rien ne signalait l'omission : le reste de l'application
+   étant écrit directement dans `apps/web/src`, l'application paraissait
+   correctement stylée. */
+@source '../../../../packages/ui/src';
+
+/* ---------------------------------------------------------------------------
+   Animations
+
+   Les composants utilisent des noms de classes issus de bibliothèques
+   d'animation tierces (`animate-in`, `fade-in`, `zoom-in-95`,
+   `slide-in-from-right`) qui ne sont pas installées : ces classes ne
+   produisaient aucun effet, et modales, tiroirs et menus apparaissaient
+   instantanément. Elles sont définies ici plutôt que d'ajouter une dépendance
+   pour quatre keyframes.
+
+   Les durées sont courtes. Au-delà d'environ 200 ms, une ouverture commence à
+   être perçue comme un temps d'attente — et sur des écrans où l'on enchaîne
+   les ouvertures, c'est exactement l'effet qu'il faut éviter.
+--------------------------------------------------------------------------- */
+@theme {
+  --animate-overlay-in: overlay-in 150ms ease-out;
+  --animate-overlay-out: overlay-out 120ms ease-in;
+  --animate-panel-in: panel-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-panel-out: panel-out 140ms ease-in;
+  --animate-menu-in: menu-in 130ms cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-sheet-up: sheet-up 220ms cubic-bezier(0.16, 1, 0.3, 1);
+
+  /*
+   * Pile de polices.
+   *
+   * Les faces latines viennent d'abord, comme aujourd'hui : elles sont déjà
+   * installées et dessinées pour les chiffres tabulaires des montants.
+   *
+   * Les faces arabes viennent ensuite, et font foi pour tout caractère arabe.
+   * Sans cela, un navigateur sans police arabe installée bascule sur une face de
+   * remplacement aux métriques retirées — et surtout sans les crochets des
+   * lettres finales : `م` suivi de `د` se rend alors `مد` collé, ce qui se lit mal.
+   * Ces faces sont déclarées pour la police système, pas téléchargées : la
+   * plateforme n'embarque pas de fichier de police, et la liste couvre les trois
+   * systèmes d'exploitation sur lesquels elle tourne.
+   *
+   * `Tahoma` est en tête de liste des faces arabes parce que c'est la seule
+   * présente d'origine sous Windows et sur une grande partie des postes en
+   * place, où le rendu par défaut de l'arabe est régulièrement léger.
+   */
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial,
+    'Noto Sans', 'Segoe UI Arabic', 'Geeza Pro', 'Al Bayan', Tahoma, 'Arial Unicode MS',
+    sans-serif;
+}
+
+/*
+ * Arabe : hauteur de ligne et interlettrage.
+ *
+ * L'écriture arabe a des hampes et des jambages — l'alef monte, le jim et le ra
+ * descendent — et ses glyphes sont plus denses que les latins à taille égale. La
+ * hauteur de ligne héritée de l'échelle latine est trop serrée : les lettres de
+ * deux lignes consécutives se touchent, ce qui est rédhibitoire dans un tableau
+ * de statuts de colis ou une frise chronologique dont le texte est déjà petit.
+ * Une hauteur de ligne un peu plus grande restitue la densité voulue — le texte
+ * occupe à peu près la même hauteur qu'en français, mais sans se percuter.
+ *
+ * L'interlettrage négatif en est la contrepartie. L'arabe est cursif : dans un
+ * mot, les lettres se relient, et les espacer casse les ligatures. C'est
+ * l'inverse du latin, où l'interlettrage aide à la lisibilité.
+ */
+[dir='rtl'] {
+  line-height: 1.7;
+  letter-spacing: -0.01em;
+}
+
+/*
+ * Valeurs latines dans une phrase arabe.
+ *
+ * Quelques valeurs arrivent du serveur en caractères latins et doivent rester
+ * lisibles : numéros de suivi, le `DT` d'un montant, une adresse e-mail nue.
+ * Forcer une base de gauche à droite sur ces éléments évite que les morceaux ne
+ * se déplacent quand une phrase arabe s'écoule autour d'eux.
+ */
+[dir='rtl'] code,
+[dir='rtl'] kbd,
+[dir='rtl'] samp,
+[dir='rtl'] pre {
+  direction: ltr;
+  text-align: left;
+}
+
+@keyframes overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes overlay-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes panel-in {
+  from { opacity: 0; transform: translateX(16px) scale(0.985); }
+  to { opacity: 1; transform: translateX(0) scale(1); }
+}
+@keyframes panel-out {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(16px); }
+}
+@keyframes menu-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes sheet-up {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+/* Rétrocompatibilité : les classes historiques des composants. */
+.animate-in { animation-duration: 180ms; animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1); }
+.animate-in.fade-in { animation-name: overlay-in; }
+.animate-in.zoom-in-95 { animation-name: panel-in; }
+.animate-in.slide-in-from-right { animation-name: panel-in; }
+
+/* ---------------------------------------------------------------------------
+   Base
+--------------------------------------------------------------------------- */
+@layer base {
+  html {
+    /* Réserve la gouttière de défilement.
+
+       Une barre de défilement qui disparaît en changeant de page décale tout le
+       contenu de 15 px vers la gauche. Sur une application où l'on change
+       d'écran plusieurs fois par heure, ce décalage cumulé est réel — et il
+       arrive au pire moment, quand on compare deux tableaux. */
+    scrollbar-gutter: stable;
+  }
+
+  body {
+    /* `-webkit-font-smoothing` est déjà posé sur le conteneur applicatif ;
+       on garde ici le pliage des chiffres cohérent avec les montants. */
+    font-variant-numeric: tabular-nums;
+  }
+
+  /*
+   * Un anneau de focus visible et constant.
+
+   Tailwind v4 neutralise le contour par défaut dans la plupart des composants
+   de l'application, et le remplace par `focus:ring-1` — un anneau d'un pixel,
+   qui disparaît presque sur un écran de bureau et pas du tout sur un écran
+   d'entrepôt. Un focus clavier doit être visible sans être agressif : deux
+   pixels suffisent, et le contraste doit rester au-dessus du texte voisin.
+   */
+  :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+    outline: 2px solid var(--color-red-600);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* Un élément qui reçoit le focus au clavier dans une zone défilante doit
+     laisser voir où il est, même sans contour : les lignes de tableau
+     sélectionnées ici n'en ont pas. */
+  :where(tr, [data-focusable-row]):focus-visible {
+    outline: 2px solid var(--color-red-600);
+    outline-offset: -2px;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Zones défilantes au clavier
+
+   Un conteneur en débordement horizontal est inatteignable au clavier : la
+   barre de défilement n'apparaît que si la souris est dessus, et les flèches
+   du clavier font défiler la page entière. Une région défilante doit donc être
+   focusable et nommée — c'est ce qui permet à quelqu'un au clavier de savoir
+   qu'il y a des colonnes à droite.
+--------------------------------------------------------------------------- */
+@utility scroll-region {
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+@utility scroll-region-x {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+}
+
+/* Barre de défilement discrète et constante, plutôt que celle par défaut qui
+   n'apparaît qu'à l'approche de la souris. */
+@layer components {
+  .scroll-region::-webkit-scrollbar,
+  .scroll-region-x::-webkit-scrollbar {
+    height: 10px;
+    width: 10px;
+  }
+  .scroll-region::-webkit-scrollbar-track,
+  .scroll-region-x::-webkit-scrollbar-track {
+    background: var(--color-slate-100);
+    border-radius: 9999px;
+  }
+  .scroll-region::-webkit-scrollbar-thumb,
+  .scroll-region-x::-webkit-scrollbar-thumb {
+    background: var(--color-slate-300);
+    border-radius: 9999px;
+  }
+  .scroll-region::-webkit-scrollbar-thumb:hover,
+  .scroll-region-x::-webkit-scrollbar-thumb:hover {
+    background: var(--color-slate-400);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Impression
+
+   Un relevé financier s'imprime, et sort souvent de l'écran pour être classé.
+   Sans cette règle, un tiroir ou un menu ouvert s'imprime par-dessus le
+   rapport, et le tiroir reste en place sur toutes les pages suivantes.
+--------------------------------------------------------------------------- */
+@media print {
+  [data-print-hidden] {
+    display: none !important;
+  }
+  .print\:break-before { break-before: page; }
+}

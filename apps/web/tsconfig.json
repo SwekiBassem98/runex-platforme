@@ -1,0 +1,25 @@
+{
+  "extends": "../../packages/tsconfig/nextjs.json",
+  "compilerOptions": {
+    "jsx": "preserve",
+    "types": ["node"],
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": ["./src/*"],
+      "@logixpress/types": ["../../packages/types/src/index.ts"],
+      "@logixpress/config": ["../../packages/config/src/index.ts"],
+      "@logixpress/ui": ["../../packages/ui/src/index.ts"]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    "src/**/*",
+    ".next/types/**/*.ts",
+    "next.config.mjs"
+  ],
+  "exclude": ["node_modules", ".next"]
+}

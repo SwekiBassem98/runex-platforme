@@ -1,0 +1,1194 @@
+// ==============================================================================
+// LogiXpress Tunisie - Schéma Relationnel PostgreSQL (Prisma ORM)
+// Monnaie : Dinar Tunisien (TND) avec 3 décimales (ex: 58.000 DT)
+// Clés primaires : UUIDv4
+// Identifiants Métier : Séparés, uniques et lisibles (ex: COL-2026-000001, RUN-2026-000123)
+// Horodatage : Timestamptz (Timezone-aware)
+// ==============================================================================
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ==============================================================================
+// 1. ÉNUMÉRATIONS (ENUMS)
+// ==============================================================================
+
+enum RoleType {
+  SUPER_ADMIN
+  ADMIN_GENERAL
+  DISPATCHER
+  MAGASINIER
+  CAISSIER
+  EXPEDITEUR_ADMIN
+  EXPEDITEUR_USER
+  LIVREUR
+}
+
+enum PackageType {
+  NORMAL
+  EXCHANGE
+  REPORTED
+  RETURN
+}
+
+enum PackageSize {
+  LEGERE // < 1 kg
+  MOYENNE // 1 - 5 kg
+  LOURDE // 5 - 15 kg
+  VOLUMINEUSE // > 15 kg ou encombrant
+}
+
+enum PackageStatus {
+  CREE // Enregistré par l'expéditeur
+  RAMASSAGE_PROGRAMME // Inclus dans une demande de ramassage
+  RAMASSE // Pris en charge par le livreur collecteur
+  RECU_DEPOT // Scanné & accepté au magasin (hub central ou agence)
+  EN_LOT_INTER_DEPOT // Conditionné dans un lot pour transfert
+  EN_TRANSIT_INTER_DEPOT // En acheminement vers le dépôt de destination
+  RECU_DEPOT_DESTINATION // Arrivé et pointé au dépôt de livraison
+  AFFECTE_RUNSHEET // Intégré à la feuille de route d'un livreur
+  EN_COURS_LIVRAISON // En cours de distribution par le livreur
+  LIVRE // Livraison conforme & paiement perçu
+  LIVRAISON_PARTIELLE // Une partie livrée et encaissée, reste retourné
+  REPORTE // Livraison reportée (date ultérieure)
+  ECHEC_LIVRAISON // Refusé ou injoignable (tentative max)
+  RETOUR_DEPOT // Rapatrié au dépôt après échec
+  EN_RUNSHEET_RETOUR // En cours de restitution vers l'expéditeur
+  RETOURNE_EXPEDITEUR // Restitué définitivement au fournisseur
+  ANNULE // Annulé avant départ
+}
+
+enum DeliveryAttemptResult {
+  REUSSIE
+  LIVRAISON_PARTIELLE
+  REPORTEE
+  REFUSEE
+  INJOIGNABLE
+  ADRESSE_INCORRECTE
+  PAS_D_ARGENT
+}
+
+enum RunsheetStatus {
+  BROUILLON
+  EN_ATTENTE
+  VALIDEE_DEPART
+  EN_COURS
+  RETOUR_DEPOT
+  CLOTUREE_CONFORME
+  CLOTUREE_DEFICIT
+  ANNULEE
+}
+
+enum RunsheetType {
+  DISTRIBUTION
+  RAMASSAGE
+  RETOUR_EXPEDITEUR
+  TRANSFERT_DEPOT
+}
+
+enum PickupStatus {
+  A_CONFIRMER
+  EN_ATTENTE
+  ASSIGNE
+  EN_COURS
+  EFFECTUE
+  ANNULE
+}
+
+enum InterDepotStatus {
+  /// Ouvert, charge constituée, colis encore au dépôt d'origine.
+  CRE
+  /// Lot conditionné et prêt à charger.
+  PREPARE
+  /// Véhicule en route entre les deux dépôts.
+  EN_TRANSIT
+  /// Arrivé et pointé au dépôt de destination.
+  RECU
+  /// Transfert abandonné : les colis retournent au dépôt d'origine.
+  ANNULE
+}
+
+/// État opérationnel d'un dépôt.
+enum DepositStatus {
+  /// Ouvert : accepte et expédie des charges.
+  ACTIF
+  /// Ouvert en Ammonc : accepte les réceptions, n'expédie plus.
+  MAINTENANCE
+  /// Fermé : ni entrée ni sortie.
+  FERME
+}
+
+enum PaymentMethod {
+  ESPECE
+  CHEQUE
+  VIREMENT
+  TRAITE
+  // Ouverts par avance. Rien ne les active : ils ne sont proposés que si
+  // `packages/types` les déclare utilisables. Les réserver ici évite une
+  // migration `ALTER TYPE` bloquante le jour où le paiement par carte arrive.
+  CARTE_BANCAIRE
+  PAIEMENT_EN_LIGNE
+}
+
+/// Cycle d'un encaissement COD.
+///
+/// `EN_ATTENTE` est le régime normal : le livreur a pris l'argent, la caisse
+/// ne l'a pas encore validé. Passer à `VALIDE` suppose une action serveur
+/// qui écrit le validateur et l'horodatage — la base le refuse sans eux.
+enum PaymentStatus {
+  EN_ATTENTE
+  VALIDE
+  ECARTE
+  REMBOURSE
+  ANNULE
+}
+
+enum PaymentVoucherStatus {
+  EN_ATTENTE
+  CONFIRME
+  PAYE
+  ANNULE
+}
+
+/// Un encaissement, un colis.
+///
+/// L'encaissement COD est l'acte par lequel un livreur prend l'argent d'un
+/// client. Il est distinct du bordereau, qui est le décaissement *de* cet
+/// argent *vers* l'expéditeur : l'un est un transfert de caisse entre les
+/// mains du livreur et la caisse, l'autre une dette de LogiXpress.
+///
+/// Tous les montants sont en `Decimal(12,3)` : la monnaie ne s'écrit jamais
+/// en flottant, ni en base ni dans le code qui la manipule.
+model Payment {
+  id            String        @id @default(uuid()) @db.Uuid
+  paymentNumber String        @unique @db.VarChar(50) // Format: PAY-2026-000482
+  // Un colis porte au plus un encaissement : c'est ce qui empêche de
+  // comptabiliser deux fois la même livraison.
+  packageId     String        @unique @db.Uuid
+  shipperId     String        @db.Uuid
+  // La tournée n'est pas obligatoire : un colis livré hors feuille de
+  // tournée — un ramassage, une livraison en urgence — est encaissé quand
+  // même, et son paiement doit tout de même exister.
+  runsheetId    String?       @db.Uuid
+  driverId      String?       @db.Uuid
+  status        PaymentStatus @default(EN_ATTENTE)
+  method        PaymentMethod @default(ESPECE)
+
+  // Ce que le client devait laisser. Solde de référence de tout le reste.
+  amountExpected  Decimal @db.Decimal(12, 3)
+  // Ce que le livreur a réellement pris. Le reliquat dû est
+  // `amountExpected − amountCollected − amountRefunded` : c'est cet écart
+  // que la caisse écarte, jamais une valeur saisie à la main.
+  amountCollected Decimal @default(0.000) @db.Decimal(12, 3)
+  // Ce qui a été rendu au client : trop-perçu, ou colis repris après
+  // encaissement. Distingué du montant non encaissé, qui n'a jamais été
+  // pris, afin que le rapport de caisse ne confonde pas les deux.
+  amountRefunded  Decimal @default(0.000) @db.Decimal(12, 3)
+  deliveryFee     Decimal @default(0.000) @db.Decimal(12, 3)
+
+  collectedAt       DateTime  @db.Timestamptz(6)
+  // Écrits par le serveur, jamais par le client.
+  validatedAt       DateTime? @db.Timestamptz(6)
+  validatedByUserId String?   @db.Uuid
+  // Numéro de chèque ou de virement. Exigé par la contrainte SQL dès que le
+  // moyen de paiement en est un : un chèque sans numéro n'est pas
+  // rapprochable, et la caisse le découvre trois mois plus tard.
+  transactionRef    String?   @db.VarChar(100)
+  // Pourquoi la caisse a refusé cet encaissement. Sans elle, un écart n'est
+  // qu'un chiffre que quelqu'un a choisi de ne pas voir.
+  discrepancyReason String?   @db.VarChar(255)
+  notes             String?   @db.VarChar(500)
+  createdAt         DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime  @updatedAt @db.Timestamptz(6)
+
+  package     Package   @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  shipper     Shipper   @relation(fields: [shipperId], references: [id], onDelete: Restrict)
+  runsheet    Runsheet? @relation(fields: [runsheetId], references: [id], onDelete: SetNull)
+  driver      Driver?   @relation(fields: [driverId], references: [id], onDelete: SetNull)
+  validatedBy User?     @relation("PaymentValidators", fields: [validatedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([shipperId])
+  @@index([driverId])
+  @@index([collectedAt])
+}
+
+enum NotificationType {
+  // Vocabulaire courant : ce que le module `notifications` produit. Ces
+  // quatorze valeurs décrivent un fait observé et se rattachent à une entité.
+  NEW_COLIS_CREATED
+  COLIS_ASSIGNED
+  COLIS_MODIFIED
+  AMOUNT_CHANGED
+  QUANTITY_CHANGED
+  DELIVERY_STATUS_CHANGED
+  DELIVERY_POSTPONED
+  COLIS_RETURNED
+  PARTIAL_DELIVERY
+  PAYMENT_RECEIVED
+  PAYMENT_VALIDATED
+  RUNSHEET_ASSIGNED
+  RAMASSAGE_ASSIGNED
+  INTER_DEPOT_RECEIVED
+
+  // Valeurs historiques, conservées parce que des notifications déjà
+  // enregistrées les portent. Un équivalent existe pour la plupart — voir
+  // `LEGACY_NOTIFICATION_EVENTS` côté API, qui les a fait migrer — mais
+  // supprimer l'énumération laisserait ces lignes illisibles. Elles ne sont
+  // plus émises.
+  COLIS_CREE
+  COLIS_ASSIGNE
+  PRIX_MODIFIE_URGENT
+  COLIS_REPORTE
+  COLIS_LIVRE
+  RAMASSAGE_DEMANDE
+  RAMASSAGE_CONFIRME
+  RAMASSAGE_AFFECTE
+  RAMASSAGE_TERMINE
+  RAMASSAGE_ANNULE
+  RUNSHEET_CLOTUREE
+  PAIEMENT_DISPONIBLE
+  TRANSFERT_CREE
+  TRANSFERT_RECEPTIONNE
+  SYSTEM_ALERT
+}
+
+// ==============================================================================
+// 2. UTILISATEURS, SESSIONS & CONTRÔLE D'ACCÈS (RBAC)
+// ==============================================================================
+
+model User {
+  id           String    @id @default(uuid()) @db.Uuid
+  email        String    @unique @db.VarChar(255)
+  passwordHash String    @db.VarChar(255)
+  fullName     String    @db.VarChar(150)
+  phone        String    @db.VarChar(30)
+  isActive     Boolean   @default(true)
+  avatarUrl    String?   @db.VarChar(500)
+  lastLoginAt  DateTime? @db.Timestamptz(6)
+  deletedAt    DateTime? @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @db.Timestamptz(6)
+
+  // Rattachement organisationnel
+  companyId String?  @db.Uuid
+  company   Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  branchId  String?  @db.Uuid
+  branch    Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  depositId String?  @db.Uuid
+  deposit   Deposit? @relation(fields: [depositId], references: [id], onDelete: SetNull)
+
+  // Rôles et Profils spécialisés
+  userRoles         UserRoleAssignment[]
+  sessions          Session[]
+  shipperUser       ShipperUser?
+  driverProfile     Driver?
+  auditLogs         AuditLog[]           @relation("UserAuditLogs")
+  validatedPayments Payment[]            @relation("PaymentValidators")
+  notifications     Notification[]
+
+  /// Jeton de notification poussée, et consentement à le recevoir.
+  ///
+  /// Rien ne les écrit encore : la diffusion temps réel passe par Socket.IO,
+  /// qui n'a pas besoin d'un jeton persisté. Ces deux colonnes sont le point
+  /// d'accroche du canal « push » — brancher FCM ou APNs consistera à les
+  /// alimenter et à enregistrer un canal de diffusion supplémentaire, sans
+  /// toucher au modèle des notifications ni aux appelants métier.
+  pushToken       String?   @db.VarChar(255)
+  pushEnabled     Boolean   @default(false)
+  /// Dépôts dont cet utilisateur est le responsable opérationnel.
+  managedDeposits Deposit[] @relation("DepositManager")
+
+  @@index([email])
+  @@index([phone])
+  @@index([companyId])
+  @@index([depositId])
+}
+
+model Role {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        RoleType @unique
+  displayName String   @db.VarChar(100)
+  description String?  @db.VarChar(255)
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(6)
+
+  users           UserRoleAssignment[]
+  rolePermissions RolePermission[]
+}
+
+model Permission {
+  id          String   @id @default(uuid()) @db.Uuid
+  code        String   @unique @db.VarChar(100) // ex: "packages:update_price"
+  module      String   @db.VarChar(50) // "packages", "runsheets", "finances"
+  description String   @db.VarChar(255)
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+
+  rolePermissions RolePermission[]
+
+  @@index([module])
+}
+
+model UserRoleAssignment {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @db.Uuid
+  roleId     String   @db.Uuid
+  assignedAt DateTime @default(now()) @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@index([userId])
+  @@index([roleId])
+}
+
+model RolePermission {
+  id           String @id @default(uuid()) @db.Uuid
+  roleId       String @db.Uuid
+  permissionId String @db.Uuid
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@index([roleId])
+  @@index([permissionId])
+}
+
+model Session {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @db.Uuid
+  refreshTokenHash String    @unique @db.VarChar(255)
+  userAgent        String?   @db.VarChar(255)
+  ipAddress        String?   @db.VarChar(45)
+  fcmToken         String?   @db.VarChar(500) // Pour push mobile livreur
+  expiresAt        DateTime  @db.Timestamptz(6)
+  revokedAt        DateTime? @db.Timestamptz(6)
+  createdAt        DateTime  @default(now()) @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([refreshTokenHash])
+}
+
+// ==============================================================================
+// 3. SOCIÉTÉ, AGENCES, DÉPÔTS & ZONES GÉOGRAPHIQUES (TUNISIE)
+// ==============================================================================
+
+model Company {
+  id              String   @id @default(uuid()) @db.Uuid
+  code            String   @unique @db.VarChar(30) // ex: "LOGIXPRESS-TN"
+  legalName       String   @db.VarChar(150)
+  taxRegistration String?  @db.VarChar(50) // Matricule fiscal tunisien
+  headquarters    String   @db.VarChar(255)
+  contactPhone    String   @db.VarChar(30)
+  contactEmail    String   @db.VarChar(255)
+  currencyCode    String   @default("TND") @db.VarChar(5)
+  createdAt       DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime @updatedAt @db.Timestamptz(6)
+
+  users    User[]
+  branches Branch[]
+  deposits Deposit[]
+}
+
+model Branch {
+  id          String   @id @default(uuid()) @db.Uuid
+  companyId   String   @db.Uuid
+  code        String   @unique @db.VarChar(30) // ex: "BR-TUNIS-SUD"
+  name        String   @db.VarChar(100)
+  governorate String   @db.VarChar(50) // Tunis, Ben Arous, Ariana, etc.
+  address     String   @db.VarChar(255)
+  phone       String   @db.VarChar(30)
+  email       String?  @db.VarChar(255)
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(6)
+
+  company  Company   @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  users    User[]
+  deposits Deposit[]
+
+  @@index([companyId])
+  @@index([governorate])
+}
+
+model Deposit {
+  id          String        @id @default(uuid()) @db.Uuid
+  companyId   String        @db.Uuid
+  branchId    String?       @db.Uuid
+  code        String        @unique @db.VarChar(30) // ex: "DEP-BEN-AROUS-HUB"
+  name        String        @db.VarChar(100)
+  isMainHub   Boolean       @default(false) // Ben Arous = true (hub central)
+  governorate String        @db.VarChar(50)
+  city        String        @db.VarChar(100)
+  address     String        @db.VarChar(255)
+  latitude    Float?
+  longitude   Float?
+  phone       String        @db.VarChar(30)
+  /// Zone d'implantation (Grand Tunis, Sahel, …). Distincte de `zones`, qui
+  /// décrit les zones de livraison desservies par le dépôt.
+  zone        String?       @db.VarChar(80)
+  /// Responsable du dépôt : l'agent qui engage et réceptionne les charges.
+  managerId   String?       @db.Uuid
+  /// État opérationnel du site. `isActive` reste le filtre historique ;
+  /// `status` porte la nuance opérationnelle (maintenance, fermeture).
+  status      DepositStatus @default(ACTIF)
+  isActive    Boolean       @default(true)
+  createdAt   DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime      @updatedAt @db.Timestamptz(6)
+
+  company Company        @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  branch  Branch?        @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  users   User[]
+  zones   DeliveryZone[]
+  manager User?          @relation("DepositManager", fields: [managerId], references: [id], onDelete: SetNull)
+
+  // Relations Colis
+  currentPackages     Package[] @relation("CurrentDeposit")
+  originPackages      Package[] @relation("OriginDeposit")
+  destinationPackages Package[] @relation("DestinationDeposit")
+
+  // Relations Transferts Inter-Dépôts
+  outboundTransfers InterDepotTransfer[] @relation("SourceDeposit")
+  returnRecords     ReturnRecord[]       @relation("ReturnDeposit")
+  inboundTransfers  InterDepotTransfer[] @relation("DestinationDeposit")
+
+  // Runsheets
+  runsheets Runsheet[]
+
+  @@index([companyId])
+  @@index([isMainHub])
+  @@index([governorate])
+}
+
+model DeliveryZone {
+  id              String   @id @default(uuid()) @db.Uuid
+  depositId       String   @db.Uuid
+  code            String   @unique @db.VarChar(30) // ex: "ZONE-TUNIS-MOUROUJ"
+  name            String   @db.VarChar(100)
+  governorate     String   @db.VarChar(50) // Gouvernorat officiel (ex: Ben Arous)
+  delegation      String   @db.VarChar(100) // Délégation officielle (ex: El Mourouj)
+  postalCodes     String[] // ex: ["2074", "2082"]
+  baseDeliveryFee Decimal  @default(7.000) @db.Decimal(10, 3) // DT
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now()) @db.Timestamptz(6)
+
+  deposit   Deposit           @relation(fields: [depositId], references: [id], onDelete: Restrict)
+  addresses CustomerAddress[]
+
+  @@index([depositId])
+  @@index([governorate, delegation])
+}
+
+// ==============================================================================
+// 4. EXPÉDITEURS (FOURNISSEURS) & PARAMÉTRAGE FACTURATION
+// ==============================================================================
+
+model Shipper {
+  id             String    @id @default(uuid()) @db.Uuid
+  code           String    @unique @db.VarChar(30) // ex: "EXP-BLUESTAR-001"
+  companyName    String    @db.VarChar(150)
+  brandName      String?   @db.VarChar(100) // Nom commercial affiché
+  taxId          String?   @db.VarChar(50) // Matricule fiscal
+  phone          String    @db.VarChar(30)
+  phoneSecondary String?   @db.VarChar(30)
+  email          String    @db.VarChar(255)
+  governorate    String    @db.VarChar(50)
+  address        String    @db.VarChar(255)
+  isActive       Boolean   @default(true)
+  deletedAt      DateTime? @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
+
+  config          ShipperConfig?
+  shipperUsers    ShipperUser[]
+  packages        Package[]
+  pickups         PickupAppointment[]
+  paymentVouchers PaymentVoucher[]
+  payments        Payment[]
+
+  @@index([companyName])
+  @@index([phone])
+}
+
+model ShipperConfig {
+  id                   String   @id @default(uuid()) @db.Uuid
+  shipperId            String   @unique @db.Uuid
+  defaultDeliveryFee   Decimal  @default(7.000) @db.Decimal(10, 3) // Frais standards en TND
+  defaultReturnFee     Decimal  @default(3.000) @db.Decimal(10, 3) // Frais de retour en TND
+  defaultExchangeFee   Decimal  @default(8.000) @db.Decimal(10, 3) // Frais échange en TND
+  withholdingTaxRate   Decimal  @default(0.010) @db.Decimal(5, 4) // R.A.S (1% = 0.0100)
+  secretPaymentCode    String   @db.VarChar(100) // Hash code secret déblocage caisse
+  bankName             String?  @db.VarChar(100)
+  bankRib              String?  @db.VarChar(30) // RIB tunisien 20 chiffres
+  canOpenPackage       Boolean  @default(false) // Droit par défaut d'ouvrir les colis
+  allowPartialDelivery Boolean  @default(true)
+  createdAt            DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime @updatedAt @db.Timestamptz(6)
+
+  shipper Shipper @relation(fields: [shipperId], references: [id], onDelete: Cascade)
+}
+
+model ShipperUser {
+  id               String   @id @default(uuid()) @db.Uuid
+  shipperId        String   @db.Uuid
+  userId           String   @unique @db.Uuid
+  isPrimaryContact Boolean  @default(false)
+  createdAt        DateTime @default(now()) @db.Timestamptz(6)
+
+  shipper Shipper @relation(fields: [shipperId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([shipperId])
+}
+
+// ==============================================================================
+// 5. CLIENTS DESTINATAIRES, TÉLÉPHONES & ADRESSES
+// ==============================================================================
+
+model Customer {
+  id              String   @id @default(uuid()) @db.Uuid
+  code            String   @unique @db.VarChar(30) // ex: "CLI-2026-004512"
+  fullName        String   @db.VarChar(150)
+  primaryPhone    String   @db.VarChar(30)
+  secondaryPhone  String?  @db.VarChar(30)
+  email           String?  @db.VarChar(255)
+  isBlacklisted   Boolean  @default(false)
+  blacklistReason String?  @db.VarChar(255)
+  totalOrders     Int      @default(0)
+  successOrders   Int      @default(0)
+  returnedOrders  Int      @default(0)
+  createdAt       DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime @updatedAt @db.Timestamptz(6)
+
+  phones    CustomerPhone[]
+  addresses CustomerAddress[]
+  packages  Package[]
+
+  @@index([primaryPhone])
+  @@index([fullName])
+}
+
+model CustomerPhone {
+  id          String   @id @default(uuid()) @db.Uuid
+  customerId  String   @db.Uuid
+  phoneNumber String   @db.VarChar(30)
+  label       String?  @db.VarChar(50) // Personnel, Bureau, WhatsApp
+  isVerified  Boolean  @default(false)
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([phoneNumber])
+}
+
+model CustomerAddress {
+  id            String   @id @default(uuid()) @db.Uuid
+  customerId    String   @db.Uuid
+  zoneId        String?  @db.Uuid
+  governorate   String   @db.VarChar(50) // ex: Zaghouan
+  delegation    String   @db.VarChar(100) // ex: Ennadhour
+  locality      String?  @db.VarChar(100) // ex: El Khadhra
+  streetAddress String   @db.VarChar(255)
+  postalCode    String?  @db.VarChar(10)
+  latitude      Float?
+  longitude     Float?
+  deliveryNotes String?  @db.VarChar(255)
+  isDefault     Boolean  @default(false)
+  createdAt     DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime @updatedAt @db.Timestamptz(6)
+
+  customer Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  zone     DeliveryZone? @relation(fields: [zoneId], references: [id], onDelete: SetNull)
+  packages Package[]
+
+  @@index([customerId])
+  @@index([governorate, delegation])
+}
+
+// ==============================================================================
+// 6. LIVREURS & FLOTTE
+// ==============================================================================
+
+model Driver {
+  id             String    @id @default(uuid()) @db.Uuid
+  userId         String    @unique @db.Uuid
+  driverCode     String    @unique @db.VarChar(30) // ex: "LIV-BEN-014"
+  vehicleType    String    @db.VarChar(50) // Moto, Camionnette, Berline
+  licensePlate   String?   @db.VarChar(30) // Immatriculation tunisienne (ex: 214 TUN 4512)
+  cashCeiling    Decimal   @default(2000.000) @db.Decimal(12, 3) // Plafond caisse autorisé
+  currentBalance Decimal   @default(0.000) @db.Decimal(12, 3) // Solde d'espèces non versé
+  rating         Decimal?  @db.Decimal(3, 2)
+  isActive       Boolean   @default(true)
+  deletedAt      DateTime? @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
+
+  user             User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assignedPackages Package[]            @relation("DriverPackages")
+  runsheets        Runsheet[]
+  pickupJobs       PickupAppointment[]
+  interDepotDrives InterDepotTransfer[]
+  deliveryAttempts DeliveryAttempt[]
+  returnRecords    ReturnRecord[]
+  payments         Payment[]
+  exchangeRecords  ExchangeRecord[]
+
+  @@index([driverCode])
+}
+
+// ==============================================================================
+// 7. COLIS (CORE PACKAGE), ARTICLES & PIÈCES
+// ==============================================================================
+
+model Package {
+  id               String  @id @default(uuid()) @db.Uuid
+  trackingNumber   String  @unique @db.VarChar(50) // Format: 26092402490551
+  barcode          String  @unique @db.VarChar(50) // Pour pistolet lecteur 1D/2D
+  shipperReference String? @db.VarChar(100) // Réf interne expéditeur (ex: CMD-9842)
+
+  // Relations Acteurs
+  shipperId         String  @db.Uuid
+  customerId        String  @db.Uuid
+  customerAddressId String  @db.Uuid
+  assignedDriverId  String? @db.Uuid
+
+  // Relations Dépôts
+  originDepositId      String  @db.Uuid
+  // Nul pendant un transfert inter-dépôts : un colis en transit appartient
+  // encore au flux, pas à un dépôt.
+  currentDepositId     String? @db.Uuid
+  destinationDepositId String  @db.Uuid
+
+  // Relations Tournées & Lots
+  currentRunsheetId    String? @db.Uuid
+  interDepotTransferId String? @db.Uuid
+  paymentVoucherId     String? @db.Uuid
+
+  // Ramassage : rendez-vous de collecte chez l'expéditeur dont ce colis
+  // fait partie. C'est la trace de « quel colis a été réellement collecté » :
+  // un compteur seul ne permettrait pas de répondre, ni de rapprocher l'écart
+  // avec l'estimation annoncée.
+  pickupAppointmentId String? @db.Uuid
+
+  // Typologie & Caractéristiques
+  packageType    PackageType   @default(NORMAL)
+  status         PackageStatus @default(CREE)
+  sizeCategory   PackageSize   @default(MOYENNE)
+  pieceCount     Int           @default(1)
+  weightKg       Decimal?      @db.Decimal(8, 3)
+  contentSummary String        @db.VarChar(255) // ex: "1 power+1 sanitaire+1 cuisine"
+  allowOpen      Boolean       @default(false) // Colis vérifiable à l'ouverture
+
+  // Données Financières (CRBT - Cash On Delivery en Dinars Tunisiens)
+  declaredValue   Decimal @default(0.000) @db.Decimal(10, 3) // Valeur marchande
+  totalPrice      Decimal @db.Decimal(10, 3) // Montant à encaisser auprès du client
+  collectedAmount Decimal @default(0.000) @db.Decimal(10, 3) // Montant réel perçu
+  deliveryFee     Decimal @db.Decimal(10, 3) // Frais de livraison dus
+  returnFee       Decimal @default(0.000) @db.Decimal(10, 3) // Frais de retour facturés
+
+  // Observations
+  shipperNotes  String? @db.VarChar(500) // Note expéditeur (ex: "FRAGILE Téléphone Fermé")
+  driverNotes   String? @db.VarChar(500) // Note livreur (ex: "Client disponible après 17h")
+  internalNotes String? @db.VarChar(500) // Note administration
+
+  // Planification & Tentatives
+  scheduledDeliveryDate DateTime? @db.Timestamptz(6)
+  lastDeliveryAttemptAt DateTime? @db.Timestamptz(6)
+  deliveryAttemptsCount Int       @default(0)
+  deliveredAt           DateTime? @db.Timestamptz(6)
+
+  // Réception en dépôt
+  // Question courante — « qui a reçu ce colis, et quand » — qui demandait de
+  // parcourir la chronologie. Ces colonnes la rendent lisible sur le colis.
+  receivedAt       DateTime? @db.Timestamptz(6)
+  receivedByUserId String?   @db.Uuid
+  receivedByName   String?   @db.VarChar(150)
+
+  // Soft deletion
+  deletedAt DateTime? @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+
+  // Liaisons entités
+  shipper         Shipper         @relation(fields: [shipperId], references: [id], onDelete: Restrict)
+  customer        Customer        @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  customerAddress CustomerAddress @relation(fields: [customerAddressId], references: [id], onDelete: Restrict)
+  assignedDriver  Driver?         @relation("DriverPackages", fields: [assignedDriverId], references: [id], onDelete: SetNull)
+
+  originDeposit      Deposit  @relation("OriginDeposit", fields: [originDepositId], references: [id], onDelete: Restrict)
+  currentDeposit     Deposit? @relation("CurrentDeposit", fields: [currentDepositId], references: [id], onDelete: Restrict)
+  destinationDeposit Deposit  @relation("DestinationDeposit", fields: [destinationDepositId], references: [id], onDelete: Restrict)
+
+  currentRunsheet    Runsheet?           @relation(fields: [currentRunsheetId], references: [id], onDelete: SetNull)
+  interDepotTransfer InterDepotTransfer? @relation(fields: [interDepotTransferId], references: [id], onDelete: SetNull)
+  pickupAppointment  PickupAppointment?  @relation(fields: [pickupAppointmentId], references: [id], onDelete: SetNull)
+  paymentVoucher     PaymentVoucher?     @relation(fields: [paymentVoucherId], references: [id], onDelete: SetNull)
+
+  items            PackageItem[]
+  runsheetItems    RunsheetItem[]
+  deliveryAttempts DeliveryAttempt[]
+  partialDelivery  PartialDelivery?
+  exchangeRecord   ExchangeRecord?
+  returns          ReturnRecord[]
+  statusHistory    PackageTimeline[]
+  payment          Payment?
+
+  @@index([trackingNumber])
+  @@index([barcode])
+  @@index([status])
+  @@index([shipperId])
+  @@index([customerId])
+  @@index([assignedDriverId])
+  @@index([currentDepositId])
+  @@index([currentRunsheetId])
+  @@index([paymentVoucherId])
+  @@index([pickupAppointmentId])
+  @@index([createdAt])
+}
+
+model PackageItem {
+  id           String      @id @default(uuid()) @db.Uuid
+  packageId    String      @db.Uuid
+  sku          String?     @db.VarChar(100)
+  description  String      @db.VarChar(255)
+  quantity     Int         @default(1)
+  unitPrice    Decimal?    @db.Decimal(10, 3)
+  sizeCategory PackageSize @default(LEGERE)
+  isDelivered  Boolean     @default(true) // Mis à false si retourné en livraison partielle
+  isReturned   Boolean     @default(false)
+  createdAt    DateTime    @default(now()) @db.Timestamptz(6)
+
+  package Package @relation(fields: [packageId], references: [id], onDelete: Cascade)
+
+  @@index([packageId])
+}
+
+// ==============================================================================
+// 8. SUIVI HISTORIQUE & TIMELINE DES COLIS
+// ==============================================================================
+
+model PackageTimeline {
+  id             String        @id @default(uuid()) @db.Uuid
+  packageId      String        @db.Uuid
+  status         PackageStatus
+  title          String        @db.VarChar(150) // ex: "Reporté par le livreur: Hamza Ben Dhif"
+  description    String?       @db.VarChar(500) // Motif (ex: "Téléphone Fermé")
+  locationName   String?       @db.VarChar(150) // "Dépôt Sousse", "Ennadhour, Zaghouan"
+  latitude       Float?
+  longitude      Float?
+  runsheetNumber String?       @db.VarChar(50) // "RUN-1100092679"
+  transferNumber String?       @db.VarChar(50) // "ID-3-20260924-0010"
+  operatorName   String        @db.VarChar(150) // Auteur de l'action
+  /// Clé de déduplication d'un scan rejoué (application mobile hors ligne).
+  idempotencyKey String?       @db.VarChar(120)
+  createdAt      DateTime      @default(now()) @db.Timestamptz(6)
+
+  package Package @relation(fields: [packageId], references: [id], onDelete: Cascade)
+
+  @@index([packageId])
+  @@index([createdAt])
+  @@index([packageId, idempotencyKey])
+}
+
+// ==============================================================================
+// 9. DERNIER KILOMÈTRE : TENTATIVES, LIVRAISONS PARTIELLES & ÉCHANGES
+// ==============================================================================
+
+model DeliveryAttempt {
+  id                  String                @id @default(uuid()) @db.Uuid
+  packageId           String                @db.Uuid
+  driverId            String                @db.Uuid
+  runsheetId          String?               @db.Uuid
+  attemptNumber       Int                   @default(1)
+  result              DeliveryAttemptResult
+  reasonCode          String?               @db.VarChar(50) // CLIENT_ABSENT, TELEPHONE_FERME, INJOIGNABLE, PAS_DE_CASH
+  driverComment       String?               @db.VarChar(500)
+  // Ce que le client a été dit sur la tentative, distinct de ce que le
+  // livreur a noté pour la tournée. Les deux ne vont pas au même lecteur :
+  // l'un est destiné au client, l'autre sert à piloter la tournée.
+  customerNote        String?               @db.VarChar(500)
+  rescheduledFor      DateTime?             @db.Timestamptz(6)
+  latitude            Float?
+  longitude           Float?
+  callDurationSeconds Int?                  @default(0) // Preuve d'appel destinataire
+  attemptedAt         DateTime              @default(now()) @db.Timestamptz(6)
+
+  package  Package   @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  driver   Driver    @relation(fields: [driverId], references: [id], onDelete: Restrict)
+  runsheet Runsheet? @relation(fields: [runsheetId], references: [id], onDelete: SetNull)
+
+  @@index([packageId])
+  @@index([driverId])
+  @@index([attemptedAt])
+}
+
+model PartialDelivery {
+  id                   String      @id @default(uuid()) @db.Uuid
+  packageId            String      @unique @db.Uuid
+  deliveredDescription String      @db.VarChar(500) // Ex: "1 paire chaussures pointure 42"
+  returnedDescription  String      @db.VarChar(500) // Ex: "1 chemise blanche"
+  deliveredSize        PackageSize @default(MOYENNE)
+  returnedSize         PackageSize @default(MOYENNE)
+  // Quantités Effectivement livrées et reprises. Elles font autorité sur
+  // `Package.pieceCount` : sans elles, on ne peut plus relire la composition
+  // du colis plus tard, alors que c'est précisément ce qu'un litige client
+  // demande. La somme des deux vaut toujours `pieceCount`, garantie par le
+  // service et recontrôlée par la contrainte SQL ci-dessous.
+  deliveredPieces      Int
+  returnedPieces       Int
+  originalAmount       Decimal     @db.Decimal(10, 3) // Ex: 58.000 DT
+  amountCollected      Decimal     @db.Decimal(10, 3) // Ex: 30.000 DT
+  amountReturned       Decimal     @db.Decimal(10, 3) // Ex: 28.000 DT
+  reason               String      @db.VarChar(255) // Motif du retour partiel
+  validatedByDriverId  String      @db.Uuid
+  validatedAt          DateTime    @default(now()) @db.Timestamptz(6)
+
+  package Package @relation(fields: [packageId], references: [id], onDelete: Cascade)
+
+  @@index([packageId])
+}
+
+model ExchangeRecord {
+  id                  String    @id @default(uuid()) @db.Uuid
+  packageId           String    @unique @db.Uuid
+  newPackageBarcode   String    @db.VarChar(50)
+  oldPackageBarcode   String    @db.VarChar(50) // Code de l'article repris
+  returnedItemSummary String    @db.VarChar(255)
+  // Ce que l'échange coûte au client : à payer quand la marchandise de
+  // remplacement vaut plus, à rembourser quand elle vaut moins, nul quand
+  // l'échange est à valeur égale. Nul est un résultat, pas une absence :
+  // sans cette colonne, impossible de distinguer « échange à valeur égale »
+  // de « personne n'a jamais calculé l'écart ».
+  financialDifference Decimal?  @db.Decimal(10, 3)
+  // Le livreur n'est pas déductible de l'horodatage : deux livreurs peuvent
+  // intervenir sur un même échange (remise, puis vérification au dépôt).
+  driverId            String?   @db.Uuid
+  isOldItemReceived   Boolean   @default(false)
+  driver              Driver?   @relation(fields: [driverId], references: [id], onDelete: SetNull)
+  verifiedAtDepositId String?   @db.Uuid
+  validatedAt         DateTime? @db.Timestamptz(6)
+  createdAt           DateTime  @default(now()) @db.Timestamptz(6)
+
+  package Package @relation(fields: [packageId], references: [id], onDelete: Cascade)
+
+  @@index([packageId])
+}
+
+// ==============================================================================
+// 10. RUNSHEETS (FEUILLES DE ROUTE DE TOURNÉE)
+// ==============================================================================
+
+model Runsheet {
+  id             String         @id @default(uuid()) @db.Uuid
+  runsheetNumber String         @unique @db.VarChar(50) // Format: RUN-1100092681
+  depositId      String         @db.Uuid
+  driverId       String         @db.Uuid
+  type           RunsheetType   @default(DISTRIBUTION)
+  status         RunsheetStatus @default(EN_ATTENTE)
+  tourDate       DateTime       @db.Date
+
+  // Compteurs Colis
+  totalPackages  Int @default(0)
+  totalPieces    Int @default(0)
+  pendingCount   Int @default(0) // Non traités
+  deliveredCount Int @default(0) // Livrés
+  postponedCount Int @default(0) // Reportés
+  returnedCount  Int @default(0) // Retournés
+
+  // Réconciliation Financière (Dinars Tunisiens TND)
+  expectedCash    Decimal @default(0.000) @db.Decimal(12, 3) // Somme théorique à encaisser
+  collectedCash   Decimal @default(0.000) @db.Decimal(12, 3) // Espèces physiquement remises
+  collectedChecks Decimal @default(0.000) @db.Decimal(12, 3) // Chèques reçus
+  deficitAmount   Decimal @default(0.000) @db.Decimal(12, 3) // Écart négatif (déficit)
+
+  departureTime  DateTime? @db.Timestamptz(6)
+  closureTime    DateTime? @db.Timestamptz(6)
+  closedByUserId String?   @db.Uuid
+  notes          String?   @db.VarChar(500)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
+
+  deposit Deposit @relation(fields: [depositId], references: [id], onDelete: Restrict)
+  driver  Driver  @relation(fields: [driverId], references: [id], onDelete: Restrict)
+
+  packages         Package[]
+  runsheetItems    RunsheetItem[]
+  deliveryAttempts DeliveryAttempt[]
+  payments         Payment[]
+
+  @@index([runsheetNumber])
+  @@index([depositId])
+  @@index([driverId])
+  @@index([status])
+  @@index([tourDate])
+}
+
+model RunsheetItem {
+  id                 String         @id @default(uuid()) @db.Uuid
+  runsheetId         String         @db.Uuid
+  packageId          String         @db.Uuid
+  orderIndex         Int            @default(0) // Ordre de tournée conseillé
+  isHandled          Boolean        @default(false)
+  statusAtClose      PackageStatus?
+  collectedAmount    Decimal        @default(0.000) @db.Decimal(10, 3)
+  scannedAtDeparture DateTime?      @db.Timestamptz(6)
+  scannedAtReturn    DateTime?      @db.Timestamptz(6)
+
+  runsheet Runsheet @relation(fields: [runsheetId], references: [id], onDelete: Cascade)
+  package  Package  @relation(fields: [packageId], references: [id], onDelete: Restrict)
+
+  @@unique([runsheetId, packageId])
+  @@index([runsheetId])
+  @@index([packageId])
+}
+
+// ==============================================================================
+// 11. RAMASSAGES (RENDEZ-VOUS PICKUPS EXPÉDITEURS)
+// ==============================================================================
+
+model PickupAppointment {
+  id                String       @id @default(uuid()) @db.Uuid
+  referenceNumber   String       @unique @db.VarChar(50) // Format: RDV-20260928-0042
+  shipperId         String       @db.Uuid
+  assignedDriverId  String?      @db.Uuid
+  scheduledDate     DateTime     @db.Date
+  timeSlotStartHour Int // ex: 14 (14h)
+  timeSlotEndHour   Int // ex: 15 (15h)
+  pickupAddress     String       @db.VarChar(255)
+  contactPerson     String       @db.VarChar(100)
+  contactPhone      String       @db.VarChar(30)
+  packageEstimate   Int          @default(1)
+  actualPickedCount Int          @default(0)
+  status            PickupStatus @default(A_CONFIRMER)
+  notes             String?      @db.VarChar(500)
+  confirmedAt       DateTime?    @db.Timestamptz(6)
+  completedAt       DateTime?    @db.Timestamptz(6)
+  createdAt         DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime     @updatedAt @db.Timestamptz(6)
+
+  shipper        Shipper   @relation(fields: [shipperId], references: [id], onDelete: Restrict)
+  assignedDriver Driver?   @relation(fields: [assignedDriverId], references: [id], onDelete: SetNull)
+  packages       Package[]
+
+  @@index([referenceNumber])
+  @@index([shipperId])
+  @@index([assignedDriverId])
+  @@index([scheduledDate])
+  @@index([status])
+}
+
+// ==============================================================================
+// 12. INTER-DÉPÔT : TRANSFERTS & GROUPAGES RÉGIONAUX
+// ==============================================================================
+
+model InterDepotTransfer {
+  id                   String           @id @default(uuid()) @db.Uuid
+  transferNumber       String           @unique @db.VarChar(50) // Format: ID-20260924-0010
+  sourceDepositId      String           @db.Uuid // ex: Sousse
+  destinationDepositId String           @db.Uuid // ex: Ben Arous
+  transporterDriverId  String?          @db.Uuid
+  sealNumber           String?          @db.VarChar(50) // Plomb de sécurité
+  scheduledDate        DateTime?        @db.Date // Date prévue du départ
+  totalPackages        Int              @default(0)
+  receivedPackages     Int              @default(0)
+  /// Somme des pièces des colis du lot : la quantité réellement transportée.
+  totalPieces          Int              @default(0)
+  status               InterDepotStatus @default(CRE)
+  notes                String?          @db.VarChar(500)
+  dispatchNotes        String?          @db.VarChar(255)
+  receptionNotes       String?          @db.VarChar(255)
+  preparedAt           DateTime?        @db.Timestamptz(6)
+  shippedAt            DateTime?        @db.Timestamptz(6)
+  receivedAt           DateTime?        @db.Timestamptz(6)
+  cancelledAt          DateTime?        @db.Timestamptz(6)
+  createdAt            DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime         @updatedAt @db.Timestamptz(6)
+
+  sourceDeposit      Deposit @relation("SourceDeposit", fields: [sourceDepositId], references: [id], onDelete: Restrict)
+  destinationDeposit Deposit @relation("DestinationDeposit", fields: [destinationDepositId], references: [id], onDelete: Restrict)
+  transporterDriver  Driver? @relation(fields: [transporterDriverId], references: [id], onDelete: SetNull)
+
+  packages Package[]
+
+  @@index([transferNumber])
+  @@index([sourceDepositId])
+  @@index([destinationDepositId])
+  @@index([status])
+}
+
+// ==============================================================================
+// 13. PAIEMENTS & BORDEREAUX DE RÈGLEMENT EXPÉDITEURS (CRBT)
+// ==============================================================================
+
+model PaymentVoucher {
+  id            String               @id @default(uuid()) @db.Uuid
+  voucherNumber String               @unique @db.VarChar(50) // Format: 137831
+  shipperId     String               @db.Uuid
+  status        PaymentVoucherStatus @default(CONFIRME)
+  paymentMethod PaymentMethod        @default(ESPECE)
+  scheduledDate DateTime?            @db.Date
+
+  // Statistiques du bordereau
+  deliveredCount Int @default(0) // ex: 55 Colis Livrés
+  returnedCount  Int @default(0) // ex: 22 Colis Retours
+
+  // Décomposition Comptable (TND)
+  grossCashCollected   Decimal @default(0.000) @db.Decimal(12, 3) // Total Espèces collectées
+  grossChecksCollected Decimal @default(0.000) @db.Decimal(12, 3) // Total Chèques collectés
+  deliveryFeesTotal    Decimal @default(0.000) @db.Decimal(12, 3) // Frais de livraison déduits
+  returnFeesTotal      Decimal @default(0.000) @db.Decimal(12, 3) // Frais de retour déduits
+  withholdingTaxTotal  Decimal @default(0.000) @db.Decimal(12, 3) // Retenue à la source (R.A.S)
+  netPayable           Decimal @db.Decimal(12, 3) // Montant Net à débourser
+
+  // Sécurité & Validation Décaissement
+  secretCodeVerified Boolean   @default(false)
+  transactionRef     String?   @db.VarChar(100) // N° Chèque ou N° Virement
+  paidAt             DateTime? @db.Timestamptz(6)
+  validatedByUserId  String?   @db.Uuid
+  notes              String?   @db.VarChar(500)
+  createdAt          DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime  @updatedAt @db.Timestamptz(6)
+
+  shipper  Shipper   @relation(fields: [shipperId], references: [id], onDelete: Restrict)
+  packages Package[]
+
+  @@index([voucherNumber])
+  @@index([shipperId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// ==============================================================================
+// 14. RETOURS EXPÉDITEURS & CONTRÔLE DE CONFORMITÉ
+// ==============================================================================
+
+model ReturnRecord {
+  id                  String    @id @default(uuid()) @db.Uuid
+  returnNumber        String    @unique @db.VarChar(50) // Format: RET-2026-000982
+  packageId           String    @db.Uuid
+  returnDepositId     String    @db.Uuid
+  reason              String    @db.VarChar(255)
+  // Ce que le livreur ramène. Sur un retour de colis entier, la quantité
+  // vaut toutes les pièces et le montant ce que le livreur transporte :
+  // ce sont des faits, pas des suppositions, et ils sont donc renseignés
+  // par défaut. Quand le livreur ne ramène qu'une partie, il doit dire
+  // laquelle et laquelle, sinon le dépôt réceptionne un contenu qu'il
+  // n'a aucun moyen de rapprocher du dossier.
+  returnedItems       String?   @db.VarChar(500)
+  returnedQuantity    Int?
+  amount              Decimal?  @db.Decimal(10, 3)
+  driverId            String?   @db.Uuid
+  isPhysicalChecked   Boolean   @default(false)
+  driver              Driver?   @relation(fields: [driverId], references: [id], onDelete: SetNull)
+  checkCondition      String?   @db.VarChar(100) // Conforme, Emballage détérioré, Article manquant
+  checkedByUserId     String?   @db.Uuid
+  checkedAt           DateTime? @db.Timestamptz(6)
+  restoredToShipperAt DateTime? @db.Timestamptz(6)
+  createdAt           DateTime  @default(now()) @db.Timestamptz(6)
+
+  package       Package @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  returnDeposit Deposit @relation("ReturnDeposit", fields: [returnDepositId], references: [id], onDelete: Restrict)
+
+  @@index([returnNumber])
+  @@index([packageId])
+}
+
+// ==============================================================================
+// 15. NOTIFICATIONS MULTI-CANAUX
+// ==============================================================================
+
+model Notification {
+  id              String           @id @default(uuid()) @db.Uuid
+  userId          String           @db.Uuid
+  type            NotificationType
+  title           String           @db.VarChar(150)
+  content         String           @db.VarChar(500)
+  relatedEntity   String?          @db.VarChar(50) // "PACKAGE", "RUNSHEET", "PAYMENT"
+  relatedEntityId String?          @db.VarChar(100)
+  isRead          Boolean          @default(false)
+  readAt          DateTime?        @db.Timestamptz(6)
+  createdAt       DateTime         @default(now()) @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Une tentative par canal. En cascade : la notification supprimée emporte
+  /// son historique de diffusion, qui n'a plus d'objet sans elle.
+  deliveries NotificationDelivery[]
+
+  @@index([userId, isRead])
+  @@index([createdAt])
+  @@index([type])
+}
+
+/// Tentative de diffusion d'une notification par un canal donné.
+///
+/// La notification elle-même est la vérité : ce qui compte pour l'utilisateur
+/// est le « il l'a vu ». Cette table répond à une autre question — « lui a-t-on
+/// bien envoyé, et par quel canal ? » — que rien ne permettait de trancher.
+///
+/// Elle n'est pas nécessaire aujourd'hui : `in_app` est toujours réussi, et
+/// `socket` part au fil de l'eau. Elle existe parce que le canal « push » ne
+/// pourra pas l'être. Une notification poussée part alors que l'application
+/// est fermée ; si l'envoi échoue, il faut pouvoir le constater et le
+/// rejouer plus tard, sans faire sonner l'utilisateur deux fois. Sans ce
+/// registre, ajouter le push obligerait à réinventer cette traçabilité, et
+/// probablement à notifier en double.
+model NotificationDelivery {
+  id             String    @id @default(uuid()) @db.Uuid
+  notificationId String    @db.Uuid
+  /// Canal de sortie. La liste est ouverte : `in_app`, `socket`, puis `push`.
+  channel        String    @db.VarChar(30)
+  /// `sent` le canal a pris l'envoi, `failed` il l'a refusé, `pending` il
+  /// reste à tenter — le cas d'un push différé.
+  status         String    @default("pending") @db.VarChar(20)
+  /// Identifiant côté fournisseur de canal, pour retrouver l'envoi et y
+  /// rapporter un refus ultérieur. Nul pour les canaux internes.
+  externalId     String?   @db.VarChar(255)
+  attempts       Int       @default(0)
+  lastAttemptAt  DateTime? @db.Timestamptz(6)
+  deliveredAt    DateTime? @db.Timestamptz(6)
+  lastError      String?   @db.VarChar(500)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
+  @@unique([notificationId, channel])
+  @@index([status])
+  @@index([channel, status])
+}
+
+// ==============================================================================
+// 16. JOURNAL D'AUDIT & TRAÇABILITÉ ABSOLUE
+// ==============================================================================
+
+model AuditLog {
+  id             String   @id @default(uuid()) @db.Uuid
+  entityType     String   @db.VarChar(50) // "PACKAGE", "RUNSHEET", "PAYMENT", "SHIPPER"
+  entityId       String   @db.VarChar(100)
+  action         String   @db.VarChar(50) // "CREATE", "UPDATE_PRICE", "CANCEL", "CLOSE"
+  reason         String?  @db.VarChar(255) // Obligatoire si changement de prix ou annulation
+  previousValues Json? // Snapshot JSON avant
+  newValues      Json? // Snapshot JSON après
+  userId         String?  @db.Uuid
+  userIp         String?  @db.VarChar(45)
+  userAgent      String?  @db.VarChar(255)
+  timestamp      DateTime @default(now()) @db.Timestamptz(6)
+
+  user User? @relation("UserAuditLogs", fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@index([action])
+  @@index([userId])
+  @@index([timestamp])
+}

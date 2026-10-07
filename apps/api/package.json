@@ -1,0 +1,31 @@
+{
+  "name": "@logixpress/api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "API REST modulaire RUNEX (Express 4 + Prisma + Redis)",
+  "author": "LogiXpress Engineering",
+  "license": "UNLICENSED",
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "tsx watch --clear-screen=false src/main.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@logixpress/config": "*",
+    "@logixpress/types": "*",
+    "@prisma/client": "^6.19.0",
+    "dotenv": "^17.2.3",
+    "express": "^4.21.2",
+    "ioredis": "^5.8.2",
+    "socket.io": "^4.8.4"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.15.0",
+    "prisma": "^6.19.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

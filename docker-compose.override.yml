@@ -1,0 +1,19 @@
+# ==============================================================================
+# LogiXpress Tunisie - Surcharges de développement local
+#
+# Appliqué automatiquement par `docker compose` en plus de docker-compose.yml.
+# Ne définit volontairement AUCUN service api/web : en développement, les
+# processus Node tournent sur la machine hôte (npm run dev:api / dev:web),
+# seul PostgreSQL et Redis sont conteneurisés.
+#
+# Ne pas remplacer les `volumes` du compose de base : les données de
+# développement doivent rester dans le volume nommé `postgres_data`.
+# ==============================================================================
+
+services:
+  postgres:
+    # Sum checksums sur les pages : permet de détecter la corruption du
+    # data directory sans surcoût notable en développement.
+    # Prend effet uniquement à la première initialisation du volume.
+    environment:
+      POSTGRES_INITDB_ARGS: "--data-checksums"

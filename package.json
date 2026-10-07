@@ -1,0 +1,66 @@
+{
+  "name": "logixpress-tunisie",
+  "version": "1.0.0",
+  "private": true,
+  "description": "LogiXpress Tunisie - Plateforme de gestion logistique et de livraison express (monorepo npm workspaces)",
+  "author": "LogiXpress Engineering",
+  "license": "UNLICENSED",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c red,cyan \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "npm run build:packages && npm run dev --workspace @logixpress/api",
+    "dev:web": "npm run dev --workspace @logixpress/web",
+    "build": "npm run build:packages && npm run build:api && npm run build:web",
+    "build:packages": "npm run build --workspace @logixpress/types && npm run build --workspace @logixpress/config",
+    "build:api": "npm run build:packages && npm run build --workspace @logixpress/api",
+    "build:web": "npm run build --workspace @logixpress/web",
+    "start": "concurrently -k -n api,web -c red,cyan \"npm:start:api\" \"npm:start:web\"",
+    "start:api": "npm run start --workspace @logixpress/api",
+    "start:web": "npm run start --workspace @logixpress/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "prisma:validate": "prisma validate",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy",
+    "prisma:status": "prisma migrate status",
+    "prisma:studio": "prisma studio",
+    "infra:up": "docker compose up -d postgres redis",
+    "infra:down": "docker compose stop postgres redis",
+    "infra:ps": "docker compose ps",
+    "clean": "rm -rf apps/api/dist apps/web/.next packages/types/dist packages/config/dist",
+    "prisma:seed": "tsx prisma/seed.ts",
+    "qa:api": "bash scripts/api-smoke-test.sh",
+    "qa:workflow": "bash scripts/verify-package-workflow.sh",
+    "qa:flow": "bash scripts/verify-business-flow.sh",
+    "qa:ramassages": "bash scripts/verify-ramassages.sh",
+    "qa:depots": "bash scripts/verify-depots.sh",
+    "qa:expediteur": "bash scripts/verify-expediteur-acces.sh",
+    "qa:web": "node scripts/verify-frontend.mjs",
+    "qa:console": "node scripts/verify-console-errors.mjs",
+    "qa:responsive": "node scripts/verify-responsive.mjs",
+    "qa": "npm run qa:formateurs && npm run qa:api && npm run qa:workflow && npm run qa:flow && npm run qa:ramassages && npm run qa:depots && npm run qa:reception && npm run qa:ecran && npm run qa:audit && npm run qa:audit-ecran && npm run qa:rapports && npm run qa:rapports-ecran && npm run qa:expediteur && npm run qa:web && npm run qa:console && npm run qa:responsive",
+    "qa:audit": "bash scripts/verify-audit.sh",
+    "qa:audit-ecran": "node scripts/verify-audit-ecran.mjs",
+    "qa:reception": "bash scripts/verify-reception.sh",
+    "qa:ecran": "node scripts/verify-reception-ecran.mjs",
+    "db:audit-lock": "psql -d logixpress_db -f scripts/audit-ownership.sql",
+    "qa:rapports": "bash scripts/verify-reports.sh",
+    "qa:rapports-ecran": "node scripts/verify-reports-ecran.mjs",
+    "qa:formateurs": "tsx scripts/verify-formateurs.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "concurrently": "^9.2.0",
+    "prisma": "^6.19.0",
+    "typescript": "^5.9.3"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  }
+}
