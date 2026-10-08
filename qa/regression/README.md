@@ -6,7 +6,8 @@ base fraîchement seedée (`npm run prisma:deploy && npm run prisma:seed`).
 | Suite | Portée | Prérequis |
 |---|---|---|
 | `../qa-security-26.mjs` | sécurité : sessions, RBAC, IDOR, limitation de débit, erreurs | API seule (dernier bloc déclenche la limitation de débit) |
-| `../qa-interdepot-26.mjs` | transferts inter-dépôts de bout en bout | API seule |
+| `../qa-interdepot-26.mjs` | inter-dépôts au scan (livraison, retours, pièces) | API seule |
+| `../qa-interdepot-ui-26.mjs` | écrans inter-dépôts + organiser un ramassage | web + navigateur |
 | `../qa-runsheet-ui-26.mjs` | cycle de tournée cliqué dans le back-office | web + navigateur |
 | `../qa-colis-ui-26.mjs` | « Nouveau colis » de l'exploitation | web + navigateur |
 | `qa-runsheet-flow-25-1`, `qa-dashboard-25`, `qa-integrated-25-5`, `qa-presence`, `qa6-livreur`, `qa7-push` | flux métier API | API seule (`qa-integrated` vieillit un colis via `psql`) |
