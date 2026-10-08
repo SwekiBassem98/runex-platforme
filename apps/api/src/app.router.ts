@@ -311,6 +311,20 @@ export function createApiRouter(): Router {
     asyncHandler((req, res) => colisController.returnToShipper(req, res))
   );
 
+  // Bon de livraison : l'étiquette collée sur chaque pièce du colis.
+  router.get(
+    withColisSuffix('/bon-livraison'),
+    authenticateToken,
+    requirePermissions(PermissionCode.COLIS_READ),
+    asyncHandler((req, res) => colisController.bonLivraison(req, res))
+  );
+  router.post(
+    ['/colis/bons-livraison', '/packages/bons-livraison'],
+    authenticateToken,
+    requirePermissions(PermissionCode.COLIS_READ),
+    asyncHandler((req, res) => colisController.bonsLivraison(req, res))
+  );
+
   // Journal d'audit d'un colis (traçabilité des modifications)
   router.get(
     withColisSuffix('/audit'),

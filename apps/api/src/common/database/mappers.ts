@@ -114,6 +114,7 @@ export function toPackageDto(record: PackageWithRelations): PackageDto {
     pieceCount: record.pieceCount,
     contentSummary: record.contentSummary,
     allowOpen: record.allowOpen,
+    isFragile: record.isFragile,
     totalPrice: toNumber(record.totalPrice),
     collectedAmount: toNumber(record.collectedAmount),
     deliveryFee: toNumber(record.deliveryFee),

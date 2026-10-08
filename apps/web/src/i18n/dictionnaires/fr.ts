@@ -174,6 +174,11 @@ export const fr = {
   'colis.liste.impressionLimite': 'Limite d’impression : {max} colis affichés sur {total}. Affinez vos filtres pour le reste.',
   'colis.liste.impressionErreur': 'L’impression n’a pas pu être préparée.',
   'colis.detail.imprimer': 'Imprimer',
+  'colis.detail.bonLivraison': 'Bon de livraison',
+  'colis.detail.fiche': 'Fiche colis',
+  'colis.liste.bonLivraison': 'Bon de livraison',
+  'colis.liste.bonsLivraisonPage': 'Bons de livraison ({n})',
+  'colis.detail.champ.fragile': 'Fragile',
 
   'colis.formulaire.titre': 'Nouveau colis',
   'colis.formulaire.declareAuNom': 'Déclaré au nom de {entreprise}',
@@ -204,6 +209,7 @@ export const fr = {
   'colis.formulaire.descriptionAide': 'Visible par l\'exploitation et le livreur',
   'colis.formulaire.descriptionAide2': 'Vêtements, deux cartons',
   'colis.formulaire.ouvrirAutorise': 'Le client peut ouvrir le colis avant de payer',
+  'colis.formulaire.fragile': 'Colis fragile (coché « FRAGILE » sur le bon de livraison)',
   'colis.formulaire.instructions': 'Instructions pour le livreur',
   'colis.formulaire.instructionsAide':
     'Appeler avant 14 h. Ne pas exposer au soleil.',

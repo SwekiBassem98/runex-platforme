@@ -459,6 +459,7 @@ export const openApiSpecification = {
                   contentSummary: { type: 'string' },
                   totalPrice: { type: 'number', minimum: 0, description: 'Montant à encaisser en TND.' },
                   allowOpen: { type: 'boolean' },
+                  isFragile: { type: 'boolean' },
                   notes: { type: 'string' },
                 },
               },

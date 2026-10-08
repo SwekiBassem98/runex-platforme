@@ -430,6 +430,8 @@ export interface PackageDto {
   pieceCount: number;
   contentSummary: string;
   allowOpen: boolean;
+  /** Case « FRAGILE » du bon de livraison. */
+  isFragile: boolean;
   totalPrice: number; // Montant TND
   collectedAmount: number;
   deliveryFee: number;
@@ -925,3 +927,80 @@ export * from './notifications';
 // pas diverger sur ce qu'est une action.
 export * from './audit';
 export * from './reports';
+
+
+// ---------------------------------------------------------------------------
+// Bon de livraison — l'étiquette A4 collée sur chaque pièce du colis
+// ---------------------------------------------------------------------------
+
+/** Abréviation de la taille imprimée sur le bon (« LGR(1/1) »). */
+export const PACKAGE_SIZE_SHORT_LABELS: Readonly<Record<PackageSize, string>> = {
+  [PackageSize.LEGERE]: 'LGR',
+  [PackageSize.MOYENNE]: 'MOY',
+  [PackageSize.LOURDE]: 'LRD',
+  [PackageSize.VOLUMINEUSE]: 'VOL',
+};
+
+/** Mention imprimée quand l'expéditeur n'a laissé aucune remarque. */
+export const BON_LIVRAISON_RIEN_A_SIGNALER = 'R.A.S';
+
+export interface BonLivraisonLigne {
+  designation: string;
+  quantity: number;
+  /** Prix unitaire hors taxes (TND). */
+  unitPriceHT: number;
+  /** Taux de TVA en pourcentage (0 : contre-remboursement non assujetti). */
+  vatRate: number;
+  vatAmount: number;
+  totalTTC: number;
+}
+
+export interface BonLivraisonPiece {
+  /** Rang de la pièce, de 1 à pieceCount. */
+  index: number;
+  /** Code scanné à l'acceptation : le code-barres du colis, ou `code-N` s'il a plusieurs pièces. */
+  code: string;
+}
+
+export interface BonLivraisonDto {
+  packageId: string;
+  /** « Bon de Livraison N° » : le numéro de suivi du colis. */
+  number: string;
+  barcode: string;
+  /** Date de création du colis (ISO). */
+  date: string;
+  sizeCategory: PackageSize;
+  sizeShort: string;
+  pieceCount: number;
+  pieces: BonLivraisonPiece[];
+  originAgency: string;
+  destinationAgency: string;
+  governorate: string;
+  delegation: string;
+  shipper: {
+    name: string;
+    phone: string;
+    taxId?: string;
+    address: string;
+    governorate: string;
+  };
+  recipient: {
+    name: string;
+    phone: string;
+    phoneSecondary?: string;
+    address: string;
+    governorate: string;
+    delegation: string;
+  };
+  /** Remarque de l'expéditeur, ou « R.A.S ». */
+  remark: string;
+  allowOpen: boolean;
+  isFragile: boolean;
+  lines: BonLivraisonLigne[];
+  /** PRIX TOTAL : le montant à encaisser auprès du destinataire. */
+  total: number;
+  carrier: {
+    name: string;
+    taxRegistration?: string;
+  };
+}

@@ -55,6 +55,7 @@ import {
 import {
   Badge,
   Card,
+  Checkbox,
   EmptyState,
   ErrorBanner,
   FormField,
@@ -65,7 +66,8 @@ import {
   Textarea,
   useToast,
 } from '@logixpress/ui';
-import { annulerColis, lireAuditColis, lireColis, modifierColis } from '@/features/expediteur/lib/client';
+import { annulerColis, lireAuditColis, lireBonsLivraison, lireColis, modifierColis } from '@/features/expediteur/lib/client';
+import { imprimerBonsLivraison } from '@/features/colis/bonLivraison';
 import { GOUVERNORATS, useVocabulaire, VARIANTE_TYPE } from '@/features/expediteur/lib/libelles';
 import { useI18n, type Cle } from '@/i18n';
 import { genererHtmlColisUnique, ouvrirImpression } from './impression';
@@ -105,6 +107,7 @@ export function VueColisDetail({ identifiant }: { identifiant: string }) {
     totalPrice: '',
     pieceCount: '',
     notes: '',
+    isFragile: false,
   });
 
   const [confirmationAnnulation, setConfirmationAnnulation] = React.useState(false);
@@ -126,6 +129,7 @@ export function VueColisDetail({ identifiant }: { identifiant: string }) {
         totalPrice: String(fiche.totalPrice ?? ''),
         pieceCount: String(fiche.pieceCount ?? 1),
         notes: fiche.notes ?? '',
+        isFragile: Boolean(fiche.isFragile),
       });
       // Le journal est secondaire : son absence ne doit pas masquer la fiche.
       try {
@@ -207,6 +211,15 @@ export function VueColisDetail({ identifiant }: { identifiant: string }) {
     ouvrirImpression(html);
   };
 
+  const handleBonLivraison = async () => {
+    if (!colis) return;
+    try {
+      imprimerBonsLivraison(await lireBonsLivraison([colis.id]));
+    } catch (e) {
+      addToast({ type: 'error', title: t('colis.liste.impressionErreur'), message: e instanceof Error ? e.message : undefined });
+    }
+  };
+
   const chronologie = [...(colis.trackingTimeline ?? [])].reverse();
   const tentatives = colis.deliveryAttempts ?? [];
 
@@ -223,7 +236,8 @@ export function VueColisDetail({ identifiant }: { identifiant: string }) {
         address: form.address.trim(),
         totalPrice: Number(form.totalPrice),
         pieceCount: Number(form.pieceCount),
-        notes: form.notes.trim() || undefined,
+        notes: form.notes.trim(),
+        isFragile: form.isFragile,
       });
       if (!reponse.success) {
         setErreurEdition(reponse.message ?? t('colis.detail.erreurEnregistrement'));
@@ -290,12 +304,21 @@ export function VueColisDetail({ identifiant }: { identifiant: string }) {
         <div className="flex items-center gap-2 shrink-0 flex-wrap">
           <button
             type="button"
-            onClick={handleImprimer}
-            className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 text-slate-700 rounded-md text-xs font-semibold hover:bg-slate-50 transition cursor-pointer"
-            title={t('colis.detail.imprimer')}
+            onClick={() => void handleBonLivraison()}
+            className="flex items-center gap-1.5 px-3 py-2 bg-slate-900 border border-slate-900 text-white rounded-md text-xs font-semibold hover:bg-slate-800 transition cursor-pointer"
+            title={t('colis.detail.bonLivraison')}
           >
             <Printer className="w-3.5 h-3.5" aria-hidden="true" />
-            {t('colis.detail.imprimer')}
+            {t('colis.detail.bonLivraison')}
+          </button>
+          <button
+            type="button"
+            onClick={handleImprimer}
+            className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 text-slate-700 rounded-md text-xs font-semibold hover:bg-slate-50 transition cursor-pointer"
+            title={t('colis.detail.fiche')}
+          >
+            <Printer className="w-3.5 h-3.5" aria-hidden="true" />
+            {t('colis.detail.fiche')}
           </button>
           {modifiable && (
             <>
@@ -529,6 +552,10 @@ export function VueColisDetail({ identifiant }: { identifiant: string }) {
               <Ligne
                 libelle={t('colis.detail.champ.ouverture')}
                 valeur={colis.allowOpen ? t('colis.detail.champ.ouvertureAutorisee') : t('colis.detail.champ.ouvertureRefusee')}
+              />
+              <Ligne
+                libelle={t('colis.detail.champ.fragile')}
+                valeur={colis.isFragile ? t('commun.oui') : t('commun.non')}
               />
               <Ligne libelle={t('colis.detail.champ.contenu')} valeur={colis.contentSummary ?? '—'} />
             </dl>
@@ -791,6 +818,11 @@ export function VueColisDetail({ identifiant }: { identifiant: string }) {
               onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
             />
           </FormField>
+          <Checkbox
+            label={t('colis.formulaire.fragile')}
+            checked={form.isFragile}
+            onChange={(v) => setForm((f) => ({ ...f, isFragile: v }))}
+          />
         </form>
       </Modal>
 

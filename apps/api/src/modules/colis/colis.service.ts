@@ -35,8 +35,13 @@ import {
   NotificationEvent,
   packageStatusLabel,
   PaymentStatus,
+  PACKAGE_SIZE_SHORT_LABELS,
+  BON_LIVRAISON_RIEN_A_SIGNALER,
+  pieceBarcode,
 } from '@logixpress/types';
 import type {
+  BonLivraisonDto,
+  BonLivraisonLigne,
   PackageDto,
   PartialDeliveryRequest,
   ReturnRequest,
@@ -377,6 +382,107 @@ export class ColisService {
     return record ? toPackageDto(record) : null;
   }
 
+  /**
+   * Bons de livraison : l'étiquette A4 imprimée et collée sur chaque pièce.
+   *
+   * Tout ce que porte le bon vient de la base, dans le périmètre de
+   * l'utilisateur : l'expéditeur (nom, téléphone, matricule fiscal, adresse),
+   * le destinataire, l'agence de départ et celle qui livre, et le transporteur
+   * (raison sociale et matricule fiscal de la société). Les identifiants
+   * hors périmètre ou inconnus sont simplement absents du résultat.
+   */
+  async bonsLivraison(identifiers: string[], scope?: ScopeFilter): Promise<BonLivraisonDto[]> {
+    const wanted = [...new Set(identifiers.map((v) => String(v).trim()).filter(Boolean))];
+    if (wanted.length === 0) return [];
+    const records = await this.prisma.package.findMany({
+      where: {
+        deletedAt: null,
+        AND: [
+          { OR: wanted.map((identifier) => packageIdentifierWhere(identifier)) },
+          ...(scope?.shipperId ? [{ shipperId: scope.shipperId }] : []),
+          ...(scope?.assignedDriverId ? [{ assignedDriverId: scope.assignedDriverId }] : []),
+          ...(scope?.depositId
+            ? [{ OR: [{ currentDepositId: scope.depositId }, { destinationDepositId: scope.depositId }] }]
+            : []),
+        ],
+      },
+      include: {
+        shipper: true,
+        customer: true,
+        customerAddress: true,
+        items: { orderBy: { createdAt: 'asc' } },
+        originDeposit: { include: { company: true } },
+        destinationDeposit: true,
+      },
+    });
+
+    // Ordre de la demande : on imprime dans l'ordre où l'utilisateur a choisi.
+    const rank = (r: { id: string; trackingNumber: string; barcode: string }) => {
+      const i = wanted.findIndex((w) => w === r.id || w === r.trackingNumber || w === r.barcode);
+      return i < 0 ? wanted.length : i;
+    };
+    records.sort((a, b) => rank(a) - rank(b));
+
+    const round3 = (n: number) => Math.round(n * 1000) / 1000;
+    return records.map((r) => {
+      const total = round3(Number(r.totalPrice));
+      const pieceCount = Math.max(1, r.pieceCount);
+      // Lignes détaillées seulement quand elles sont chiffrées et qu'elles
+      // tombent juste sur le montant à encaisser ; sinon une seule ligne,
+      // le contenu déclaré pour le montant total — le bon ne doit jamais
+      // annoncer une somme différente de celle que le livreur encaisse.
+      const priced = r.items.filter((it) => it.unitPrice !== null && !it.isReturned);
+      const pricedSum = round3(priced.reduce((acc, it) => acc + it.quantity * Number(it.unitPrice), 0));
+      const lines: BonLivraisonLigne[] =
+        priced.length > 0 && priced.length === r.items.length && Math.abs(pricedSum - total) < 0.0005
+          ? priced.map((it) => {
+              const unit = round3(Number(it.unitPrice));
+              const ttc = round3(unit * it.quantity);
+              return { designation: it.description, quantity: it.quantity, unitPriceHT: unit, vatRate: 0, vatAmount: 0, totalTTC: ttc };
+            })
+          : [{ designation: r.contentSummary, quantity: 1, unitPriceHT: total, vatRate: 0, vatAmount: 0, totalTTC: total }];
+      const company = r.originDeposit.company;
+      return {
+        packageId: r.id,
+        number: r.trackingNumber,
+        barcode: r.barcode,
+        date: r.createdAt.toISOString(),
+        sizeCategory: r.sizeCategory as unknown as BonLivraisonDto['sizeCategory'],
+        sizeShort: PACKAGE_SIZE_SHORT_LABELS[r.sizeCategory as unknown as BonLivraisonDto['sizeCategory']] ?? r.sizeCategory,
+        pieceCount,
+        pieces: Array.from({ length: pieceCount }, (_, i) => ({
+          index: i + 1,
+          code: pieceCount > 1 ? pieceBarcode(r.barcode, i + 1) : r.barcode,
+        })),
+        originAgency: r.originDeposit.name,
+        destinationAgency: r.destinationDeposit.name,
+        governorate: r.customerAddress.governorate,
+        delegation: r.customerAddress.delegation,
+        shipper: {
+          name: r.shipper.brandName ?? r.shipper.companyName,
+          phone: r.shipper.phone,
+          taxId: r.shipper.taxId ?? undefined,
+          address: r.shipper.address,
+          governorate: r.shipper.governorate,
+        },
+        recipient: {
+          name: r.customer.fullName,
+          phone: r.customer.primaryPhone,
+          phoneSecondary: r.customer.secondaryPhone ?? undefined,
+          address: r.customerAddress.streetAddress,
+          governorate: r.customerAddress.governorate,
+          delegation: r.customerAddress.delegation,
+        },
+        remark: r.shipperNotes?.trim() || BON_LIVRAISON_RIEN_A_SIGNALER,
+        allowOpen: r.allowOpen,
+        isFragile: r.isFragile,
+        lines,
+        total,
+        carrier: { name: company.legalName, taxRegistration: company.taxRegistration ?? undefined },
+      };
+    });
+  }
+
   /** Variante donnant accès à l'enregistrement complet (usage interne). */
   private async findRecord(idOrTracking: string): Promise<PackageWithRelations> {
     const record = await this.prisma.package.findFirst({
@@ -667,6 +773,7 @@ export class ColisService {
           pieceCount: Number.isFinite(pieceCount) && pieceCount > 0 ? pieceCount : 1,
           contentSummary: String(payload.contentSummary ?? 'Colis sans description'),
           allowOpen: payload.allowOpen === true,
+          isFragile: payload.isFragile === true,
           totalPrice: Number.isFinite(totalPrice) ? totalPrice : 0,
           deliveryFee: shipper.config?.defaultDeliveryFee ?? 7,
           shipperNotes: payload.notes ? String(payload.notes) : null,
@@ -727,6 +834,13 @@ export class ColisService {
     notificationMessage?: string;
   }> {
     const record = await this.findRecord(idOrTracking);
+
+    // À la création, les instructions arrivent sous `notes` ; les écrans
+    // d'édition envoient le même nom. Sans cet alias, la remarque imprimée
+    // sur le bon de livraison ne pouvait plus être corrigée.
+    if (payload.notes !== undefined && payload.shipperNotes === undefined) {
+      payload = { ...payload, shipperNotes: payload.notes };
+    }
 
     // Périmètre : un expéditeur ne modifie que ses propres colis.
     if (user.shipperId && record.shipperId !== user.shipperId) {
@@ -831,6 +945,7 @@ export class ColisService {
       payload.delegation !== undefined;
     const comfortChanged =
       payload.allowOpen !== undefined ||
+      payload.isFragile !== undefined ||
       payload.sizeCategory !== undefined ||
       payload.packageType !== undefined ||
       payload.shipperNotes !== undefined ||
@@ -857,9 +972,14 @@ export class ColisService {
       criticalChanges.push(FIELD_LABELS.contentSummary!);
     }
     if (payload.allowOpen !== undefined) data.allowOpen = payload.allowOpen === true;
+    if (payload.isFragile !== undefined) data.isFragile = payload.isFragile === true;
     if (payload.sizeCategory !== undefined) data.sizeCategory = payload.sizeCategory as PackageSize;
     if (payload.packageType !== undefined) data.packageType = payload.packageType as PackageType;
-    if (payload.shipperNotes !== undefined) data.shipperNotes = String(payload.shipperNotes);
+    if (payload.shipperNotes !== undefined) {
+      const note = payload.shipperNotes === null ? '' : String(payload.shipperNotes).trim();
+      if (note.length > 500) throw new BusinessRuleError('Les instructions dépassent 500 caractères.', 400);
+      data.shipperNotes = note || null;
+    }
 
     // Les coordonnées du destinataire sont portées par le client et son adresse.
     const updated = await this.prisma.$transaction(async (tx) => {

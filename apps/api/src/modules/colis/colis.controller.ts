@@ -11,6 +11,9 @@ import {
   optionalPositiveInt,
 } from '../../common/validation/validators';
 
+/** Nombre maximal de bons imprimés en une fois. */
+export const BONS_LIVRAISON_MAX = 200;
+
 export class ColisController {
   async getAll(req: AuthenticatedRequest, res: Response): Promise<void> {
     const {
@@ -422,6 +425,40 @@ export class ColisController {
    * Le 404 est indistinguable d'un colis inexistant, ce qui évite de confirmer
    * l'existence d'un colis étranger.
    */
+  /** Bon de livraison d'un colis (une page par pièce, imprimée côté navigateur). */
+  async bonLivraison(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const [bon] = await colisService.bonsLivraison([req.params.identifier!], req.dataScope);
+    if (!bon) {
+      res.status(404).json({
+        success: false,
+        message: 'Colis introuvable ou vous n\'avez pas l\'autorisation d\'y accéder.',
+      });
+      return;
+    }
+    res.json({ success: true, data: bon });
+  }
+
+  /**
+   * Bons de livraison de plusieurs colis, pour une impression groupée.
+   * Plafonné : au-delà, la fenêtre d'impression devient inutilisable.
+   */
+  async bonsLivraison(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const raw = (req.body as { identifiers?: unknown } | undefined)?.identifiers;
+    if (!Array.isArray(raw) || raw.length === 0 || raw.some((v) => typeof v !== 'string' || v.length > 64)) {
+      res.status(400).json({ success: false, message: 'Liste de colis invalide (identifiers : tableau de chaînes).' });
+      return;
+    }
+    if (raw.length > BONS_LIVRAISON_MAX) {
+      res.status(400).json({
+        success: false,
+        message: `Au plus ${BONS_LIVRAISON_MAX} bons de livraison par impression.`,
+      });
+      return;
+    }
+    const data = await colisService.bonsLivraison(raw as string[], req.dataScope);
+    res.json({ success: true, data });
+  }
+
   async auditTrail(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       const pkg = await colisService.findById(req.params.identifier!, req.dataScope);
