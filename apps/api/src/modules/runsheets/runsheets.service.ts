@@ -8,6 +8,7 @@
  * livraison saisie tardivement soit immédiatement répercutée.
  */
 
+import { codeMatchesPackage, packageCodeWhere } from '../../common/scan/package-code';
 import { Prisma } from '@prisma/client';
 import { getPrisma } from '../../common/database/prisma-context';
 import { nextRunsheetNumber, tunisDayStamp } from '../../common/database/numbering';
@@ -454,9 +455,7 @@ export class RunsheetsService {
     const pkg = await tx.package.findFirst({
       where: {
         deletedAt: null,
-        ...(UUID_PATTERN.test(identifier)
-          ? { OR: [{ id: identifier }, { trackingNumber: identifier }, { barcode: identifier }] }
-          : { OR: [{ trackingNumber: identifier }, { barcode: identifier }] }),
+        ...packageCodeWhere(identifier),
       },
       include: { currentRunsheet: { select: { id: true, runsheetNumber: true, status: true } } },
     });
@@ -547,7 +546,7 @@ export class RunsheetsService {
 
     const item = runsheet.runsheetItems.find((i) => {
       const p = i.package;
-      return i.packageId === packageIdentifier || p.trackingNumber === packageIdentifier || p.barcode === packageIdentifier;
+      return codeMatchesPackage(packageIdentifier, { id: i.packageId, trackingNumber: p.trackingNumber, barcode: p.barcode });
     });
     if (!item) {
       throw notFound('Ce colis ne figure pas dans la tournée.');
