@@ -430,6 +430,8 @@ export interface PackageDto {
   pieceCount: number;
   contentSummary: string;
   allowOpen: boolean;
+  /** Case « FRAGILE » du bon de livraison. */
+  isFragile: boolean;
   totalPrice: number; // Montant TND
   collectedAmount: number;
   deliveryFee: number;
@@ -925,3 +927,136 @@ export * from './notifications';
 // pas diverger sur ce qu'est une action.
 export * from './audit';
 export * from './reports';
+
+
+// ---------------------------------------------------------------------------
+// Bon de livraison — l'étiquette A4 collée sur chaque pièce du colis
+// ---------------------------------------------------------------------------
+
+/** Abréviation de la taille imprimée sur le bon (« LGR(1/1) »). */
+export const PACKAGE_SIZE_SHORT_LABELS: Readonly<Record<PackageSize, string>> = {
+  [PackageSize.LEGERE]: 'LGR',
+  [PackageSize.MOYENNE]: 'MOY',
+  [PackageSize.LOURDE]: 'LRD',
+  [PackageSize.VOLUMINEUSE]: 'VOL',
+};
+
+/** Mention imprimée quand l'expéditeur n'a laissé aucune remarque. */
+export const BON_LIVRAISON_RIEN_A_SIGNALER = 'R.A.S';
+
+export interface BonLivraisonLigne {
+  designation: string;
+  quantity: number;
+  /** Prix unitaire hors taxes (TND). */
+  unitPriceHT: number;
+  /** Taux de TVA en pourcentage (0 : contre-remboursement non assujetti). */
+  vatRate: number;
+  vatAmount: number;
+  totalTTC: number;
+}
+
+export interface BonLivraisonPiece {
+  /** Rang de la pièce, de 1 à pieceCount. */
+  index: number;
+  /** Code scanné à l'acceptation : le code-barres du colis, ou `code-N` s'il a plusieurs pièces. */
+  code: string;
+}
+
+export interface BonLivraisonDto {
+  packageId: string;
+  /** « Bon de Livraison N° » : le numéro de suivi du colis. */
+  number: string;
+  barcode: string;
+  /** Date de création du colis (ISO). */
+  date: string;
+  sizeCategory: PackageSize;
+  sizeShort: string;
+  pieceCount: number;
+  pieces: BonLivraisonPiece[];
+  originAgency: string;
+  destinationAgency: string;
+  governorate: string;
+  delegation: string;
+  shipper: {
+    name: string;
+    phone: string;
+    taxId?: string;
+    address: string;
+    governorate: string;
+  };
+  recipient: {
+    name: string;
+    phone: string;
+    phoneSecondary?: string;
+    address: string;
+    governorate: string;
+    delegation: string;
+  };
+  /** Remarque de l'expéditeur, ou « R.A.S ». */
+  remark: string;
+  allowOpen: boolean;
+  isFragile: boolean;
+  lines: BonLivraisonLigne[];
+  /** PRIX TOTAL : le montant à encaisser auprès du destinataire. */
+  total: number;
+  carrier: {
+    name: string;
+    taxRegistration?: string;
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Scan d'un colis (application mobile du livreur, lecteurs du dépôt)
+// ---------------------------------------------------------------------------
+
+/** Raison d'un scan refusé, stable : l'application mobile s'y fie. */
+export type ScanErrorCode =
+  | 'INVALID_CODE' // illisible : ni code-barres, ni numéro, ni étiquette de pièce
+  | 'UNKNOWN_CODE' // bien formé, mais aucun colis ne porte ce code
+  | 'PIECE_NOT_FOUND' // étiquette d'une pièce au-delà du nombre de pièces du colis
+  | 'NOT_ASSIGNED' // livreur : colis ni dans sa tournée, ni à ramasser chez un de ses expéditeurs
+  | 'OUT_OF_SCOPE'; // agent de dépôt : colis d'un autre dépôt
+
+/** Lien entre l'utilisateur qui scanne et le colis. */
+export type ScanRelation =
+  | 'DELIVERY' // livreur : colis qui lui est affecté (tournée)
+  | 'PICKUP' // livreur : colis à ramasser chez l'expéditeur d'un de ses ramassages
+  | 'SHIPPER' // expéditeur : son propre colis
+  | 'DEPOT' // agent : colis de son dépôt
+  | 'BACK_OFFICE'; // administration, gestion, finance
+
+/** Action proposée après le scan : l'appel exact à faire. */
+export interface ScanAction {
+  key:
+    | 'start'
+    | 'deliver'
+    | 'partial-delivery'
+    | 'exchange'
+    | 'postpone'
+    | 'failed-attempt'
+    | 'return'
+    | 'pickup-attach'
+    | 'pickup-detach';
+  label: string;
+  method: 'POST' | 'PATCH';
+  /** Chemin relatif à `/api/v1`. */
+  path: string;
+  /** Corps à envoyer tel quel (pour le ramassage) ; sinon voir la documentation de l'action. */
+  body?: Record<string, unknown>;
+}
+
+export interface ScanResultDto {
+  /** Code tel que lu, nettoyé. */
+  code: string;
+  kind: 'barcode' | 'piece' | 'business-number' | 'uuid';
+  /** Pièce lue sur l'étiquette (bon de livraison d'un colis à plusieurs pièces). */
+  piece: { number: number; count: number } | null;
+  relation: ScanRelation;
+  /** Ramassage concerné, pour la relation PICKUP. */
+  pickup?: { referenceNumber: string; status: string; attached: boolean };
+  /** Statuts atteignables depuis le statut courant (machine à états). */
+  nextStatuses: PackageStatus[];
+  /** Actions utiles pour ce rôle, dans cet état. */
+  actions: ScanAction[];
+  package: PackageDto;
+}

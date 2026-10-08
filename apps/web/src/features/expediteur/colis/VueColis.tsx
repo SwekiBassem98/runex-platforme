@@ -43,12 +43,12 @@ import {
   useDifferee,
   useToast,
 } from '@logixpress/ui';
-import { listerColis, lireColis, type FiltresColis } from '@/features/expediteur/lib/client';
+import { listerColis, lireBonsLivraison, type FiltresColis } from '@/features/expediteur/lib/client';
+import { imprimerBonsLivraison } from '@/features/colis/bonLivraison';
 import { GOUVERNORATS, VARIANTE_TYPE, useVocabulaire } from '@/features/expediteur/lib/libelles';
 import { useI18n, type Cle } from '@/i18n';
 import {
   genererHtmlColisListe,
-  genererHtmlColisUnique,
   ouvrirImpression,
   recupererTousLesColisPourImpression,
   LIMITE_IMPRESSION,
@@ -316,25 +316,26 @@ export function VueColis() {
     }
   };
 
+  // Le bon de livraison : l'étiquette A4 collée sur le colis (une page par pièce).
   const handleImprimerUn = async (colisId: string) => {
     try {
-      const detail = await lireColis(colisId);
-      const entreprise = detail.shipperName ?? t('coque.entreprise');
-      const lang = document.documentElement.lang || 'fr';
-      const dir = (document.documentElement.dir as 'ltr' | 'rtl') || 'ltr';
-      const html = genererHtmlColisUnique(detail, {
-        entreprise,
-        langue: lang,
-        dir,
-        formatTND,
-        formatDate,
-        formatDateTime,
-        traduireStatut: (s) => voc.statutColis(s).label,
-        traduireType: (s) => voc.type(s as PackageType),
-      });
-      ouvrirImpression(html);
+      imprimerBonsLivraison(await lireBonsLivraison([colisId]));
     } catch (e) {
       addToast({ type: 'error', title: t('colis.liste.impressionErreur'), message: e instanceof Error ? e.message : undefined });
+    }
+  };
+
+  // Bons de livraison des colis affichés sur la page.
+  const [bonsEnCours, setBonsEnCours] = React.useState(false);
+  const handleImprimerBons = async () => {
+    if (bonsEnCours || colisAffiches.length === 0) return;
+    setBonsEnCours(true);
+    try {
+      imprimerBonsLivraison(await lireBonsLivraison(colisAffiches.map((c) => c.id)));
+    } catch (e) {
+      addToast({ type: 'error', title: t('colis.liste.impressionErreur'), message: e instanceof Error ? e.message : undefined });
+    } finally {
+      setBonsEnCours(false);
     }
   };
 
@@ -511,6 +512,20 @@ export function VueColis() {
           </button>
           <button
             type="button"
+            onClick={() => void handleImprimerBons()}
+            disabled={chargement || colisAffiches.length === 0 || bonsEnCours}
+            title={t('colis.liste.bonsLivraisonPage', { n: colisAffiches.length })}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-semibold border transition cursor-pointer ${
+              chargement || colisAffiches.length === 0
+                ? 'bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed'
+                : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
+            }`}
+          >
+            {bonsEnCours ? <Spinner size="sm" className="text-slate-500" /> : <Printer className="w-3.5 h-3.5" aria-hidden="true" />}
+            <span>{t('colis.liste.bonsLivraisonPage', { n: colisAffiches.length })}</span>
+          </button>
+          <button
+            type="button"
             onClick={() => void handleImprimer()}
             disabled={chargement || total === 0 || impressionEnCours}
             title={
@@ -639,7 +654,7 @@ export function VueColis() {
                         className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 text-slate-700 rounded-md text-xs font-medium hover:bg-slate-50 transition"
                       >
                         <Printer className="w-3.5 h-3.5" aria-hidden="true" />
-                        {t('colis.liste.imprimer')}
+                        {t('colis.liste.bonLivraison')}
                       </button>
                     </div>
                   </div>
@@ -718,8 +733,8 @@ export function VueColis() {
                               e.stopPropagation();
                               void handleImprimerUn(c.id);
                             }}
-                            title={t('colis.liste.imprimerColis')}
-                            aria-label={t('colis.liste.imprimerColis')}
+                            title={t('colis.liste.bonLivraison')}
+                            aria-label={t('colis.liste.bonLivraison')}
                             className="p-1.5 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition"
                           >
                             <Printer className="w-3.5 h-3.5" aria-hidden="true" />

@@ -315,6 +315,7 @@ import type {
   AuthUser,
   LoginResponse,
   PackageDto,
+  BonLivraisonDto,
   RunsheetSummaryDto,
   PickupAppointmentDto,
   PaymentVoucherDto,
@@ -580,6 +581,12 @@ export const authApi = {
 export const colisApi = {
   list: (params?: Record<string, QueryValue>) => request<PackageDto[]>('/colis', { query: params }),
   get: (identifier: string) => requestData<PackageDto>(`/colis/${encodeURIComponent(identifier)}`),
+  /** Bon de livraison d'un colis (étiquette collée sur chaque pièce). */
+  bonLivraison: (identifier: string) =>
+    requestData<BonLivraisonDto>(`/colis/${encodeURIComponent(identifier)}/bon-livraison`),
+  /** Bons de livraison de plusieurs colis (impression groupée, 200 au plus). */
+  bonsLivraison: (identifiers: string[]) =>
+    requestData<BonLivraisonDto[]>('/colis/bons-livraison', { method: 'POST', body: { identifiers } }),
   create: (payload: unknown) => request<PackageDto>('/colis', { method: 'POST', body: payload }),
   update: (identifier: string, payload: unknown) =>
     request<PackageDto>(`/colis/${encodeURIComponent(identifier)}`, {

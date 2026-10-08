@@ -384,6 +384,7 @@ interface Blueprint {
   contentSummary: string;
   sizeCategory?: PackageSize;
   allowOpen?: boolean;
+  isFragile?: boolean;
   driverIndex?: number;
   /** Age en heures : dater la création du colis dans le passé. */
   ageHours: number;
@@ -391,11 +392,11 @@ interface Blueprint {
 
 const BLUEPRINTS: Blueprint[] = [
   { customerCode: 'CLI-2026-000001', shipperCode: 'EXP-BLUESTAR', status: PackageStatus.CREE, packageType: PackageType.NORMAL, totalPrice: '58.000', pieceCount: 2, contentSummary: '1 batterie externe + 1 chargeur', ageHours: 2 },
-  { customerCode: 'CLI-2026-000002', shipperCode: 'EXP-BENHCINE', status: PackageStatus.CREE, packageType: PackageType.NORMAL, totalPrice: '120.500', pieceCount: 1, contentSummary: '1 smartphone reconditionne', allowOpen: true, ageHours: 1 },
+  { customerCode: 'CLI-2026-000002', shipperCode: 'EXP-BENHCINE', status: PackageStatus.CREE, packageType: PackageType.NORMAL, totalPrice: '120.500', pieceCount: 1, contentSummary: '1 smartphone reconditionne', allowOpen: true, isFragile: true, ageHours: 1 },
   { customerCode: 'CLI-2026-000004', shipperCode: 'EXP-BENHCINE', status: PackageStatus.CREE, packageType: PackageType.EXCHANGE, totalPrice: '180.000', pieceCount: 1, contentSummary: '1 article defectueux - echange', allowOpen: true, ageHours: 3 },
   { customerCode: 'CLI-2026-000005', shipperCode: 'EXP-BLUESTAR', status: PackageStatus.CREE, packageType: PackageType.REPORTED, totalPrice: '130.000', pieceCount: 1, contentSummary: 'Colis signale manquant par le client', ageHours: 5 },
   { customerCode: 'CLI-2026-000003', shipperCode: 'EXP-BLUESTAR', status: PackageStatus.RAMASSAGE_PROGRAMME, packageType: PackageType.NORMAL, totalPrice: '75.000', pieceCount: 3, contentSummary: '3 articles mode', sizeCategory: PackageSize.VOLUMINEUSE, ageHours: 8 },
-  { customerCode: 'CLI-2026-000004', shipperCode: 'EXP-BENHCINE', status: PackageStatus.RECU_DEPOT, packageType: PackageType.NORMAL, totalPrice: '240.000', pieceCount: 1, contentSummary: '1 casque Bluetooth', allowOpen: true, ageHours: 26 },
+  { customerCode: 'CLI-2026-000004', shipperCode: 'EXP-BENHCINE', status: PackageStatus.RECU_DEPOT, packageType: PackageType.NORMAL, totalPrice: '240.000', pieceCount: 1, contentSummary: '1 casque Bluetooth', allowOpen: true, isFragile: true, ageHours: 26 },
   { customerCode: 'CLI-2026-000005', shipperCode: 'EXP-BLUESTAR', status: PackageStatus.RECU_DEPOT, packageType: PackageType.NORMAL, totalPrice: '45.000', pieceCount: 4, contentSummary: '4 accessoires maison', sizeCategory: PackageSize.LEGERE, ageHours: 24 },
   { customerCode: 'CLI-2026-000001', shipperCode: 'EXP-BLUESTAR', status: PackageStatus.AFFECTE_RUNSHEET, packageType: PackageType.NORMAL, totalPrice: '88.000', pieceCount: 2, contentSummary: '1 montre + 1 bracelet', driverIndex: 0, ageHours: 30 },
   { customerCode: 'CLI-2026-000002', shipperCode: 'EXP-BENHCINE', status: PackageStatus.EN_COURS_LIVRAISON, packageType: PackageType.NORMAL, totalPrice: '199.000', pieceCount: 1, contentSummary: '1 tablette', sizeCategory: PackageSize.VOLUMINEUSE, driverIndex: 0, ageHours: 28 },
@@ -458,6 +459,7 @@ async function seedPackages(ctx: SeedContext) {
           pieceCount: blueprint.pieceCount,
           contentSummary: blueprint.contentSummary,
           allowOpen: blueprint.allowOpen ?? false,
+          isFragile: blueprint.isFragile ?? false,
           totalPrice: blueprint.totalPrice,
           collectedAmount: isDelivered ? blueprint.totalPrice : '0.000',
           deliveryFee: '7.000',

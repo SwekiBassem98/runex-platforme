@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { healthController } from './modules/health/health.controller';
 import { authController } from './modules/auth/auth.controller';
 import { colisController } from './modules/colis/colis.controller';
+import { scanController } from './modules/scan/scan.controller';
 import { runsheetsController } from './modules/runsheets/runsheets.controller';
 import { notificationsController } from './modules/notifications/notifications.controller';
 import { ramassagesController } from './modules/ramassages/ramassages.controller';
@@ -309,6 +310,35 @@ export function createApiRouter(): Router {
     requireRoles(RoleType.ADMIN, RoleType.GESTIONNAIRE),
     requirePermissions(PermissionCode.COLIS_UPDATE),
     asyncHandler((req, res) => colisController.returnToShipper(req, res))
+  );
+
+  // Scan d'un code (QR / code-barres du bon de livraison) → colis et actions
+  // possibles pour l'utilisateur. Conçu pour l'application mobile du livreur.
+  router.get(
+    ['/scan/:code', '/colis/scan/:code'],
+    authenticateToken,
+    requirePermissions(PermissionCode.COLIS_READ),
+    asyncHandler((req, res) => scanController.scan(req, res))
+  );
+  router.post(
+    ['/scan', '/colis/scan'],
+    authenticateToken,
+    requirePermissions(PermissionCode.COLIS_READ),
+    asyncHandler((req, res) => scanController.scan(req, res))
+  );
+
+  // Bon de livraison : l'étiquette collée sur chaque pièce du colis.
+  router.get(
+    withColisSuffix('/bon-livraison'),
+    authenticateToken,
+    requirePermissions(PermissionCode.COLIS_READ),
+    asyncHandler((req, res) => colisController.bonLivraison(req, res))
+  );
+  router.post(
+    ['/colis/bons-livraison', '/packages/bons-livraison'],
+    authenticateToken,
+    requirePermissions(PermissionCode.COLIS_READ),
+    asyncHandler((req, res) => colisController.bonsLivraison(req, res))
   );
 
   // Journal d'audit d'un colis (traçabilité des modifications)

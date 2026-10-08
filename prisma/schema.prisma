@@ -733,6 +733,7 @@ model Package {
   weightKg       Decimal?      @db.Decimal(8, 3)
   contentSummary String        @db.VarChar(255) // ex: "1 power+1 sanitaire+1 cuisine"
   allowOpen      Boolean       @default(false) // Colis vérifiable à l'ouverture
+  isFragile      Boolean       @default(false) // Case « FRAGILE » du bon de livraison
 
   // Données Financières (CRBT - Cash On Delivery en Dinars Tunisiens)
   declaredValue   Decimal @default(0.000) @db.Decimal(10, 3) // Valeur marchande

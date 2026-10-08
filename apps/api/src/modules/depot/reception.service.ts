@@ -27,6 +27,7 @@
 import { getPrisma } from '../../common/database/prisma-context';
 import { asUuid } from '../../common/errors/api-error';
 import { packageWorkflowService } from '../colis/package-workflow.service';
+import { parsePackageCode } from '../../common/scan/package-code';
 import {
   classifyScannedCode,
   lookupIdentifiers,
@@ -114,6 +115,16 @@ export interface ReceptionInput {
   idempotencyKey?: string | null;
 }
 
+/**
+ * L'étiquette d'une pièce (`<code-barres>-<n°>`, bon de livraison d'un colis à
+ * plusieurs pièces) se lit comme le code-barres du colis.
+ */
+function receptionKind(code: string): ScannedCodeKind {
+  const parsed = parsePackageCode(code);
+  if (parsed.kind === 'piece') return classifyScannedCode(parsed.base);
+  return classifyScannedCode(code);
+}
+
 export class ReceptionService {
   /**
    * Lecture d'un code, sans rien écrire.
@@ -129,7 +140,7 @@ export class ReceptionService {
     depositError: string | null;
   }> {
     const code = raw.trim();
-    const kind = classifyScannedCode(code);
+    const kind = receptionKind(code);
     const deposit = await this.resolveDeposit(depositId);
 
     if (kind === 'malformed') {
@@ -157,7 +168,7 @@ export class ReceptionService {
    */
   async receive(input: ReceptionInput): Promise<ReceptionResult> {
     const code = input.code?.trim() ?? '';
-    const kind = classifyScannedCode(code);
+    const kind = receptionKind(code);
 
     if (!code) {
       return this.refuse('MALFORMED_CODE', 'Aucun code à lire.', null);
@@ -366,13 +377,16 @@ export class ReceptionService {
   }
 
   private async findByCode(code: string) {
+    // Code-barres, numéro (avec ou sans espaces/tirets) ou étiquette de pièce.
     const identifiers = lookupIdentifiers(code);
+    const parsed = parsePackageCode(code);
     return this.prisma().package.findFirst({
       where: {
         deletedAt: null,
         OR: [
           { barcode: identifiers.barcode ?? '__none__' },
           { trackingNumber: identifiers.trackingNumber ?? '__none__' },
+          ...(parsed.kind === 'piece' ? [{ barcode: parsed.base }, { trackingNumber: parsed.base }] : []),
         ],
       },
       select: {

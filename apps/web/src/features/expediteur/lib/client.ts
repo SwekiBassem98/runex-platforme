@@ -16,6 +16,7 @@
  */
 
 import {
+  type BonLivraisonDto,
   type NotificationDto,
   type PackageDto,
   type PaymentVoucherDto,
@@ -88,6 +89,14 @@ export async function compterColis(filtres: FiltresColis): Promise<number> {
 /** Fiche complète d'un colis : chronologie, tentatives, retours, échange, audit. */
 export async function lireColis(identifiant: string): Promise<PackageDto> {
   return requestData<PackageDto>(`/colis/${encodeURIComponent(identifiant)}`);
+}
+
+/** Bons de livraison (étiquette collée sur chaque pièce), dans l'ordre demandé. */
+export async function lireBonsLivraison(identifiants: string[]): Promise<BonLivraisonDto[]> {
+  if (identifiants.length === 1) {
+    return [await requestData<BonLivraisonDto>(`/colis/${encodeURIComponent(identifiants[0]!)}/bon-livraison`)];
+  }
+  return requestData<BonLivraisonDto[]>('/colis/bons-livraison', { method: 'POST', body: { identifiers: identifiants } });
 }
 
 /**
