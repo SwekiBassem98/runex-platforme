@@ -9,6 +9,8 @@ base fraîchement seedée (`npm run prisma:deploy && npm run prisma:seed`).
 | `../qa-interdepot-26.mjs` | inter-dépôts au scan (livraison, retours, pièces) | API seule |
 | `../qa-interdepot-ui-26.mjs` | écrans inter-dépôts + organiser un ramassage | web + navigateur |
 | `../qa-bon-livraison-27.mjs` | bon de livraison : contenu, périmètre, impression, QR décodé, PDF A4 | web + navigateur (+ `JSQR`, `PNGJS` pour décoder le QR) |
+| `../qa-sounds-28.mjs` | retour sonore web : fichiers, décodage, réception, acceptation, ramassages, réglage | web + navigateur |
+| `../qa-responsive-phones-28.mjs` | tous les écrans à 320, 360, 375, 390, 412, 430 et 768 px | web + navigateur |
 | `../qa-scan-mobile-27.mjs` | scan mobile : `/scan`, relations, actions, codes de refus, étiquettes de pièce partout | API seule |
 | `../qa-runsheet-ui-26.mjs` | cycle de tournée cliqué dans le back-office | web + navigateur |
 | `../qa-colis-ui-26.mjs` | « Nouveau colis » de l'exploitation | web + navigateur |

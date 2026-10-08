@@ -59,7 +59,9 @@
     "qa:colis-ui": "node qa/qa-colis-ui-26.mjs",
     "qa:interdepot-ui": "node qa/qa-interdepot-ui-26.mjs",
     "qa:bon-livraison": "node qa/qa-bon-livraison-27.mjs",
-    "qa:scan": "node qa/qa-scan-mobile-27.mjs"
+    "qa:scan": "node qa/qa-scan-mobile-27.mjs",
+    "qa:sounds": "node qa/qa-sounds-28.mjs",
+    "qa:responsive-phones": "node qa/qa-responsive-phones-28.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",

@@ -13,6 +13,7 @@
  * distinct, atteint par `/expediteur/login`.
  */
 
+import { useFeedbackOn } from '@/lib/useFeedbackOn';
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -29,6 +30,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useFeedbackOn(error, 'error');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [demoUsers, setDemoUsers] = useState<DemoUser[]>([]);
   const [apiReachable, setApiReachable] = useState<boolean | null>(null);

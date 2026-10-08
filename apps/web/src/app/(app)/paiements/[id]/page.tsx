@@ -10,6 +10,7 @@
  * motif.
  */
 
+import { useFeedbackOn } from '@/lib/useFeedbackOn';
 import React, { useCallback, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { Card, PageHeader, Badge, formatDateTime, formatMoney } from '@logixpress/ui';
@@ -45,6 +46,9 @@ export default function PaiementDetailPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // Retour sonore des actions de l'écran (succès, refus).
+  useFeedbackOn(notice, 'complete');
+  useFeedbackOn(error, 'error');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [transactionRef, setTransactionRef] = useState('');

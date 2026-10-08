@@ -16,6 +16,7 @@
  * au lieu d'afficher une ligne vide qui laisserait croire à une donnée manquante.
  */
 
+import { useFeedbackOn } from '@/lib/useFeedbackOn';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Pencil, Plus, RotateCcw, ShieldCheck } from 'lucide-react';
 import {
@@ -129,6 +130,10 @@ export default function AdminLivreursPage() {
   const [enEdition, setEnEdition] = useState<DriverDto | null>(null);
   const [soumission, setSoumission] = useState(false);
   const [erreurForm, setErreurForm] = useState<string | null>(null);
+  // Retour sonore des actions de l'écran (succès, refus).
+  useFeedbackOn(message, 'success');
+  useFeedbackOn(erreurForm, 'error');
+  useFeedbackOn(erreur, 'error');
   const [erreursChamps, setErreursChamps] = useState<Record<string, string>>({});
   const [avecCompte, setAvecCompte] = useState(true);
   const [comptesLibres, setComptesLibres] = useState<CompteLibre[]>([]);

@@ -19,6 +19,7 @@
  *     mémoire finit toujours par mentir.
  */
 
+import { playFeedback } from './feedback';
 import React, {
   createContext,
   useCallback,
@@ -138,6 +139,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         if (current.some((n) => n.id === payload.id)) return current;
         return [payload, ...current].slice(0, KEPT_SIZE);
       });
+      // Nouvelle notification en direct : cloche douce (une seule par événement).
+      playFeedback('notify');
       // Le compteur arrive séparément ; on ne le devine pas ici.
     });
 

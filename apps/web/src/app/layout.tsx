@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { ToastProvider } from '@logixpress/ui';
+import { FeedbackToastProvider } from '@/components/FeedbackToastProvider';
 import { AuthProvider } from '@/lib/auth';
 import { SCRIPT_PREMIER_RENDU } from '@/i18n';
 import './globals.css';
@@ -36,7 +36,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className="bg-slate-50 text-slate-900 antialiased font-sans">
         <AuthProvider>
-          <ToastProvider>{children}</ToastProvider>
+          <FeedbackToastProvider>{children}</FeedbackToastProvider>
         </AuthProvider>
       </body>
     </html>
