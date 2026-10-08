@@ -259,7 +259,7 @@ export class RunsheetsController {
       res.status(400).json({ success: false, message: 'Identifiant chauffeur requis.' });
       return;
     }
-    const runsheet = await runsheetsService.getActiveRunsheetForDriver(driverId);
+    const runsheet = await runsheetsService.getActiveRunsheetForDriver(driverId, req.dataScope);
     if (!runsheet) {
       res.status(404).json({ success: false, message: 'Aucune tournée active pour ce chauffeur.' });
       return;

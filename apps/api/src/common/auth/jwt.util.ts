@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { promisify } from 'node:util';
 import type { AuthUser } from '@logixpress/types';
 
 /**
@@ -104,38 +105,85 @@ interface TokenPayload {
   jti: string;
 }
 
-const PBKDF2_ITERATIONS = 100000;
+/** Itérations des anciens condensats `<sel>:<hash>` (lus, plus jamais écrits). */
+const LEGACY_ITERATIONS = 100_000;
+/**
+ * Itérations des nouveaux condensats (OWASP 2023 : ≥ 210 000 pour SHA-512).
+ * Écrit dans le condensat lui-même : relever ce nombre plus tard ne casse
+ * aucun mot de passe existant.
+ */
+const PBKDF2_ITERATIONS = Number(process.env.PASSWORD_HASH_ITERATIONS ?? 210_000);
 const PBKDF2_KEY_LENGTH = 64;
 const PBKDF2_DIGEST = 'sha512';
+const pbkdf2Async = promisify(crypto.pbkdf2);
 
-/**
- * Hash un mot de passe avec PBKDF2 et un sel aléatoire.
- * Format stocké : `<sel hex>:<hash hex>`.
- */
-export function hashPassword(password: string): string {
-  const salt = crypto.randomBytes(16).toString('hex');
-  const hash = crypto
-    .pbkdf2Sync(password, salt, PBKDF2_ITERATIONS, PBKDF2_KEY_LENGTH, PBKDF2_DIGEST)
-    .toString('hex');
-  return `${salt}:${hash}`;
+interface ParsedHash {
+  iterations: number;
+  salt: string;
+  hash: Buffer;
+}
+
+/** `pbkdf2$<itérations>$<sel>$<hash>`, ou l'ancien `<sel>:<hash>`. */
+function parseHash(stored: string): ParsedHash | null {
+  if (stored.startsWith('pbkdf2$')) {
+    const [, it, salt, hash] = stored.split('$');
+    const iterations = Number(it);
+    if (!salt || !hash || !Number.isInteger(iterations) || iterations < 1) return null;
+    return { iterations, salt, hash: Buffer.from(hash, 'hex') };
+  }
+  const [salt, hash] = stored.split(':');
+  if (!salt || !hash) return null;
+  return { iterations: LEGACY_ITERATIONS, salt, hash: Buffer.from(hash, 'hex') };
+}
+
+function formatHash(salt: string, hash: Buffer): string {
+  return `pbkdf2$${PBKDF2_ITERATIONS}$${salt}$${hash.toString('hex')}`;
 }
 
 /**
- * Vérifie un mot de passe contre son hash.
+ * Condensat d'un mot de passe (PBKDF2-SHA512, sel aléatoire).
+ * Version synchrone : réservée aux scripts (seed, création d'administrateur).
+ */
+export function hashPassword(password: string): string {
+  const salt = crypto.randomBytes(16).toString('hex');
+  return formatHash(salt, crypto.pbkdf2Sync(password, salt, PBKDF2_ITERATIONS, PBKDF2_KEY_LENGTH, PBKDF2_DIGEST));
+}
+
+/** Version asynchrone, pour l'API : ne bloque pas la boucle d'événements. */
+export async function hashPasswordAsync(password: string): Promise<string> {
+  const salt = crypto.randomBytes(16).toString('hex');
+  return formatHash(salt, await pbkdf2Async(password, salt, PBKDF2_ITERATIONS, PBKDF2_KEY_LENGTH, PBKDF2_DIGEST));
+}
+
+/** Vrai si le condensat doit être recalculé au coût actuel (ancien format ou moins d'itérations). */
+export function passwordNeedsRehash(storedHash: string): boolean {
+  const parsed = parseHash(storedHash);
+  return !parsed || parsed.iterations < PBKDF2_ITERATIONS;
+}
+
+/**
+ * Vérifie un mot de passe contre son condensat (synchrone, scripts).
  *
  * `timingSafeEqual` lève une exception si les deux buffers n'ont pas la même
- * longueur : un hash corrompu en base provoquerait donc une 500 au lieu d'un
- * simple refus d'authentification. On compare les longueurs au préalable.
+ * longueur : un condensat corrompu provoquerait une 500 au lieu d'un refus.
  */
 export function verifyPassword(password: string, storedHash: string): boolean {
-  const [salt, originalHash] = storedHash.split(':');
-  if (!salt || !originalHash) return false;
+  const parsed = parseHash(storedHash);
+  if (!parsed || parsed.hash.length !== PBKDF2_KEY_LENGTH) return false;
+  const actual = crypto.pbkdf2Sync(password, parsed.salt, parsed.iterations, PBKDF2_KEY_LENGTH, PBKDF2_DIGEST);
+  return crypto.timingSafeEqual(actual, parsed.hash);
+}
 
-  const expected = Buffer.from(originalHash, 'hex');
-  if (expected.length !== PBKDF2_KEY_LENGTH) return false;
-
-  const actual = crypto.pbkdf2Sync(password, salt, PBKDF2_ITERATIONS, PBKDF2_KEY_LENGTH, PBKDF2_DIGEST);
-  return crypto.timingSafeEqual(actual, expected);
+/**
+ * Vérification asynchrone (connexion) : calcul PBKDF2 hors de la boucle
+ * d'événements — une rafale de connexions ne gèle plus toute l'API sur une
+ * petite instance.
+ */
+export async function verifyPasswordAsync(password: string, storedHash: string): Promise<boolean> {
+  const parsed = parseHash(storedHash);
+  if (!parsed || parsed.hash.length !== PBKDF2_KEY_LENGTH) return false;
+  const actual = await pbkdf2Async(password, parsed.salt, parsed.iterations, PBKDF2_KEY_LENGTH, PBKDF2_DIGEST);
+  return crypto.timingSafeEqual(actual, parsed.hash);
 }
 
 /** Comparaison à temps constant de deux chaînes de même taille. */

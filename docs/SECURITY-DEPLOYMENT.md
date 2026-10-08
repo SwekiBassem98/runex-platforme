@@ -67,6 +67,10 @@ déployer sans réintroduire les failles corrigées, et ce qui reste ouvert.
 
 ## 2. Déploiement
 
+> Hébergement gratuit Vercel + Koyeb + Neon et APK livreur : voir
+> **`docs/DEPLOIEMENT-PRODUCTION.md`** (pas à pas, variables, audit final).
+> Ci-dessous : déploiement sur un serveur avec Docker Compose.
+
 ```bash
 cp .env.example .env    # puis renseigner de VRAIS secrets
 export POSTGRES_PASSWORD=… JWT_ACCESS_SECRET=$(openssl rand -hex 32) \
@@ -83,8 +87,9 @@ Points à respecter :
    (`API_DATABASE_URL`). Un superutilisateur contourne les protections du
    journal d'audit (voir `docker/postgres/01-audit-owner.sql`,
    `scripts/audit-ownership.sql`).
-2. Derrière un reverse proxy : `TRUST_PROXY=true` (et `TRUST_PROXY_HOPS`), sinon
-   la limitation de débit voit l'IP du proxy.
+2. Derrière un reverse proxy : 1 relais est approuvé par défaut en production
+   (`TRUST_PROXY_HOPS` pour en changer, `TRUST_PROXY=false` si l'API est exposée
+   directement) ; contrôle avec `GET /api/v1/health/network` (admin).
 3. Ne jamais définir en production : `ENABLE_DEMO_ACCOUNTS`,
    `PASSWORD_RESET_LOG_TOKEN`, `RATE_LIMIT_DISABLED`.
 4. `NEXT_PUBLIC_API_URL` est figée au build du web.

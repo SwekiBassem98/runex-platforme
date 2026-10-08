@@ -21,7 +21,7 @@
 
 import { Prisma, NotificationType } from '@prisma/client';
 import { getPrisma } from '../../common/database/prisma-context';
-import { hashPassword } from '../../common/auth/jwt.util';
+import { hashPasswordAsync } from '../../common/auth/jwt.util';
 import { auditService } from '../../common/audit/audit.service';
 import { sessionService } from '../../common/auth/session.service';
 import { notificationService } from '../../common/notifications/notification.service';
@@ -238,7 +238,7 @@ export class UsersService {
           email,
           fullName,
           phone,
-          passwordHash: hashPassword(input.password),
+          passwordHash: await hashPasswordAsync(input.password),
           isActive: input.isActive !== false,
           depositId,
           userRoles: { create: { roleId: roleRow.id } },
@@ -338,7 +338,7 @@ export class UsersService {
       if (!input.password || input.password.length < 8) {
         throw badRequest('Le mot de passe doit comporter au moins 8 caractères.');
       }
-      data.passwordHash = hashPassword(input.password);
+      data.passwordHash = await hashPasswordAsync(input.password);
     }
     if (input.depositId !== undefined) data.depositId = await this.resoudreDeposit(input.depositId);
 

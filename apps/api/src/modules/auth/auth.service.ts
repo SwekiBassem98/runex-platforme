@@ -19,7 +19,9 @@ import { RoleType } from '@logixpress/types';
 import type { AuthUser, LoginResponse } from '@logixpress/types';
 import {
   hashPassword,
-  verifyPassword,
+  verifyPasswordAsync,
+  hashPasswordAsync,
+  passwordNeedsRehash,
   generateTokenPair,
   verifyRefreshToken,
   signPasswordResetToken,
@@ -27,7 +29,7 @@ import {
   passwordFingerprint,
 } from '../../common/auth/jwt.util';
 import { getPermissionsForRole } from '../../common/auth/permissions.map';
-import { sessionService, type SessionMeta } from '../../common/auth/session.service';
+import { msSinceRotation, sessionService, type SessionMeta } from '../../common/auth/session.service';
 import { getPrisma } from '../../common/database/prisma-context';
 import { ApiError } from '../../common/errors/api-error';
 
@@ -69,6 +71,32 @@ const ROLE_DISPLAY_NAMES: Record<RoleType, string> = {
 };
 
 /** Erreur d'authentification : toujours 401 sauf mention contraire. */
+const ACCOUNT_LOCKED =
+  'Trop de tentatives de connexion échouées pour ce compte. Réessayez dans 15 minutes.';
+const LOCK_WINDOW_MS = 15 * 60 * 1000;
+const LOCK_MAX_FAILURES = Number(process.env.LOGIN_ACCOUNT_MAX_FAILURES ?? 10);
+const failures = new Map<string, { count: number; first: number }>();
+
+function accountLocked(userId: string): boolean {
+  const f = failures.get(userId);
+  if (!f) return false;
+  if (Date.now() - f.first > LOCK_WINDOW_MS) {
+    failures.delete(userId);
+    return false;
+  }
+  return f.count >= LOCK_MAX_FAILURES;
+}
+
+function recordFailure(userId: string) {
+  const f = failures.get(userId);
+  if (!f || Date.now() - f.first > LOCK_WINDOW_MS) failures.set(userId, { count: 1, first: Date.now() });
+  else f.count += 1;
+}
+
+function clearFailures(userId: string) {
+  failures.delete(userId);
+}
+
 function authError(message: string, status = 401): ApiError {
   return new ApiError(message, status);
 }
@@ -232,9 +260,24 @@ export class AuthService {
 
     // Le mot de passe est vérifié AVANT tout autre contrôle : un message
     // « compte désactivé » ne doit pas révéler qu'une adresse existe.
-    const passwordOk = verifyPassword(String(passwordPlain), user?.passwordHash ?? DUMMY_PASSWORD_HASH);
+    // Verrou par compte, quel que soit l'identifiant employé (email,
+    // téléphone sous toutes ses écritures, code livreur, matricule) : le
+    // limiteur HTTP compte par identifiant saisi, ce verrou compte par compte.
+    if (user && accountLocked(user.id)) {
+      throw authError(ACCOUNT_LOCKED, 429);
+    }
+    const passwordOk = await verifyPasswordAsync(String(passwordPlain), user?.passwordHash ?? DUMMY_PASSWORD_HASH);
     if (!user || !passwordOk) {
+      if (user) recordFailure(user.id);
       throw authError(INVALID_CREDENTIALS);
+    }
+    clearFailures(user.id);
+    // Ancien condensat (moins d'itérations) : remplacé au coût actuel, sans
+    // demander à personne de changer de mot de passe.
+    if (passwordNeedsRehash(user.passwordHash)) {
+      void hashPasswordAsync(String(passwordPlain))
+        .then((passwordHash) => getPrisma().user.update({ where: { id: user.id }, data: { passwordHash } }))
+        .catch(() => undefined);
     }
 
     const authUser = this.assertUsable(user);
@@ -267,6 +310,13 @@ export class AuthService {
 
     const session = await sessionService.findByRefreshToken(refreshToken);
     if (!session || session.id !== payload.sid || session.revokedAt || session.expiresAt <= new Date()) {
+      // Jeton authentique mais déjà remplacé : rejoué plus d'une minute après
+      // la rotation, c'est un vol probable — la session entière est fermée.
+      // (Deux onglets qui rafraîchissent au même instant restent tolérés.)
+      if (!session) {
+        const elapsed = msSinceRotation(payload.sid);
+        if (elapsed !== null && elapsed > 60_000) await sessionService.revoke(payload.sid);
+      }
       throw authError('Jeton de rafraîchissement déjà utilisé ou révoqué.');
     }
 
@@ -359,7 +409,7 @@ export class AuthService {
 
     await prisma.user.update({
       where: { id: user.id },
-      data: { passwordHash: hashPassword(String(newPasswordPlain)) },
+      data: { passwordHash: await hashPasswordAsync(String(newPasswordPlain)) },
     });
     // Seules les sessions de CE compte sont fermées.
     await sessionService.revokeAllForUser(user.id);

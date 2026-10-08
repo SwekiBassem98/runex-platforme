@@ -42,7 +42,13 @@ export function parsePackageCode(input: unknown): ParsedPackageCode {
   // Lien de suivi : on garde le dernier segment non vide, sans paramètres.
   if (/^https?:\/\//i.test(raw)) {
     const path = raw.replace(/[?#].*$/, '').split('/').filter(Boolean);
-    raw = decodeURIComponent(path[path.length - 1] ?? '');
+    const last = path[path.length - 1] ?? '';
+    try {
+      raw = decodeURIComponent(last);
+    } catch {
+      // `%` isolé (« %E0% ») : lien illisible, refus propre plutôt qu'une 500.
+      return { raw: last, base: '', piece: null, kind: 'malformed' };
+    }
   }
   // Les lecteurs et la saisie manuelle ajoutent parfois des espaces.
   raw = raw.replace(/\s+/g, '');

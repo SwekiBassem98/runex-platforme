@@ -821,7 +821,10 @@ export class RunsheetsService {
   }
 
   /** Tournée ouverte d'un livreur, s'il en a une. */
-  async getActiveRunsheetForDriver(driverId: string): Promise<RunsheetSummaryDto | null> {
+  async getActiveRunsheetForDriver(
+    driverId: string,
+    scope?: { depositId?: string }
+  ): Promise<RunsheetSummaryDto | null> {
     const prisma = getPrisma();
     // Un identifiant qui n'est pas un UUID désigne forcément aucun livreur.
     const uuid = asUuid(driverId);
@@ -831,6 +834,8 @@ export class RunsheetsService {
       where: {
         driverId: uuid,
         status: { in: ['EN_ATTENTE', 'VALIDEE_DEPART', 'EN_COURS'] },
+        // Un agent de dépôt ne lit que les tournées de son dépôt.
+        ...(scope?.depositId ? { depositId: scope.depositId } : {}),
       },
       include: RUNSHEET_INCLUDE,
       orderBy: { tourDate: 'desc' },
