@@ -16,6 +16,8 @@ import {
   ArrowRightLeft,
   Barcode,
   BarChart3,
+  Bike,
+  Building2,
   Calendar,
   CreditCard,
   LogOut,
@@ -25,6 +27,7 @@ import {
   Search,
   ShieldCheck,
   Truck,
+  Users,
   Wallet,
 } from 'lucide-react';
 import { AppShell, type NavItem } from '@logixpress/ui';
@@ -54,6 +57,9 @@ const NAV_ROUTES: Record<string, string> = {
   rapports: '/rapports',
   audit: '/audit',
   recherche: '/recherche',
+  'admin-utilisateurs': '/admin/utilisateurs',
+  'admin-expediteurs': '/admin/expediteurs',
+  'admin-livreurs': '/admin/livreurs',
   'design-system': '/design-system',
 };
 
@@ -98,6 +104,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   // il croise tous les dossiers, tous les auteurs et tous les montants.
   const peutConsulterAudit = user?.permissions?.includes(PermissionCode.AUDIT_READ) ?? false;
   const peutConsulterRapports = user?.permissions?.includes(PermissionCode.REPORT_READ) ?? false;
+  // L'administration des comptes, des expéditeurs et des livreurs est une porte
+  // à part : elle touche aux accès des personnes. Elle suit `USER_READ`, la même
+  // permission que celle que l'API exige — l'API restant seule décisive.
+  const peutAdministrer = user?.permissions?.includes(PermissionCode.USER_READ) ?? false;
 
   const navItems: NavItem[] = [
     ...(isDriver
@@ -163,6 +173,29 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             id: 'audit',
             label: "Journal d'audit",
             icon: <ScrollText className="w-4 h-4" />,
+          },
+        ]
+      : []),
+    // Administration des accès. Trois entrées distinctes : un compte n'est ni
+    // un dossier d'expéditeur ni une fiche chauffeur, et les écrans ne font pas
+    // la même chose. `EXPEDITEUR_ADMIN` et `EXPEDITEUR_USER` restent séparés à
+    // l'intérieur de l'écran des comptes — ce sont deux niveaux de droit réels.
+    ...(peutAdministrer
+      ? [
+          {
+            id: 'admin-utilisateurs',
+            label: 'Comptes utilisateurs',
+            icon: <Users className="w-4 h-4" />,
+          },
+          {
+            id: 'admin-expediteurs',
+            label: 'Expéditeurs',
+            icon: <Building2 className="w-4 h-4" />,
+          },
+          {
+            id: 'admin-livreurs',
+            label: 'Livreurs',
+            icon: <Bike className="w-4 h-4" />,
           },
         ]
       : []),

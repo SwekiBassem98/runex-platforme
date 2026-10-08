@@ -77,9 +77,9 @@ export function MetricCard({
                 : 'text-slate-500'
             }`}
           >
-            {trend === 'up' && <ArrowUpRight className="w-3.5 h-3.5 mr-0.5" />}
-            {trend === 'down' && <ArrowDownRight className="w-3.5 h-3.5 mr-0.5" />}
-            {trend === 'neutral' && <Minus className="w-3 h-3 mr-0.5" />}
+            {trend === 'up' && <ArrowUpRight className="w-3.5 h-3.5 me-0.5" />}
+            {trend === 'down' && <ArrowDownRight className="w-3.5 h-3.5 me-0.5" />}
+            {trend === 'neutral' && <Minus className="w-3 h-3 me-0.5" />}
             {change}
           </span>
         )}

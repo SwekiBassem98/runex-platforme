@@ -35,6 +35,10 @@ import {
   Coins,
   MapPin,
   Layers,
+  Pencil,
+  Trash2,
+  Eye,
+  Save,
 } from 'lucide-react';
 
 import {
@@ -139,11 +143,18 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
   const [transitionAConfirmer, setTransitionAConfirmer] = useState<{ status: string; label: string } | null>(null);
   /** Colis à retirer de la tournée, en attente de confirmation. */
   const [retraitAConfirmer, setRetraitAConfirmer] = useState<{ trackingNumber: string; client: string } | null>(null);
+  /** Runsheet à supprimer, en attente de confirmation. */
+  const [suppressionAConfirmer, setSuppressionAConfirmer] = useState<RunsheetSummaryDto | null>(null);
+  /** Runsheet en édition */
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingRunsheet, setEditingRunsheet] = useState<RunsheetSummaryDto | null>(null);
+  const [editForm, setEditForm] = useState({ driverId: '', tourDate: '', notes: '' });
+  const [isUpdating, setIsUpdating] = useState(false);
 
   // Formulaire Création
   const [createForm, setCreateForm] = useState({
-    driverId: 'drv-001',
-    driverName: 'Hamza Ben Dhif',
+    driverId: '',
+    driverName: '',
     tourDate: new Date().toISOString().split('T')[0],
     notes: 'Tournée Ben Arous & Sud',
   });
@@ -162,12 +173,43 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
   const [tableSearchTerm, setTableSearchTerm] = useState('');
   const [tableStatusFilter, setTableStatusFilter] = useState('ALL');
 
-  const availableDrivers = [
-    { id: 'drv-001', name: 'Hamza Ben Dhif', phone: '20112233' },
-    { id: 'drv-002', name: 'Ghassan Mghirbi', phone: '21334455' },
-    { id: 'drv-003', name: 'Mohamed Ali LOUATI', phone: '22556677' },
-    { id: 'drv-004', name: 'Ahmed Hamidou', phone: '23778899' },
-  ];
+  // Livreurs réels — remplace la liste écrite en dur (drv-xxx) qui n'existe dans aucune table.
+  const [availableDrivers, setAvailableDrivers] = useState<
+    { id: string; name: string; phone: string; driverCode: string }[]
+  >([]);
+
+  // Charge la flotte réelle depuis l'API (Driver.id canonique, pas User.id ni matricule).
+  useEffect(() => {
+    if (!token) return;
+    let annule = false;
+    void (async () => {
+      try {
+        const res = await fetch('/api/v1/drivers?limit=100', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await res.json();
+        if (!annule && data.success && Array.isArray(data.data)) {
+          const liste = data.data.map((d: any) => ({
+            id: d.id as string,
+            name: (d.user?.fullName as string) ?? d.driverCode,
+            phone: (d.user?.phone as string) ?? '',
+            driverCode: d.driverCode as string,
+          }));
+          setAvailableDrivers(liste);
+          // Pré-sélectionne le premier livreur réel si aucun n'est encore choisi.
+          if (liste.length > 0) {
+            setCreateForm((prev) => {
+              if (prev.driverId && liste.some((x: any) => x.id === prev.driverId)) return prev;
+              return { ...prev, driverId: liste[0].id, driverName: liste[0].name };
+            });
+          }
+        }
+      } catch {}
+    })();
+    return () => {
+      annule = true;
+    };
+  }, [token]);
 
   // Chargement des runsheets
   const loadRunsheets = async () => {
@@ -424,6 +466,80 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
     }
   };
 
+  // Ouvrir édition
+  const openEditModal = (r: RunsheetSummaryDto) => {
+    setEditingRunsheet(r);
+    setEditForm({ driverId: r.driverId, tourDate: r.tourDate.slice(0, 10), notes: r.notes ?? '' });
+    setShowEditModal(true);
+  };
+
+  const handleUpdateRunsheet = async (e?: React.SyntheticEvent) => {
+    e?.preventDefault();
+    if (!editingRunsheet) return;
+    setIsUpdating(true);
+    try {
+      const payload: Record<string, string> = {};
+      if (editForm.driverId !== editingRunsheet.driverId) payload.driverId = editForm.driverId;
+      if (editForm.tourDate !== editingRunsheet.tourDate.slice(0, 10)) payload.tourDate = editForm.tourDate;
+      if ((editForm.notes ?? '') !== (editingRunsheet.notes ?? '')) payload.notes = editForm.notes;
+      if (Object.keys(payload).length === 0) {
+        addToast({ type: 'info', title: 'Aucune modification', message: 'Aucun champ n\u2019a été modifié.' });
+        setShowEditModal(false);
+        return;
+      }
+      const res = await fetch(`/api/v1/runsheets/${editingRunsheet.runsheetNumber}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (data.success) {
+        addToast({ type: 'success', title: 'Tournée mise à jour', message: `N° ${data.data.runsheetNumber} mise à jour.` });
+        setShowEditModal(false);
+        setEditingRunsheet(null);
+        loadRunsheets();
+        if (runsheet && runsheet.runsheetNumber === data.data.runsheetNumber) setRunsheet(data.data);
+      } else {
+        addToast({ type: 'error', title: 'Modification impossible', message: data.message });
+      }
+    } catch {
+      addToast({ type: 'error', title: 'Erreur', message: 'Échec de la mise à jour.' });
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const handleDeleteRunsheet = async () => {
+    if (!suppressionAConfirmer) return;
+    const target = suppressionAConfirmer;
+    try {
+      const res = await fetch(`/api/v1/runsheets/${target.runsheetNumber}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (data.success || res.ok) {
+        addToast({ type: 'success', title: 'Tournée supprimée', message: `N° ${target.runsheetNumber} supprimée.` });
+        setSuppressionAConfirmer(null);
+        if (viewMode === 'detail' && runsheet?.runsheetNumber === target.runsheetNumber) {
+          setViewMode('list');
+          setRunsheet(null);
+          setSelectedRunsheetId(null);
+        }
+        loadRunsheets();
+      } else {
+        addToast({ type: 'error', title: 'Suppression impossible', message: data.message });
+        setSuppressionAConfirmer(null);
+      }
+    } catch {
+      addToast({ type: 'error', title: 'Erreur', message: 'Échec de la suppression.' });
+      setSuppressionAConfirmer(null);
+    }
+  };
+
+  const isRunsheetEditable = (r: RunsheetSummaryDto) => ['BROUILLON', 'EN_ATTENTE'].includes(r.status);
+  const isRunsheetDeletable = (r: RunsheetSummaryDto) => ['BROUILLON', 'EN_ATTENTE'].includes(r.status) && r.totalPackages === 0;
+
   // Export CSV / Impression
   const handleExportCSV = () => {
     if (!runsheet || !runsheet.packages) return;
@@ -661,7 +777,7 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
                 </div>
 
                 {enFiches && (
-                  <div className="sm:hidden bg-white border border-slate-200 rounded-lg overflow-hidden">
+                  <div className="sm:hidden bg-white border border-slate-200 rounded-lg overflow-hidden divide-y divide-slate-100">
                     {filteredRunsheets.map((r) => {
                       const badge = RUNSHEET_STATUS_BADGES[r.status] ?? {
                         label: r.status,
@@ -669,36 +785,44 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
                         text: 'text-slate-800',
                         border: 'border-slate-300',
                       };
+                      const editable = isRunsheetEditable(r);
+                      const deletable = isRunsheetDeletable(r);
                       return (
-                        <FicheLigne
-                          key={r.id}
-                          titre={r.runsheetNumber}
-                          sousTitre={`${r.driverName} · ${r.depositName}`}
-                          onClick={() => {
-                            setSelectedRunsheetId(r.runsheetNumber);
-                            setViewMode('detail');
-                          }}
-                          action={
-                            <span className={`px-2 py-0.5 rounded text-[11px] font-semibold border ${badge.bg} ${badge.text} ${badge.border}`}>
-                              {badge.label}
-                            </span>
-                          }
-                          champs={[
-                            { libelle: 'Date tournée', valeur: formatDate(r.tourDate) },
-                            { libelle: 'Colis prévus', valeur: r.totalPackages },
-                            { libelle: 'Livrés', valeur: r.deliveredCount },
-                            { libelle: 'À encaisser', valeur: formatTND(r.expectedCash), numerique: true },
-                            { libelle: 'Encaissé', valeur: formatTND(r.collectedCash), numerique: true },
-                            { libelle: 'Reportés / retournés', valeur: r.postponedCount + r.returnedCount },
-                          ]}
-                        />
+                        <div key={r.id} className="space-y-0">
+                          <FicheLigne
+                            titre={r.runsheetNumber}
+                            sousTitre={`${r.driverName} · ${r.depositName}`}
+                            onClick={() => {
+                              setSelectedRunsheetId(r.runsheetNumber);
+                              setViewMode('detail');
+                            }}
+                            action={
+                              <span className={`px-2 py-0.5 rounded text-[11px] font-semibold border ${badge.bg} ${badge.text} ${badge.border}`}>
+                                {badge.label}
+                              </span>
+                            }
+                            champs={[
+                              { libelle: 'Date tournée', valeur: formatDate(r.tourDate) },
+                              { libelle: 'Colis prévus', valeur: r.totalPackages },
+                              { libelle: 'Livrés', valeur: r.deliveredCount },
+                              { libelle: 'À encaisser', valeur: formatTND(r.expectedCash), numerique: true },
+                              { libelle: 'Encaissé', valeur: formatTND(r.collectedCash), numerique: true },
+                              { libelle: 'Reportés / retournés', valeur: r.postponedCount + r.returnedCount },
+                            ]}
+                          />
+                          <div className="flex items-center gap-2 px-3 pb-3">
+                            <button type="button" onClick={() => { setSelectedRunsheetId(r.runsheetNumber); setViewMode('detail'); }} className="flex-1 py-1.5 rounded border border-slate-200 bg-white text-slate-700 text-xs font-semibold flex items-center justify-center gap-1"><Eye className="w-3.5 h-3.5" /> Voir</button>
+                            <button type="button" onClick={() => openEditModal(r)} disabled={!editable} title={!editable ? `Non modifiable (${r.status})` : r.totalPackages>0 ? 'Contient des colis' : 'Modifier'} className={`flex-1 py-1.5 rounded border text-xs font-semibold flex items-center justify-center gap-1 ${editable && r.totalPackages===0 ? 'border-slate-200 bg-white text-slate-700' : 'border-slate-100 bg-slate-50 text-slate-300'}`}><Pencil className="w-3.5 h-3.5" /> Modifier</button>
+                            <button type="button" onClick={() => setSuppressionAConfirmer(r)} disabled={!deletable} title={!deletable ? (r.totalPackages>0 ? `Contient ${r.totalPackages} colis` : `Non supprimable (${r.status})`) : 'Supprimer'} className={`flex-1 py-1.5 rounded border text-xs font-semibold flex items-center justify-center gap-1 ${deletable ? 'border-red-200 bg-red-50 text-red-700' : 'border-slate-100 bg-slate-50 text-slate-300'}`}><Trash2 className="w-3.5 h-3.5" /> Supprimer</button>
+                          </div>
+                        </div>
                       );
                     })}
                   </div>
                 )}
 
                 <div className={enFiches ? 'hidden sm:block' : ''}>
-                <Table libelle="Feuilles de tournée" largeurMin="1040px">
+                <Table libelle="Feuilles de tournée" largeurMin="1180px">
                   <Thead>
                     <tr>
                       <Th figee>N° Runsheet</Th>
@@ -710,6 +834,7 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
                       <Th align="right" priorite="tertiaire">À encaisser</Th>
                       <Th align="right">Encaissé</Th>
                       <Th align="center" priorite="tertiaire">Statut</Th>
+                      <Th align="center">Actions</Th>
                     </tr>
                   </Thead>
                   <Tbody>
@@ -720,6 +845,10 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
                         text: 'text-slate-800',
                         border: 'border-slate-300',
                       };
+                      const editable = isRunsheetEditable(r);
+                      const deletable = isRunsheetDeletable(r);
+                      const editReason = !editable ? `Non modifiable (statut ${r.status})` : r.totalPackages > 0 ? `Contient ${r.totalPackages} colis — retirez-les d’abord` : '';
+                      const deleteReason = !deletable ? (r.totalPackages > 0 ? `Contient ${r.totalPackages} colis — retirez-les d’abord` : `Non supprimable (statut ${r.status})`) : '';
                       return (
                         <Tr
                           key={r.id}
@@ -759,6 +888,43 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
                             <span className={`px-2 py-0.5 rounded text-[11px] font-semibold border ${badge.bg} ${badge.text} ${badge.border}`}>
                               {badge.label}
                             </span>
+                          </Td>
+                          <Td align="center">
+                            <div className="flex items-center justify-center gap-1">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedRunsheetId(r.runsheetNumber);
+                                  setViewMode('detail');
+                                }}
+                                title="Voir"
+                                className="p-1.5 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition cursor-pointer"
+                                aria-label={`Voir ${r.runsheetNumber}`}
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); openEditModal(r); }}
+                                disabled={!editable || (!!editReason && r.totalPackages > 0)}
+                                title={editable && !editReason ? 'Modifier' : editReason || `Non modifiable (${r.status})`}
+                                className={`p-1.5 rounded border transition cursor-pointer ${editable && (!editReason || r.totalPackages === 0) ? 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700 hover:text-slate-900' : 'border-slate-100 bg-slate-50 text-slate-300 cursor-not-allowed'}`}
+                                aria-label={`Modifier ${r.runsheetNumber}`}
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); setSuppressionAConfirmer(r); }}
+                                disabled={!deletable}
+                                title={deletable ? 'Supprimer' : deleteReason}
+                                className={`p-1.5 rounded border transition cursor-pointer ${deletable ? 'border-red-200 bg-red-50 hover:bg-red-100 text-red-700' : 'border-slate-100 bg-slate-50 text-slate-300 cursor-not-allowed'}`}
+                                aria-label={`Supprimer ${r.runsheetNumber}`}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
                           </Td>
                         </Tr>
                       );
@@ -845,8 +1011,38 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
                 </div>
               </div>
 
-              {/* Actions Export & Impression */}
+              {/* Actions Export & Impression + CRUD */}
               <div className="flex items-center gap-2">
+                {runsheet && (() => {
+                  const editable = isRunsheetEditable(runsheet);
+                  const deletable = isRunsheetDeletable(runsheet);
+                  const editReason = !editable ? `Non modifiable (statut ${runsheet.status})` : runsheet.totalPackages > 0 ? 'Contient des colis — modification livreur/dépôt bloquée' : '';
+                  const deleteReason = !deletable ? (runsheet.totalPackages > 0 ? `Contient ${runsheet.totalPackages} colis` : `Non supprimable (statut ${runsheet.status})`) : '';
+                  return (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => openEditModal(runsheet)}
+                        disabled={!editable}
+                        title={editable ? 'Modifier la tournée' : editReason}
+                        className={`px-3 py-1.5 rounded text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${editable ? 'bg-white border border-slate-300 text-slate-700 hover:bg-slate-50' : 'bg-slate-50 border border-slate-200 text-slate-300 cursor-not-allowed'}`}
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                        <span>Modifier</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSuppressionAConfirmer(runsheet)}
+                        disabled={!deletable}
+                        title={deletable ? 'Supprimer la tournée' : deleteReason}
+                        className={`px-3 py-1.5 rounded text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${deletable ? 'bg-red-50 border border-red-200 text-red-700 hover:bg-red-100' : 'bg-slate-50 border border-slate-200 text-slate-300 cursor-not-allowed'}`}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Supprimer</span>
+                      </button>
+                    </>
+                  );
+                })()}
                 <button
                   type="button"
                   onClick={handleExportCSV}
@@ -1382,6 +1578,92 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
           </div>
         </Modal>
       )}
+
+      {/* ======================================================== */}
+      {/* MODAL 4 : ÉDITION RUNSHEET                               */}
+      {/* ======================================================== */}
+      {showEditModal && editingRunsheet && (
+        <Modal
+          isOpen={showEditModal}
+          onClose={() => { setShowEditModal(false); setEditingRunsheet(null); }}
+          title={`Modifier la Tournée #${editingRunsheet.runsheetNumber}`}
+          subtitle={`Statut actuel : ${editingRunsheet.status} — seules les tournées en attente sont modifiables`}
+          footer={
+            <>
+              <button
+                type="button"
+                onClick={() => { setShowEditModal(false); setEditingRunsheet(null); }}
+                className="px-4 py-2 border rounded text-slate-700 text-xs"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                disabled={isUpdating}
+                onClick={handleUpdateRunsheet}
+                className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+              >
+                {isUpdating && <Spinner size="sm" className="text-white" />}
+                <Save className="w-3.5 h-3.5" />
+                <span>Enregistrer</span>
+              </button>
+            </>
+          }
+        >
+          <div className="space-y-4 text-xs">
+            {editingRunsheet.totalPackages > 0 && (
+              <div className="p-2.5 bg-amber-50 border border-amber-200 rounded text-amber-800 flex gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>Cette tournée contient {editingRunsheet.totalPackages} colis. Le changement de livreur/dépôt est bloqué pour éviter l’incohérence colis↔tournée. Retirez les colis d’abord.</span>
+              </div>
+            )}
+            {['EN_COURS','VALIDEE_DEPART','RETOUR_DEPOT','CLOTUREE_CONFORME','CLOTUREE_DEFICIT','ANNULEE'].includes(editingRunsheet.status) && (
+              <div className="p-2.5 bg-red-50 border border-red-200 rounded text-red-800 flex gap-2">
+                <XCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>Tournée non modifiable (statut {editingRunsheet.status}). Seules les tournées BROUILLON/EN_ATTENTE peuvent être modifiées.</span>
+              </div>
+            )}
+            <FormField label="Chauffeur / Livreur *">
+              <Select
+                value={editForm.driverId}
+                onChange={(e) => setEditForm({ ...editForm, driverId: e.target.value })}
+                disabled={editingRunsheet.totalPackages > 0 || !isRunsheetEditable(editingRunsheet)}
+              >
+                {availableDrivers.map((d) => (
+                  <option key={d.id} value={d.id}>{d.name} ({d.phone})</option>
+                ))}
+              </Select>
+              {editingRunsheet.totalPackages > 0 && <p className="text-[11px] text-amber-700 mt-1">Changement de livreur bloqué — tournée avec colis.</p>}
+            </FormField>
+            <FormField label="Date de la tournée *">
+              <Input
+                type="date"
+                value={editForm.tourDate}
+                onChange={(e) => setEditForm({ ...editForm, tourDate: e.target.value })}
+                disabled={!isRunsheetEditable(editingRunsheet)}
+              />
+            </FormField>
+            <FormField label="Zone / Secteur">
+              <Input
+                value={editForm.notes}
+                onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}
+                placeholder="Ex: Tunis Ouest, Bardo…"
+                disabled={!isRunsheetEditable(editingRunsheet)}
+              />
+            </FormField>
+          </div>
+        </Modal>
+      )}
+
+      <ConfirmDialog
+        isOpen={suppressionAConfirmer !== null}
+        onClose={() => setSuppressionAConfirmer(null)}
+        onConfirm={() => void handleDeleteRunsheet()}
+        title="Supprimer cette tournée ?"
+        message={suppressionAConfirmer ? `La tournée ${suppressionAConfirmer.runsheetNumber} (${suppressionAConfirmer.driverName}, ${formatDate(suppressionAConfirmer.tourDate)}, ${suppressionAConfirmer.totalPackages} colis) sera définitivement supprimée. Cette action est irréversible. Seules les tournées vides en attente peuvent être supprimées.` : ''}
+        confirmText="Supprimer définitivement"
+        type="danger"
+      />
     </div>
   );
 }

@@ -986,6 +986,22 @@ export class ColisService {
       ? await this.prisma.runsheet.findUnique({ where: { runsheetNumber: payload.runsheetNumber } })
       : null;
 
+    if (payload.runsheetNumber && !runsheet) {
+      throw new BusinessRuleError(`Tournée ${payload.runsheetNumber} introuvable.`, 404);
+    }
+    if (runsheet && runsheet.driverId !== driver.id) {
+      throw new BusinessRuleError(
+        `Le colis ne peut pas être rattaché à la tournée ${runsheet.runsheetNumber} : elle appartient à un autre livreur.`,
+        409
+      );
+    }
+    if (runsheet && runsheet.status !== 'EN_ATTENTE' && runsheet.status !== 'BROUILLON') {
+      throw new BusinessRuleError(
+        `La tournée ${runsheet.runsheetNumber} n'est plus modifiable (statut ${runsheet.status}).`,
+        409
+      );
+    }
+
     const data: Prisma.PackageUncheckedUpdateInput = {
       assignedDriverId: driver.id,
       currentRunsheetId: runsheet?.id ?? null,
@@ -1059,27 +1075,40 @@ export class ColisService {
     return toPackageDto(fresh);
   }
 
-  /** Retrouve un livreur par identifiant interne ou par code métier. */
+  /** Retrouve un livreur par identifiant interne ou par code métier. — Contrat canonique : Driver.id (UUID). */
   private async resolveDriver(payload: { driverId?: string; driverCode?: string }) {
-    const driver = payload.driverId
-      ? await this.prisma.driver.findUnique({
-          where: { id: payload.driverId },
-          include: { user: true },
-        })
-      : payload.driverCode
-        ? await this.prisma.driver.findUnique({
-            where: { driverCode: payload.driverCode },
-            include: { user: true },
-          })
-        : null;
-
-    if (!driver) {
-      throw new BusinessRuleError('Livreur introuvable. Vérifiez le chauffeur sélectionné.', 404);
+    if (payload.driverId !== undefined && payload.driverId !== null && String(payload.driverId).trim() !== '') {
+      const raw = String(payload.driverId).trim();
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw)) {
+        throw new BusinessRuleError('Le champ « Chauffeur (driverId) » doit être un identifiant UUID valide.', 400);
+      }
+      const driver = await this.prisma.driver.findUnique({
+        where: { id: raw },
+        include: { user: true },
+      });
+      if (!driver) {
+        throw new BusinessRuleError('Livreur introuvable. Vérifiez le chauffeur sélectionné.', 404);
+      }
+      if (!driver.isActive || driver.deletedAt) {
+        throw new BusinessRuleError('Ce livreur est inactif ou supprimé.', 409);
+      }
+      return driver;
     }
-    if (!driver.isActive) {
-      throw new BusinessRuleError('Ce livreur est désactivé.', 409);
+    if (payload.driverCode !== undefined && payload.driverCode !== null && String(payload.driverCode).trim() !== '') {
+      const code = String(payload.driverCode).trim();
+      const driver = await this.prisma.driver.findUnique({
+        where: { driverCode: code },
+        include: { user: true },
+      });
+      if (!driver) {
+        throw new BusinessRuleError('Livreur introuvable. Vérifiez le chauffeur sélectionné.', 404);
+      }
+      if (!driver.isActive || driver.deletedAt) {
+        throw new BusinessRuleError('Ce livreur est désactivé.', 409);
+      }
+      return driver;
     }
-    return driver;
+    throw new BusinessRuleError('Le champ « Chauffeur (driverId) » est obligatoire.', 400);
   }
 
   /* ---------------------------------------------------------------- */

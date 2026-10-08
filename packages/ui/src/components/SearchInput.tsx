@@ -68,7 +68,7 @@ export function SearchInput({
       <label htmlFor={idChamp} className="sr-only">
         {libelle}
       </label>
-      <Search className="w-4 h-4 text-slate-400 absolute left-3 pointer-events-none" aria-hidden="true" />
+      <Search className="w-4 h-4 text-slate-400 absolute start-3 pointer-events-none" aria-hidden="true" />
       <input
         id={idChamp}
         type="search"
@@ -84,7 +84,7 @@ export function SearchInput({
           if (e.key === 'Enter') onSubmit?.(value);
         }}
         placeholder={placeholder}
-        className="w-full pl-9 pr-8 py-2 bg-white border border-slate-300 hover:border-slate-400 rounded-md text-sm text-slate-900 placeholder:text-slate-400 transition-colors focus:outline-none focus:border-red-600 focus:ring-2 focus:ring-red-600/20 [&::-webkit-search-cancel-button]:hidden"
+        className="w-full ps-9 pe-8 py-2 bg-white border border-slate-300 hover:border-slate-400 rounded-md text-sm text-slate-900 placeholder:text-slate-400 transition-colors focus:outline-none focus:border-red-600 focus:ring-2 focus:ring-red-600/20 [&::-webkit-search-cancel-button]:hidden"
       />
       {value && (
         <button
@@ -93,7 +93,7 @@ export function SearchInput({
             onChange('');
             onClear?.();
           }}
-          className="absolute right-2 text-slate-400 hover:text-slate-700 p-0.5 rounded transition cursor-pointer"
+          className="absolute end-2 text-slate-400 hover:text-slate-700 p-0.5 rounded transition cursor-pointer"
           aria-label={libelles['recherche.effacer']}
         >
           <X className="w-4 h-4" aria-hidden="true" />

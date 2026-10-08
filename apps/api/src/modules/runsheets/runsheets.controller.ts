@@ -1,7 +1,7 @@
 import { runsheetsService } from './runsheets.service';
 import type { Response } from 'express';
 import type { AuthenticatedRequest } from '../../common/auth/auth.middleware';
-import { RunsheetStatus } from '@logixpress/types';
+import { RoleType, RunsheetStatus } from '@logixpress/types';
 import {
   requireString,
   requireOneOf,
@@ -21,8 +21,12 @@ const RUNSHEET_STATUSES = [
 export class RunsheetsController {
   async getAll(req: AuthenticatedRequest, res: Response): Promise<void> {
     const { driverId, status, date } = req.query;
+    // Le périmètre porté par le jeton prime sur tout paramètre : un livreur
+    // ne peut pas élargir sa vue en passant l'identifiant d'un autre
+    // chauffeur. Les rôles de bureau, sans périmètre chauffeur, conservent le
+    // filtre par query.
     const list = await runsheetsService.findAll({
-      driverId: (driverId as string) || req.dataScope?.assignedDriverId,
+      driverId: req.dataScope?.assignedDriverId ?? ((driverId as string) || undefined),
       status: status as string,
       date: date as string,
     });
@@ -40,6 +44,12 @@ export class RunsheetsController {
     const { id } = req.params;
     const runsheet = await runsheetsService.findByNumber(id);
     if (!runsheet) {
+      res.status(404).json({ success: false, message: 'Feuille de tournée introuvable' });
+      return;
+    }
+    // Un livreur ne lit que ses propres tournées : même un numéro deviné ne
+    // doit pas ouvrir la tournée d'un collègue (adresses et montants clients).
+    if (req.user?.role === RoleType.LIVREUR && runsheet.driverId !== req.user?.driverId) {
       res.status(404).json({ success: false, message: 'Feuille de tournée introuvable' });
       return;
     }
@@ -78,7 +88,8 @@ export class RunsheetsController {
         message: `Feuille de tournée #${runsheet.runsheetNumber} créée avec succès.`,
       });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      const status = typeof err?.status === 'number' ? err.status : 400;
+      res.status(status).json({ success: false, message: err.message });
     }
   }
 
@@ -100,7 +111,8 @@ export class RunsheetsController {
         message: `Colis #${packageIdentifier} ajouté à la feuille de tournée #${runsheet.runsheetNumber}.`,
       });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      const status = typeof err?.status === 'number' ? err.status : 400;
+      res.status(status).json({ success: false, message: err.message });
     }
   }
 
@@ -119,7 +131,8 @@ export class RunsheetsController {
         message: `Colis #${packageIdentifier} retiré de la tournée.`,
       });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      const status = typeof err?.status === 'number' ? err.status : 400;
+      res.status(status).json({ success: false, message: err.message });
     }
   }
 
@@ -139,7 +152,8 @@ export class RunsheetsController {
         message: `Statut de la tournée passé à [${status}].`,
       });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      const status = typeof err?.status === 'number' ? err.status : 400;
+      res.status(status).json({ success: false, message: err.message });
     }
   }
 
@@ -168,7 +182,8 @@ export class RunsheetsController {
         message: `Tournée #${runsheet.runsheetNumber} terminée avec ${collectedCash.toFixed(3)} DT encaissés.`,
       });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      const status = typeof err?.status === 'number' ? err.status : 400;
+      res.status(status).json({ success: false, message: err.message });
     }
   }
 
@@ -186,12 +201,63 @@ export class RunsheetsController {
         message: `Tournée #${runsheet.runsheetNumber} validée et rapprochée en caisse.`,
       });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      const status = typeof err?.status === 'number' ? err.status : 400;
+      res.status(status).json({ success: false, message: err.message });
+    }
+  }
+
+  async update(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const { id } = req.params;
+    try {
+      const payload: Record<string, unknown> = {};
+      if (req.body.driverId !== undefined) payload.driverId = String(req.body.driverId);
+      if (req.body.tourDate !== undefined) payload.tourDate = String(req.body.tourDate);
+      if (req.body.notes !== undefined) payload.notes = req.body.notes === null ? null : String(req.body.notes);
+      if (req.body.zone !== undefined && payload.notes === undefined) payload.notes = String(req.body.zone);
+      if (req.body.depositId !== undefined) payload.depositId = String(req.body.depositId);
+      if (req.body.type !== undefined) payload.type = String(req.body.type);
+
+      if (Object.keys(payload).length === 0) {
+        res.status(400).json({ success: false, message: 'Aucune donnée à mettre à jour.' });
+        return;
+      }
+
+      const runsheet = await runsheetsService.update(
+        id,
+        payload as { driverId?: string; tourDate?: string; notes?: string; depositId?: string; type?: string },
+        { id: req.user?.id, fullName: req.user?.fullName || 'Gestionnaire', depositId: req.user?.depositId },
+        req.dataScope
+      );
+      res.json({ success: true, data: runsheet, message: `Tournée #${runsheet.runsheetNumber} mise à jour.` });
+    } catch (err: any) {
+      const status = typeof err?.status === 'number' ? err.status : 400;
+      res.status(status).json({ success: false, message: err.message });
+    }
+  }
+
+  async remove(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const { id } = req.params;
+    try {
+      await runsheetsService.remove(
+        id,
+        { id: req.user?.id, fullName: req.user?.fullName || 'Gestionnaire' },
+        req.dataScope
+      );
+      res.json({ success: true, message: 'Tournée supprimée.' });
+    } catch (err: any) {
+      const status = typeof err?.status === 'number' ? err.status : 400;
+      res.status(status).json({ success: false, message: err.message });
     }
   }
 
   async getActiveDriverRunsheet(req: AuthenticatedRequest, res: Response): Promise<void> {
-    const driverId = req.query.driverId as string || req.user?.driverId;
+    // Le livreur ne choisit pas le chauffeur dont il lit la tournée : son
+    // identité vient du jeton. Le paramètre de requête reste offert aux rôles
+    // de bureau qui pilotent plusieurs chauffeurs.
+    const driverId =
+      req.user?.role === RoleType.LIVREUR
+        ? req.user?.driverId
+        : (req.query.driverId as string) || req.user?.driverId;
     if (!driverId) {
       res.status(400).json({ success: false, message: 'Identifiant chauffeur requis.' });
       return;

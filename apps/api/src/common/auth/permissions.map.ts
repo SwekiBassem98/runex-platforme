@@ -41,6 +41,12 @@ export const ROLE_PERMISSIONS: Record<RoleType, PermissionCode[]> = {
     PermissionCode.RAMASSAGE_READ,
     PermissionCode.RAMASSAGE_DEMANDE,
     PermissionCode.RAMASSAGE_MANAGE,
+    // Administration des comptes : réservée à l'Admin. Ni le gestionnaire ni la
+    // caisse ne créent de comptes — sinon n'importe quel profil d'exploitation
+    // pourrait s'ouvrir un accès administrateur.
+    PermissionCode.USER_READ,
+    PermissionCode.USER_CREATE,
+    PermissionCode.USER_UPDATE,
   ],
 
   [RoleType.GESTIONNAIRE]: [

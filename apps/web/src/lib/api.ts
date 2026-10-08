@@ -865,6 +865,180 @@ export const healthApi = {
 };
 
 /* ------------------------------------------------------------------ */
+/* Administration — comptes, expéditeurs, livreurs                     */
+/* ------------------------------------------------------------------ */
+/*
+ * Ces types sont le miroir exact des DTO renvoyés par `modules/admin`. Ils ne
+ * contiennent volontairement ni `passwordHash` ni `secretPaymentCode` : ces
+ * champs ne quittent jamais l'API, et les déclarer ici laisserait croire qu'on
+ * peut les lire.
+ */
+
+/** Les huit rôles réellement attribuables. L'API refuse toute autre valeur. */
+export type RoleAttribuable =
+  | 'SUPER_ADMIN'
+  | 'ADMIN_GENERAL'
+  | 'DISPATCHER'
+  | 'MAGASINIER'
+  | 'CAISSIER'
+  | 'EXPEDITEUR_ADMIN'
+  | 'EXPEDITEUR_USER'
+  | 'LIVREUR';
+
+export interface UserDto {
+  id: string;
+  email: string;
+  fullName: string;
+  phone: string;
+  isActive: boolean;
+  avatarUrl: string | null;
+  lastLoginAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  roles: RoleAttribuable[];
+  depositId: string | null;
+  depositName: string | null;
+  shipper: { id: string; companyName: string; code: string } | null;
+  driver: { id: string; driverCode: string; vehicleType: string } | null;
+}
+
+export interface ShipperDto {
+  id: string;
+  code: string;
+  companyName: string;
+  brandName: string | null;
+  taxId: string | null;
+  phone: string;
+  phoneSecondary: string | null;
+  email: string;
+  governorate: string;
+  address: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  packagesCount?: number;
+  /** `null` quand aucune activité n'a jamais eu lieu — jamais une date inventée. */
+  lastActivityAt?: string | null;
+  users?: Array<{ id: string; fullName: string; email: string; isActive: boolean; role: RoleAttribuable | null }>;
+}
+
+export interface DriverDto {
+  id: string;
+  driverCode: string;
+  vehicleType: string;
+  licensePlate: string | null;
+  cashCeiling: number;
+  currentBalance: number;
+  rating: number | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  /** Présence mobile : ISO UTC du dernier battement, ou null si jamais vu. */
+  lastSeenAt: string | null;
+  /** En ligne si vu dans la fenêtre `DRIVER_PRESENCE_TIMEOUT_SECONDS` (défaut 180 s). */
+  isOnline: boolean;
+  user: { id: string; fullName: string; email: string; phone: string; isActive: boolean } | null;
+  deposit: { id: string; name: string } | null;
+  currentAssignment: { runsheetNumber: string; status: string; tourDate: string } | null;
+}
+
+/** Une page de résultats, telle que l'API l'enveloppe (`data` + `meta`). */
+export interface PageResultat<T> {
+  items: T[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+/** Référentiels nécessaires aux formulaires de création et de rattachement. */
+export interface ReferentielsAdmin {
+  roles: Array<{ name: RoleAttribuable; displayName: string }>;
+  expediteurs: Array<{ id: string; code: string; companyName: string }>;
+  depots: Array<{ id: string; name: string }>;
+  comptesSansLivreur: Array<{ id: string; fullName: string; email: string; phone: string }>;
+}
+
+export interface FiltresListe {
+  search?: string;
+  status?: string;
+  role?: string;
+  page?: number;
+  limit?: number;
+}
+
+/** Déplie l'enveloppe `{ data, meta }` en `{ items, total, page, limit }`. */
+async function pageDe<T>(path: string, filtres?: FiltresListe): Promise<PageResultat<T>> {
+  const enveloppe = await request<T[]>(path, {
+    query: filtres as Record<string, QueryValue>,
+  });
+  const meta = (enveloppe.meta ?? {}) as { total?: number; page?: number; limit?: number };
+  return {
+    items: enveloppe.data ?? [],
+    total: meta.total ?? (enveloppe.data?.length ?? 0),
+    page: meta.page ?? 1,
+    limit: meta.limit ?? (enveloppe.data?.length ?? 25),
+  };
+}
+
+export const usersApi = {
+  list: (filtres?: FiltresListe) => pageDe<UserDto>('/users', filtres),
+  get: (id: string) => requestData<UserDto>(`/users/${id}`),
+  referentiels: () => requestData<ReferentielsAdmin>('/users/referentiels'),
+  create: (corps: Record<string, unknown>) =>
+    requestData<UserDto>('/users', { method: 'POST', body: corps }),
+  update: (id: string, corps: Record<string, unknown>) =>
+    requestData<UserDto>(`/users/${id}`, { method: 'PATCH', body: corps }),
+  /**
+   * Active ou désactive un compte.
+   *
+   * Le motif est obligatoire côté API pour une désactivation : une trace
+   * d'audit sans raison ne permet pas de répondre, six mois plus tard, à la
+   * question « qui a coupé cet accès, et pourquoi ? ».
+   */
+  setStatus: (id: string, isActive: boolean, reason?: string) =>
+    requestData<UserDto>(`/users/${id}/status`, {
+      method: 'PATCH',
+      body: { isActive, reason },
+    }),
+};
+
+export const shippersApi = {
+  list: (filtres?: FiltresListe) => pageDe<ShipperDto>('/shippers', filtres),
+  get: (id: string) => requestData<ShipperDto>(`/shippers/${id}`),
+  create: (corps: Record<string, unknown>) =>
+    requestData<ShipperDto>('/shippers', { method: 'POST', body: corps }),
+  update: (id: string, corps: Record<string, unknown>) =>
+    requestData<ShipperDto>(`/shippers/${id}`, { method: 'PATCH', body: corps }),
+  setStatus: (id: string, isActive: boolean, reason?: string) =>
+    requestData<ShipperDto>(`/shippers/${id}/status`, {
+      method: 'PATCH',
+      body: { isActive, reason },
+    }),
+  rattacherCompte: (id: string, userId: string) =>
+    requestData<ShipperDto>(`/shippers/${id}/users`, { method: 'POST', body: { userId } }),
+  detacherCompte: (id: string, userId: string) =>
+    requestData<ShipperDto>(`/shippers/${id}/users/${userId}`, { method: 'DELETE' }),
+};
+
+export const driversApi = {
+  list: (filtres?: FiltresListe) => pageDe<DriverDto>('/drivers', filtres),
+  get: (id: string) => requestData<DriverDto>(`/drivers/${id}`),
+  comptesDisponibles: () =>
+    requestData<Array<{ id: string; fullName: string; email: string; phone: string }>>(
+      '/drivers/comptes-disponibles'
+    ),
+  create: (corps: Record<string, unknown>) =>
+    requestData<DriverDto>('/drivers', { method: 'POST', body: corps }),
+  update: (id: string, corps: Record<string, unknown>) =>
+    requestData<DriverDto>(`/drivers/${id}`, { method: 'PATCH', body: corps }),
+  setStatus: (id: string, isActive: boolean, reason?: string) =>
+    requestData<DriverDto>(`/drivers/${id}/status`, {
+      method: 'PATCH',
+      body: { isActive, reason },
+    }),
+};
+
+/* ------------------------------------------------------------------ */
 /* Inventaire, historique et recherche                                 */
 /* ------------------------------------------------------------------ */
 
@@ -997,6 +1171,71 @@ export const inventoryApi = {
   },
 
   facets: () => requestData<InventoryFacets>('/inventaire/facets'),
+};
+
+// Exceptions d'inventaire — colis suspects
+export interface InventoryExceptionFilters extends InventoryFilters {
+  category?: string;
+  severity?: string;
+  stuckHours?: number;
+  blockedHours?: number;
+}
+
+export interface InventoryExceptionRow extends InventoryRow {
+  exceptionCategory: string;
+  severity: string;
+  reasons: string[];
+  lastEventAt: string | null;
+  lastEventTitle: string | null;
+  ageHours: number;
+  hoursSinceUpdate: number;
+  timelineCount: number;
+  deliveryAttemptsCount: number;
+  runsheetId: string | null;
+  runsheetStatus: string | null;
+  updatedAt: string;
+}
+
+export interface InventoryExceptionListResponse {
+  items: InventoryExceptionRow[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+  appliedFilters: Record<string, string>;
+  thresholds: { stuckHours: number; blockedHours: number; nonTraceableHours: number; nonEnvoyeHours: number };
+}
+
+export interface InventoryExceptionFacets {
+  shippers: { id: string; label: string }[];
+  drivers: { id: string; label: string }[];
+  deposits: { id: string; label: string }[];
+  categories: { value: string; label: string; count: number }[];
+  severities: { value: string; label: string; count: number }[];
+  statuses: { value: string; label: string; count: number }[];
+  totalExceptions: number;
+  totalScanned: number;
+  thresholds: { stuckHours: number; blockedHours: number; nonTraceableHours: number; nonEnvoyeHours: number };
+}
+
+export const inventoryExceptionsApi = {
+  async list(filters: InventoryExceptionFilters = {}): Promise<InventoryExceptionListResponse> {
+    const envelope = await request<InventoryExceptionRow[]>('/inventaire/exceptions', {
+      query: inventoryQuery(filters as unknown as InventoryFilters),
+    });
+    return {
+      items: envelope.data ?? [],
+      total: Number(envelope.meta?.total ?? 0),
+      page: Number(envelope.meta?.page ?? 1),
+      limit: Number(envelope.meta?.limit ?? 50),
+      totalPages: Number(envelope.meta?.totalPages ?? 1),
+      appliedFilters: (envelope.meta?.appliedFilters as Record<string, string>) ?? {},
+      thresholds: (envelope.meta?.thresholds as InventoryExceptionListResponse['thresholds']) ?? { stuckHours: 48, blockedHours: 72, nonTraceableHours: 24, nonEnvoyeHours: 48 },
+    };
+  },
+  facets: (filters: InventoryExceptionFilters = {}) =>
+    requestData<InventoryExceptionFacets>('/inventaire/exceptions/facets', { query: inventoryQuery(filters as unknown as InventoryFilters) }),
+  detail: (id: string) => requestData<{ detail: unknown; exception: { category: string; severity: string; reasons: string[] } | null }>(`/inventaire/exceptions/${id}`),
 };
 
 export const searchApi = {

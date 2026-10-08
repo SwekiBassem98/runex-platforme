@@ -103,13 +103,41 @@
   from { opacity: 1; }
   to { opacity: 0; }
 }
+/*
+ * Sens d'écriture et sens de glissement.
+ *
+ * `panel-in` fait entrer un panneau depuis le bord *final* de la ligne : à
+ * droite en LTR, à gauche en RTL. Une translation figée à `16px` ancre donc le
+ * mouvement du mauvais côté dès que la page bascule en arabe — le tiroir semble
+ * surgir du bord opposé à celui où il est réellement fixé.
+ *
+ * Le décalage passe par une variable que `[dir='rtl']` inverse une seule fois.
+ * Toutes les utilisations de `panel-in` et `panel-out` suivent alors le sens
+ * d'écriture sans dupliquer de keyframe et sans cibler les noms de classes
+ * échappés que Tailwind génère pour ses variantes (`sm\:animate-panel-in`).
+ */
+:root { --panel-decalage: 16px; }
+[dir='rtl'] { --panel-decalage: -16px; }
+
 @keyframes panel-in {
-  from { opacity: 0; transform: translateX(16px) scale(0.985); }
+  from { opacity: 0; transform: translateX(var(--panel-decalage)) scale(0.985); }
   to { opacity: 1; transform: translateX(0) scale(1); }
 }
 @keyframes panel-out {
   from { opacity: 1; transform: translateX(0); }
-  to { opacity: 0; transform: translateX(16px); }
+  to { opacity: 0; transform: translateX(var(--panel-decalage)); }
+}
+/*
+ * Le tiroir de navigation mobile est ancré au bord *initial* (`start-0`), donc
+ * au côté opposé de `panel-in`. Sa direction se déduit du même décalage, pris à
+ * l'envers : rien à maintenir de plus quand une langue s'ajoute.
+ */
+@keyframes panel-in-start {
+  from { opacity: 0; transform: translateX(calc(-1 * var(--panel-decalage))) scale(0.985); }
+  to { opacity: 1; transform: translateX(0) scale(1); }
+}
+.animate-panel-in-start {
+  animation: panel-in-start 180ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 @keyframes menu-in {
   from { opacity: 0; transform: translateY(-4px) scale(0.98); }

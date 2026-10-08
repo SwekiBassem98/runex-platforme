@@ -165,6 +165,15 @@ export const fr = {
   'colis.liste.rechercheAide': 'N° de suivi, code-barres, destinataire, téléphone…',
   'colis.liste.creesLe': 'Créés le',
   'colis.liste.libelle': 'colis',
+  'colis.liste.imprimer': 'Imprimer',
+  'colis.liste.imprimerColis': 'Imprimer le colis',
+  'colis.liste.imprimerTous': 'Imprimer tous les colis',
+  'colis.liste.imprimerFiltres': 'Imprimer les {n} colis filtrés',
+  'colis.liste.impressionEnCours': 'Préparation de l’impression…',
+  'colis.liste.impressionVide': 'Aucun colis à imprimer avec ces filtres.',
+  'colis.liste.impressionLimite': 'Limite d’impression : {max} colis affichés sur {total}. Affinez vos filtres pour le reste.',
+  'colis.liste.impressionErreur': 'L’impression n’a pas pu être préparée.',
+  'colis.detail.imprimer': 'Imprimer',
 
   'colis.formulaire.titre': 'Nouveau colis',
   'colis.formulaire.declareAuNom': 'Déclaré au nom de {entreprise}',
@@ -594,6 +603,18 @@ export const fr = {
   'bordereauStatut.ANNULE': 'Annulé',
   'moyenPaiement.ESPECE': 'Espèces',
   'moyenPaiement.CHEQUE': 'Chèque',
+  /*
+   * Les quatre moyens ci-dessous existent en base mais ne sont pas proposés à
+   * la saisie (`PAYMENT_METHOD_REGISTRY` n'ouvre que espèces et chèque). Ils
+   * restent traduits parce qu'un bordereau ancien peut en porter un : sans
+   * libellé, l'écran afficherait `VIREMENT` en toutes capitales au milieu d'une
+   * phrase française. Traduire une valeur que la saisie ne produit pas encore
+   * coûte une ligne ; ne pas la traduire se voit le jour où elle apparaît.
+   */
+  'moyenPaiement.VIREMENT': 'Virement',
+  'moyenPaiement.TRAITE': 'Traite',
+  'moyenPaiement.CARTE_BANCAIRE': 'Carte bancaire',
+  'moyenPaiement.PAIEMENT_EN_LIGNE': 'Paiement en ligne',
   'paiement.NON_REGLE': 'Non encaissé',
   'paiement.EN_BORDEREAU': 'En bordereau',
   'paiement.PAYE': 'Encaissé',
@@ -638,20 +659,79 @@ export const fr = {
   'notif.categorie.tournee': 'Tournées',
   'notif.categorie.transfert': 'Inter-dépôts',
 
+  /*
+   * Intitulés de notification.
+   *
+   * Le titre d'une notification est une phrase produite par l'API
+   * (`notificationDispatcher.notify({ title: … })`) et stockée telle quelle en
+   * base. Le corpus est fermé : dix-neuf intitulés, énumérés dans
+   * `TITRES_NOTIFICATION` (`features/expediteur/lib/libelles.ts`), qui fait
+   * correspondre la phrase du serveur à l'une de ces clés.
+   *
+   * Le corps (`content`), lui, n'est pas traduit : il embarque des numéros de
+   * suivi, des noms et des montants assemblés côté serveur. Le reformuler ici
+   * reviendrait à réécrire des données, avec le risque d'afficher autre chose
+   * que ce qui s'est passé.
+   *
+   * Un intitulé inconnu — ajouté côté API sans mise à jour de cette table —
+   * s'affiche tel quel : c'est le comportement actuel, et il vaut mieux une
+   * phrase française qu'un trou.
+   */
+  'notif.titre.colisATraiter': 'Nouveau colis à traiter',
+  'notif.titre.colisModifie': 'Colis modifié',
+  'notif.titre.montantModifie': 'Montant modifié sur un colis',
+  'notif.titre.piecesModifiees': 'Nombre de pièces modifié',
+  'notif.titre.statutModifie': 'Statut de livraison modifié',
+  'notif.titre.colisAffecte': 'Nouvelle livraison à effectuer',
+  'notif.titre.colisDansTournee': 'Colis intégré à une tournée',
+  'notif.titre.colisAjouteTournee': 'Colis ajouté à votre tournée',
+  'notif.titre.colisLivre': 'Colis livré',
+  'notif.titre.livraisonPartielle': 'Livraison partielle',
+  'notif.titre.livraisonReportee': 'Livraison reportée',
+  'notif.titre.colisRetourne': 'Colis restitué à l\'expéditeur',
+  'notif.titre.ramassageDemande': 'Nouvelle demande de ramassage',
+  'notif.titre.ramassageConfirme': 'Créneau de ramassage confirmé',
+  'notif.titre.ramassageACollecter': 'Ramassage à collecter',
+  'notif.titre.ramassageEffectue': 'Ramassage effectué',
+  'notif.titre.ramassageAnnule': 'Ramassage annulé',
+  'notif.titre.encaissementAValider': 'Encaissement à valider',
+  'notif.titre.encaissementValide': 'Encaissement validé',
+
   // --------------------------------------------------------- gouvernorats
+  /*
+   * Gouvernorats — les clés sont les valeurs de `APP_CONFIG.governorates`,
+   * caractère accentué compris.
+   *
+   * Ce n'est pas une liberté d'écriture : `traduireValeur('gou', …)` cherche
+   * `${famille}.${valeur}` avec la chaîne venue du serveur. Une clé « Manouba »
+   * ne rencontre jamais la valeur « La Manouba », et la recherche retombe sur la
+   * valeur brute. En français le repli se confond avec le libellé — l'anomalie
+   * est invisible — mais en arabe elle affiche le nom français au milieu d'un
+   * écran arabe. Les 24 clés suivent donc la liste du référentiel, dans son
+   * ordre, accents compris.
+   */
   'gou.Ariana': 'Ariana',
+  'gou.Béja': 'Béja',
   'gou.Ben Arous': 'Ben Arous',
   'gou.Bizerte': 'Bizerte',
+  'gou.Gabès': 'Gabès',
+  'gou.Gafsa': 'Gafsa',
+  'gou.Jendouba': 'Jendouba',
   'gou.Kairouan': 'Kairouan',
   'gou.Kasserine': 'Kasserine',
-  'gou.Manouba': 'Manouba',
-  'gou.Medenine': 'Medenine',
+  'gou.Kébili': 'Kébili',
+  'gou.Le Kef': 'Le Kef',
+  'gou.Mahdia': 'Mahdia',
+  'gou.La Manouba': 'La Manouba',
+  'gou.Médenine': 'Médenine',
   'gou.Monastir': 'Monastir',
   'gou.Nabeul': 'Nabeul',
   'gou.Sfax': 'Sfax',
   'gou.Sidi Bouzid': 'Sidi Bouzid',
   'gou.Siliana': 'Siliana',
   'gou.Sousse': 'Sousse',
+  'gou.Tataouine': 'Tataouine',
+  'gou.Tozeur': 'Tozeur',
   'gou.Tunis': 'Tunis',
   'gou.Zaghouan': 'Zaghouan',
 

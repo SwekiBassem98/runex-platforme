@@ -80,8 +80,8 @@ export function Drawer({
           role={roleNavigation ? 'navigation' : 'dialog'}
           aria-modal={roleNavigation ? undefined : 'true'}
           aria-labelledby={idTitre}
-          className={`w-full ${widthClass} bg-white border-l border-slate-200 shadow-2xl flex flex-col
-            max-sm:rounded-t-2xl max-sm:border-l-0 max-sm:border-t
+          className={`w-full ${widthClass} bg-white border-s border-slate-200 shadow-2xl flex flex-col
+            max-sm:rounded-t-2xl max-sm:border-s-0 max-sm:border-t
             /* La docstring annonce une feuille montante laissant de la page
                visible : sans borne de hauteur, le tiroir prenait 100 % de la
                hauteur, et les arrondis du haut ne bordaient rien. Sur un
@@ -105,7 +105,7 @@ export function Drawer({
             <button
               type="button"
               onClick={onClose}
-              className="p-1.5 -mr-1.5 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition shrink-0"
+              className="p-1.5 -me-1.5 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition shrink-0"
               aria-label={libelles['panneau.fermer']}
             >
               <X className="w-4 h-4" aria-hidden="true" />

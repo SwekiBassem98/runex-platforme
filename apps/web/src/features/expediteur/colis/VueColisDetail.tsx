@@ -38,6 +38,7 @@ import {
   PackageX,
   Pencil,
   Phone,
+  Printer,
   ShieldCheck,
   Truck,
   User,
@@ -59,13 +60,15 @@ import {
   FormField,
   Input,
   Modal,
+  Select,
   Spinner,
   Textarea,
   useToast,
 } from '@logixpress/ui';
 import { annulerColis, lireAuditColis, lireColis, modifierColis } from '@/features/expediteur/lib/client';
-import { useVocabulaire, VARIANTE_TYPE } from '@/features/expediteur/lib/libelles';
+import { GOUVERNORATS, useVocabulaire, VARIANTE_TYPE } from '@/features/expediteur/lib/libelles';
 import { useI18n, type Cle } from '@/i18n';
+import { genererHtmlColisUnique, ouvrirImpression } from './impression';
 
 /** Entrée du journal d'audit, telle que l'API la renvoie pour un colis. */
 interface EntreeAudit {
@@ -186,6 +189,24 @@ export function VueColisDetail({ identifiant }: { identifiant: string }) {
    */
   const modifiable = !verrouille;
 
+  const handleImprimer = () => {
+    if (!colis) return;
+    const entreprise = colis.shipperName ?? t('coque.entreprise');
+    const lang = document.documentElement.lang || 'fr';
+    const dir = (document.documentElement.dir as 'ltr' | 'rtl') || 'ltr';
+    const html = genererHtmlColisUnique(colis, {
+      entreprise,
+      langue: lang,
+      dir,
+      formatTND,
+      formatDate,
+      formatDateTime,
+      traduireStatut: (s) => voc.statutColis(s).label,
+      traduireType: (s) => voc.type(s as never),
+    });
+    ouvrirImpression(html);
+  };
+
   const chronologie = [...(colis.trackingTimeline ?? [])].reverse();
   const tentatives = colis.deliveryAttempts ?? [];
 
@@ -266,28 +287,39 @@ export function VueColisDetail({ identifiant }: { identifiant: string }) {
           </div>
         </div>
 
-        {modifiable && (
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={() => setEdition(true)}
-              className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 text-slate-700 rounded-md text-xs font-semibold hover:bg-slate-50 transition cursor-pointer"
-            >
-              <Pencil className="w-3.5 h-3.5" aria-hidden="true" />
-              {t('colis.detail.modifier')}
-            </button>
-            {annulable && (
+        <div className="flex items-center gap-2 shrink-0 flex-wrap">
+          <button
+            type="button"
+            onClick={handleImprimer}
+            className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 text-slate-700 rounded-md text-xs font-semibold hover:bg-slate-50 transition cursor-pointer"
+            title={t('colis.detail.imprimer')}
+          >
+            <Printer className="w-3.5 h-3.5" aria-hidden="true" />
+            {t('colis.detail.imprimer')}
+          </button>
+          {modifiable && (
+            <>
               <button
                 type="button"
-                onClick={() => setConfirmationAnnulation(true)}
-                className="flex items-center gap-1.5 px-3 py-2 bg-red-100 hover:bg-red-200 text-red-800 border border-red-300 rounded-md text-xs font-semibold transition cursor-pointer"
+                onClick={() => setEdition(true)}
+                className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 text-slate-700 rounded-md text-xs font-semibold hover:bg-slate-50 transition cursor-pointer"
               >
-                <Ban className="w-3.5 h-3.5" aria-hidden="true" />
-                {t('colis.detail.annuler')}
+                <Pencil className="w-3.5 h-3.5" aria-hidden="true" />
+                {t('colis.detail.modifier')}
               </button>
-            )}
-          </div>
-        )}
+              {annulable && (
+                <button
+                  type="button"
+                  onClick={() => setConfirmationAnnulation(true)}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-red-100 hover:bg-red-200 text-red-800 border border-red-300 rounded-md text-xs font-semibold transition cursor-pointer"
+                >
+                  <Ban className="w-3.5 h-3.5" aria-hidden="true" />
+                  {t('colis.detail.annuler')}
+                </button>
+              )}
+            </>
+          )}
+        </div>
       </div>
 
       {erreur && <ErrorBanner message={erreur} onDismiss={() => setErreur(null)} />}
@@ -699,11 +731,17 @@ export function VueColisDetail({ identifiant }: { identifiant: string }) {
               />
             </FormField>
             <FormField label={t('colis.detail.champ.gouvernorat')} required>
-              <Input
+              <Select
                 required
                 value={form.governorate}
                 onChange={(e) => setForm((f) => ({ ...f, governorate: e.target.value }))}
-              />
+              >
+                {GOUVERNORATS.map((g) => (
+                  <option key={g} value={g}>
+                    {voc.gouvernorat(g)}
+                  </option>
+                ))}
+              </Select>
             </FormField>
             <FormField label={t('colis.detail.champ.delegation')}>
               <Input

@@ -123,7 +123,7 @@ export function Modal({
             type="button"
             onClick={onClose}
             disabled={verrouille}
-            className="p-1.5 -mr-1.5 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+            className="p-1.5 -me-1.5 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
             aria-label={libelles['fenetre.fermer']}
           >
             <X className="w-4 h-4" aria-hidden="true" />

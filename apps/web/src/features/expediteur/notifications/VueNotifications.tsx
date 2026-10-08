@@ -33,6 +33,7 @@ import {
 } from '@logixpress/types';
 import { useNotifications } from '@/lib/notification-provider';
 import { useI18n } from '@/i18n';
+import { useVocabulaire } from '@/features/expediteur/lib/libelles';
 
 type Filtre = 'toutes' | 'non-lues' | NotificationCategory;
 
@@ -78,6 +79,9 @@ function routePortail(notification: NotificationDto): string | null {
 export function VueNotifications() {
   const router = useRouter();
   const { t, traduireValeur, formatDelai, formatDateTime } = useI18n();
+  // L'intitulé vient du serveur, écrit en français dans `Notification.title` :
+  // le vocabulaire le rend dans la langue courante quand il le reconnaît.
+  const voc = useVocabulaire();
   const { items, unread, isLoading, isConnected, error, markRead, markAllRead, refresh } =
     useNotifications();
   const [filtre, setFiltre] = React.useState<Filtre>('toutes');
@@ -195,7 +199,7 @@ export function VueNotifications() {
                     notification.isRead ? 'text-slate-600' : 'text-slate-900'
                   }`}
                 >
-                  {notification.title}
+                  {voc.titreNotification(notification.title)}
                 </p>
                 <span
                   className={`shrink-0 px-2 py-0.5 rounded text-[10px] font-semibold border ${

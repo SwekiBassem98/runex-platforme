@@ -17,7 +17,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ArrowRight, PlusCircle, RotateCcw, SortAsc } from 'lucide-react';
+import { ArrowRight, PlusCircle, Printer, RotateCcw, SortAsc } from 'lucide-react';
 import { PackageStatus, PackageType, type PackageDto } from '@logixpress/types';
 import {
   Badge,
@@ -33,6 +33,7 @@ import {
   Pagination,
   SearchInput,
   SkeletonTable,
+  Spinner,
   Table,
   Tbody,
   Td,
@@ -40,10 +41,18 @@ import {
   Thead,
   Tr,
   useDifferee,
+  useToast,
 } from '@logixpress/ui';
-import { listerColis, type FiltresColis } from '@/features/expediteur/lib/client';
+import { listerColis, lireColis, type FiltresColis } from '@/features/expediteur/lib/client';
 import { GOUVERNORATS, VARIANTE_TYPE, useVocabulaire } from '@/features/expediteur/lib/libelles';
 import { useI18n, type Cle } from '@/i18n';
+import {
+  genererHtmlColisListe,
+  genererHtmlColisUnique,
+  ouvrirImpression,
+  recupererTousLesColisPourImpression,
+  LIMITE_IMPRESSION,
+} from './impression';
 
 type VueColis = 'tous' | 'livres' | 'reportes' | 'retours';
 
@@ -76,7 +85,7 @@ const VUES: Array<{ id: VueColis; cle: Cle; statuts: PackageStatus[] }> = [
 ];
 
 export function VueColis() {
-  const { t, formatDateTime, formatTND } = useI18n();
+  const { t, formatDate, formatDateTime, formatTND } = useI18n();
   const voc = useVocabulaire();
   const router = useRouter();
   const params = useSearchParams();
@@ -99,6 +108,8 @@ export function VueColis() {
   const [total, setTotal] = React.useState(0);
   const [chargement, setChargement] = React.useState(true);
   const [erreur, setErreur] = React.useState<string | null>(null);
+  const [impressionEnCours, setImpressionEnCours] = React.useState(false);
+  const { addToast } = useToast();
 
   const rechercheAppliquee = useDifferee(recherche.trim(), 350);
 
@@ -199,6 +210,132 @@ export function VueColis() {
     setPage(1);
     setTri('recent');
     router.replace('/expediteur/colis', { scroll: false });
+  };
+
+  const handleImprimer = async () => {
+    if (impressionEnCours) return;
+    if (total === 0) {
+      addToast({ type: 'info', title: t('colis.liste.impressionVide') });
+      return;
+    }
+    setImpressionEnCours(true);
+    try {
+      const base: Record<string, unknown> = {
+        ...(rechercheAppliquee ? { search: rechercheAppliquee } : {}),
+        ...(statut !== 'ALL' ? { status: statut } : {}),
+        ...(type !== 'ALL' ? { type } : {}),
+        ...(gouvernorat !== 'ALL' ? { city: gouvernorat } : {}),
+        ...(date ? { date } : {}),
+      };
+
+      // Construit la fonction lister adaptée à la vue courante (retours = 4 statuts)
+      const listerAdapte = async (filtres: Record<string, unknown>) => {
+        if (vue === 'retours' && statut === 'ALL') {
+          const reponses = await Promise.all(
+            VUES[3].statuts.map((s) => listerColis({ ...(filtres as FiltresColis), status: s } as FiltresColis))
+          );
+          const fusion = new Map<string, PackageDto>();
+          for (const r of reponses) for (const c of r.colis) fusion.set(c.id, c);
+          const tous = [...fusion.values()].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
+          const tot = reponses.reduce((s, r) => s + r.total, 0);
+          return { colis: tous, total: tot };
+        }
+        // Pour les autres vues, on respecte le statut implicite de la vue si aucun filtre statut
+        const f = {
+          ...(filtres as FiltresColis),
+          ...(vue !== 'tous' && statut === 'ALL' ? { status: VUES.find((v) => v.id === vue)?.statuts[0] } : {}),
+        } as FiltresColis;
+        return listerColis(f);
+      };
+
+      // Si le total est petit (<= page actuelle), on peut réutiliser l'affichage trié, sinon on recharge
+      let colisAImprimer: PackageDto[] = [];
+      let totalReel = total;
+
+      if (total <= colisAffiches.length && total <= LIMITE_IMPRESSION) {
+        // On imprime exactement ce qui est filtré et déjà chargé, trié comme à l'écran
+        colisAImprimer = [...colisAffiches];
+      } else {
+        const fetched = await recupererTousLesColisPourImpression(
+          listerAdapte as (f: Record<string, unknown>) => Promise<{ colis: PackageDto[]; total: number }>,
+          base
+        );
+        colisAImprimer = fetched.colis;
+        totalReel = fetched.total;
+        // Appliquer le même tri que l'écran
+        if (tri === 'ancien') colisAImprimer.sort((a, b) => +new Date(a.createdAt) - +new Date(b.createdAt));
+        else if (tri === 'montant') colisAImprimer.sort((a, b) => Number(b.totalPrice ?? 0) - Number(a.totalPrice ?? 0));
+        else colisAImprimer.sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
+      }
+
+      if (colisAImprimer.length === 0) {
+        addToast({ type: 'info', title: t('colis.liste.impressionVide') });
+        return;
+      }
+
+      const resumeFiltres = [
+        vue !== 'tous' ? `${t(vueCourante.cle).toLowerCase()}` : null,
+        rechercheAppliquee ? `recherche « ${rechercheAppliquee} »` : null,
+        statut !== 'ALL' ? `statut ${statut}` : null,
+        type !== 'ALL' ? `type ${type}` : null,
+        gouvernorat !== 'ALL' ? `gouvernorat ${gouvernorat}` : null,
+        date ? `créés le ${date}` : null,
+      ]
+        .filter(Boolean)
+        .join(' · ');
+
+      const langue = document.documentElement.lang || 'fr';
+      const dir = (document.documentElement.dir as 'ltr' | 'rtl') || 'ltr';
+
+      // Entreprise : premier colis ou titre générique
+      const entreprise = colisAImprimer[0]?.shipperName ?? t('coque.entreprise');
+
+      const html = genererHtmlColisListe(colisAImprimer, {
+        entreprise,
+        langue,
+        dir,
+        formatTND,
+        formatDate,
+        formatDateTime,
+        traduireStatut: (s) => voc.statutColis(s).label,
+        traduireType: (s) => voc.type(s as PackageType),
+      }, { total: totalReel, filtresResume: resumeFiltres || undefined });
+
+      ouvrirImpression(html);
+
+      if (totalReel > LIMITE_IMPRESSION) {
+        addToast({
+          type: 'warning',
+          title: t('colis.liste.impressionLimite', { max: LIMITE_IMPRESSION, total: totalReel }),
+        });
+      }
+    } catch (e) {
+      addToast({ type: 'error', title: t('colis.liste.impressionErreur'), message: e instanceof Error ? e.message : undefined });
+    } finally {
+      setImpressionEnCours(false);
+    }
+  };
+
+  const handleImprimerUn = async (colisId: string) => {
+    try {
+      const detail = await lireColis(colisId);
+      const entreprise = detail.shipperName ?? t('coque.entreprise');
+      const lang = document.documentElement.lang || 'fr';
+      const dir = (document.documentElement.dir as 'ltr' | 'rtl') || 'ltr';
+      const html = genererHtmlColisUnique(detail, {
+        entreprise,
+        langue: lang,
+        dir,
+        formatTND,
+        formatDate,
+        formatDateTime,
+        traduireStatut: (s) => voc.statutColis(s).label,
+        traduireType: (s) => voc.type(s as PackageType),
+      });
+      ouvrirImpression(html);
+    } catch (e) {
+      addToast({ type: 'error', title: t('colis.liste.impressionErreur'), message: e instanceof Error ? e.message : undefined });
+    }
   };
 
   const filtresActifs =
@@ -353,26 +490,63 @@ export function VueColis() {
         </FormField>
       </FilterBar>
 
-      <div className="flex items-center justify-between gap-3">
-        <button
-          type="button"
-          onClick={() =>
-            setTri((precedent) =>
-              precedent === 'recent' ? 'ancien' : precedent === 'ancien' ? 'montant' : 'recent'
-            )
-          }
-          className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white border border-slate-200 rounded-md text-[11px] text-slate-600 hover:bg-slate-50 transition cursor-pointer"
-          title={t('colis.liste.triAide')}
-        >
-          <SortAsc className="w-3.5 h-3.5" aria-hidden="true" />
-          {tri === 'recent'
-            ? t('colis.liste.tri.recent')
-            : tri === 'ancien'
-              ? t('colis.liste.tri.ancien')
-              : t('colis.liste.tri.montant')}
-        </button>
-        <div className="sm:hidden">
-          <BasculeFiches enFiches={enFiches} onChange={setEnFiches} />
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() =>
+              setTri((precedent) =>
+                precedent === 'recent' ? 'ancien' : precedent === 'ancien' ? 'montant' : 'recent'
+              )
+            }
+            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white border border-slate-200 rounded-md text-[11px] text-slate-600 hover:bg-slate-50 transition cursor-pointer"
+            title={t('colis.liste.triAide')}
+          >
+            <SortAsc className="w-3.5 h-3.5" aria-hidden="true" />
+            {tri === 'recent'
+              ? t('colis.liste.tri.recent')
+              : tri === 'ancien'
+                ? t('colis.liste.tri.ancien')
+                : t('colis.liste.tri.montant')}
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleImprimer()}
+            disabled={chargement || total === 0 || impressionEnCours}
+            title={
+              total === 0
+                ? t('colis.liste.impressionVide')
+                : filtresActifs
+                  ? t('colis.liste.imprimerFiltres', { n: total })
+                  : t('colis.liste.imprimerTous')
+            }
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-semibold border transition cursor-pointer ${
+              chargement || total === 0
+                ? 'bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed'
+                : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
+            }`}
+          >
+            {impressionEnCours ? (
+              <Spinner size="sm" className="text-slate-500" />
+            ) : (
+              <Printer className="w-3.5 h-3.5" aria-hidden="true" />
+            )}
+            <span>
+              {impressionEnCours
+                ? t('colis.liste.impressionEnCours')
+                : filtresActifs
+                  ? t('colis.liste.imprimerFiltres', { n: total })
+                  : t('colis.liste.imprimerTous')}
+            </span>
+          </button>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="hidden sm:inline text-[11px] text-slate-500">
+            {total > LIMITE_IMPRESSION ? t('colis.liste.impressionLimite', { max: LIMITE_IMPRESSION, total }) : null}
+          </span>
+          <div className="sm:hidden">
+            <BasculeFiches enFiches={enFiches} onChange={setEnFiches} />
+          </div>
         </div>
       </div>
 
@@ -427,34 +601,48 @@ export function VueColis() {
               {colisAffiches.map((c) => {
                 const badge = voc.statutColis(c.status);
                 return (
-                  <FicheLigne
-                    key={c.id}
-                    titre={c.customerName}
-                    sousTitre={voc.gouvernorat(c.governorate)}
-                    identifiant={c.trackingNumber}
-                    action={
-                      <span className={`px-2 py-0.5 rounded text-[11px] font-semibold border ${badge.bg} ${badge.text} ${badge.border}`}>
-                        {badge.label}
-                      </span>
-                    }
-                    champs={[
-                      {
-                        libelle: t('colis.detail.telephone'),
-                        valeur: (
-                          <span className="font-mono text-xs" dir="ltr">
-                            {c.customerPhone}
-                          </span>
-                        ),
-                      },
-                      {
-                        libelle: t('colis.liste.colonne.montant'),
-                        valeur: formatTND(c.totalPrice),
-                        numerique: true,
-                      },
-                      { libelle: t('colis.liste.creesLe'), valeur: formatDateTime(c.createdAt) },
-                    ]}
-                    onClick={() => router.push(`/expediteur/colis/${c.id}`)}
-                  />
+                  <div key={c.id} className="bg-white border border-slate-200 rounded-lg overflow-hidden">
+                    <FicheLigne
+                      titre={c.customerName}
+                      sousTitre={voc.gouvernorat(c.governorate)}
+                      identifiant={c.trackingNumber}
+                      action={
+                        <span className={`px-2 py-0.5 rounded text-[11px] font-semibold border ${badge.bg} ${badge.text} ${badge.border}`}>
+                          {badge.label}
+                        </span>
+                      }
+                      champs={[
+                        {
+                          libelle: t('colis.detail.telephone'),
+                          valeur: (
+                            <span className="font-mono text-xs" dir="ltr">
+                              {c.customerPhone}
+                            </span>
+                          ),
+                        },
+                        {
+                          libelle: t('colis.liste.colonne.montant'),
+                          valeur: formatTND(c.totalPrice),
+                          numerique: true,
+                        },
+                        { libelle: t('colis.liste.creesLe'), valeur: formatDateTime(c.createdAt) },
+                      ]}
+                      onClick={() => router.push(`/expediteur/colis/${c.id}`)}
+                    />
+                    <div className="px-3 pb-3 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleImprimerUn(c.id);
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 text-slate-700 rounded-md text-xs font-medium hover:bg-slate-50 transition"
+                      >
+                        <Printer className="w-3.5 h-3.5" aria-hidden="true" />
+                        {t('colis.liste.imprimer')}
+                      </button>
+                    </div>
+                  </div>
                 );
               })}
             </div>
@@ -523,10 +711,24 @@ export function VueColis() {
                         </span>
                       </Td>
                       <Td align="right" priorite="secondaire">
-                        <span className="inline-flex items-center gap-1 text-[11px] text-red-600 font-semibold">
-                          {t('commun.details')}
-                          <ArrowRight className="w-3 h-3 rtl:rotate-180" aria-hidden="true" />
-                        </span>
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleImprimerUn(c.id);
+                            }}
+                            title={t('colis.liste.imprimerColis')}
+                            aria-label={t('colis.liste.imprimerColis')}
+                            className="p-1.5 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition"
+                          >
+                            <Printer className="w-3.5 h-3.5" aria-hidden="true" />
+                          </button>
+                          <span className="inline-flex items-center gap-1 text-[11px] text-red-600 font-semibold">
+                            {t('commun.details')}
+                            <ArrowRight className="w-3 h-3 rtl:rotate-180" aria-hidden="true" />
+                          </span>
+                        </div>
                       </Td>
                     </Tr>
                   );

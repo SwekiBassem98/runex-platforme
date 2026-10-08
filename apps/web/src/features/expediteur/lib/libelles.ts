@@ -39,7 +39,7 @@ import {
   packageStatusLabel,
 } from '@logixpress/types';
 import { PACKAGE_STATUS_MAP, type BadgeVariant } from '@logixpress/ui';
-import { useI18n, type FamilleValeur } from '@/i18n';
+import { useI18n, type Cle, type FamilleValeur } from '@/i18n';
 
 /** Étape du cycle de vie d'un colis, telle qu'affichée au tableau de bord. */
 export interface EtapeColis {
@@ -173,6 +173,53 @@ export interface HabillageStatut {
 }
 
 /**
+ * Intitulés de notification produits par l'API, reliés à leur clé.
+ *
+ * `notificationDispatcher.notify({ title })` écrit une phrase française en base.
+ * Le corpus est fermé et enumerable — les dix-neuf intitulés ci-dessous sont
+ * ceux que le backend émet réellement, relevés dans `apps/api/src/modules` et
+ * `apps/api/src/common`. La table fait correspondre la phrase stockée à la clé
+ * du dictionnaire, sans jamais réécrire la donnée : la notification en base
+ * reste française, seul l'affichage change de langue.
+ *
+ * Le type de valeur est `CleTitreNotification`, c'est-à-dire l'ensemble des clés
+ * `notif.titre.*` qui existent *effectivement* dans `fr.ts`. Ajouter ici une
+ * entrée pointant vers une clé absente est donc une erreur de compilation, pas
+ * un libellé vide découvert en production.
+ *
+ * Un intitulé absent de cette table — ajouté côté API plus tard — est rendu tel
+ * quel par `titreNotification` : c'est exactement le comportement actuel, et une
+ * phrase française vaut mieux qu'un trou dans la liste.
+ *
+ * Le corps de la notification (`content`) n'est volontairement pas traduit : il
+ * assemble numéros de suivi, noms et montants côté serveur. Le reformuler ici
+ * reviendrait à réécrire des données.
+ */
+type CleTitreNotification = Extract<Cle, `notif.titre.${string}`>;
+
+export const TITRES_NOTIFICATION: Record<string, CleTitreNotification> = {
+  'Nouveau colis à traiter': 'notif.titre.colisATraiter',
+  'Colis modifié': 'notif.titre.colisModifie',
+  'Montant modifié sur un colis': 'notif.titre.montantModifie',
+  'Nombre de pièces modifié': 'notif.titre.piecesModifiees',
+  'Statut de livraison modifié': 'notif.titre.statutModifie',
+  'Nouvelle livraison à effectuer': 'notif.titre.colisAffecte',
+  'Colis intégré à une tournée': 'notif.titre.colisDansTournee',
+  'Colis ajouté à votre tournée': 'notif.titre.colisAjouteTournee',
+  'Colis livré': 'notif.titre.colisLivre',
+  'Livraison partielle': 'notif.titre.livraisonPartielle',
+  'Livraison reportée': 'notif.titre.livraisonReportee',
+  "Colis restitué à l'expéditeur": 'notif.titre.colisRetourne',
+  'Nouvelle demande de ramassage': 'notif.titre.ramassageDemande',
+  'Créneau de ramassage confirmé': 'notif.titre.ramassageConfirme',
+  'Ramassage à collecter': 'notif.titre.ramassageACollecter',
+  'Ramassage effectué': 'notif.titre.ramassageEffectue',
+  'Ramassage annulé': 'notif.titre.ramassageAnnule',
+  'Encaissement à valider': 'notif.titre.encaissementAValider',
+  'Encaissement validé': 'notif.titre.encaissementValide',
+};
+
+/**
  * Vocabulaire traduit, lié à la langue courante.
  *
  * Chaque fonction prend la valeur brute du serveur et rend le mot affiché. Aucun
@@ -195,6 +242,14 @@ export interface Vocabulaire {
   motif: (valeur: string) => string;
   /** Moyen de paiement (espèces, chèque…) d'un bordereau. */
   moyenPaiement: (valeur: string) => string;
+  /**
+   * Intitulé d'une notification, tel que l'API l'a écrit en base.
+   *
+   * Un intitulé connu est rendu dans la langue courante ; un intitulé inconnu
+   * est rendu tel quel, afin qu'aucune notification ne disparaisse ni ne
+   * s'affiche vide le jour où le backend émet un titre de plus.
+   */
+  titreNotification: (titre: string) => string;
   /**
    * Libellé d'une étape du tableau de bord, depuis la clé d'`ETAPES_COLIS`.
    * `etape('livre')` donne « Livrés », `etape('livre.aide')` son explication.
@@ -219,7 +274,7 @@ const FAMILLES: Record<
 };
 
 export function useVocabulaire(): Vocabulaire {
-  const { traduireValeur } = useI18n();
+  const { t, traduireValeur } = useI18n();
   return {
     statutColis: (statut) => ({
       ...(PACKAGE_STATUS_MAP[statut] ?? {
@@ -241,5 +296,12 @@ export function useVocabulaire(): Vocabulaire {
     etape: (cle) => traduireValeur(FAMILLES.etape, cle),
   motif: (valeur) => traduireValeur(FAMILLES.motif, valeur),
   moyenPaiement: (valeur) => traduireValeur(FAMILLES.moyenPaiement, valeur),
+    // La phrase stockée en base n'est pas une clé : on la résout d'abord par
+    // `TITRES_NOTIFICATION`, et l'on rend la phrase telle quelle si la table ne
+    // la connaît pas. Aucune notification ne disparaît faute de traduction.
+    titreNotification: (titre) => {
+      const cle = TITRES_NOTIFICATION[titre];
+      return cle ? t(cle) : titre;
+    },
 };
 }

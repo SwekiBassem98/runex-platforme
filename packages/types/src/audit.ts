@@ -236,9 +236,62 @@ export const AUDIT_ACTIONS: Readonly<Record<string, AuditActionDefinition>> = {
   RAMASSAGE_COLIS: { label: 'Colis rattaché au ramassage', category: 'RAMASSAGE' },
 
   // --- Référentiel -----------------------------------------------------
+  //
+  // Les trois entités suivent le même cycle : création, modification,
+  // activation, désactivation. Les libellés sont volontairement symétriques :
+  // l'écran d'historique filtre par action, et un exploitant qui cherche
+  // « qui a désactivé quoi » doit pouvoir le faire sans connaître l'entité.
+  USER_CREE: {
+    label: 'Compte utilisateur créé',
+    category: 'PARAMETRAGE',
+    critical: true,
+  },
   SHIPPER_MODIFIE: { label: 'Expéditeur modifié', category: 'PARAMETRAGE' },
   DRIVER_MODIFIE: { label: 'Livreur modifié', category: 'PARAMETRAGE' },
   USER_MODIFIE: { label: 'Compte utilisateur modifié', category: 'PARAMETRAGE', critical: true },
+  SHIPPER_CREE: { label: 'Expéditeur créé', category: 'PARAMETRAGE' },
+  DRIVER_CREE: { label: 'Livreur créé', category: 'PARAMETRAGE' },
+  USER_ACTIVE: { label: 'Compte utilisateur activé', category: 'PARAMETRAGE', critical: true },
+  USER_DESACTIVE: {
+    label: 'Compte utilisateur désactivé',
+    category: 'PARAMETRAGE',
+    critical: true,
+    requiresReason: true,
+  },
+  SHIPPER_ACTIVE: { label: 'Expéditeur activé', category: 'PARAMETRAGE' },
+  SHIPPER_DESACTIVE: {
+    label: 'Expéditeur désactivé',
+    category: 'PARAMETRAGE',
+    critical: true,
+    requiresReason: true,
+  },
+  DRIVER_ACTIVE: { label: 'Livreur activé', category: 'PARAMETRAGE' },
+  DRIVER_DESACTIVE: {
+    label: 'Livreur désactivé',
+    category: 'PARAMETRAGE',
+    critical: true,
+    requiresReason: true,
+  },
+  /**
+   * Changement de rôle d'un compte.
+   *
+   * Le motif est exigé : c'est l'acte qui élève ou retire des droits. Sans
+   * justification, un compte devenu administrateur six mois plus tôt est
+   * impossible à expliquer — et c'est précisément la trace qu'on cherche lors
+   * d'un incident.
+   */
+  USER_ROLE_MODIFIE: {
+    label: 'Rôle du compte modifié',
+    category: 'PARAMETRAGE',
+    critical: true,
+    requiresReason: true,
+  },
+  /** Rattachement ou détachement d'un compte à une fiche expéditeur ou livreur. */
+  USER_COMPTE_ASSOCIE: {
+    label: 'Compte rattaché ou détaché',
+    category: 'PARAMETRAGE',
+    critical: true,
+  },
 
   // --- Exports ---------------------------------------------------------
   EXPORT: { label: 'Export réalisé', category: 'PARAMETRAGE' },

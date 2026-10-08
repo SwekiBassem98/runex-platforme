@@ -160,6 +160,15 @@ export const ar: Dictionnaire = {
   'colis.liste.rechercheAide': 'رقم التتبّع، الرمز الشريطي، المستلم، الهاتف…',
   'colis.liste.creesLe': 'أُنشئت في',
   'colis.liste.libelle': 'طرد',
+  'colis.liste.imprimer': 'طباعة',
+  'colis.liste.imprimerColis': 'طباعة الطرد',
+  'colis.liste.imprimerTous': 'طباعة كل الطرود',
+  'colis.liste.imprimerFiltres': 'طباعة {n} طرود مفلترة',
+  'colis.liste.impressionEnCours': 'جارٍ إعداد الطباعة…',
+  'colis.liste.impressionVide': 'لا يوجد طرد للطباعة بهذه الفلاتر.',
+  'colis.liste.impressionLimite': 'حد الطباعة: {max} من أصل {total}، حدّد الفلاتر للبقية.',
+  'colis.liste.impressionErreur': 'تعذّر إعداد الطباعة.',
+  'colis.detail.imprimer': 'طباعة',
 
   'colis.formulaire.titre': 'طرد جديد',
   'colis.formulaire.declareAuNom': 'مصرّح به لحساب {entreprise}',
@@ -573,6 +582,12 @@ export const ar: Dictionnaire = {
   'bordereauStatut.ANNULE': 'ملغى',
   'moyenPaiement.ESPECE': 'نقداً',
   'moyenPaiement.CHEQUE': 'شيك',
+  // موجودة في القاعدة دون أن تكون مقترحة في الإدخال ؛ تُترجم لأن سنداً قديماً قد
+  // يحمل أحدها، وإلا ظهرت القيمة الخام بحروف لاتينية وسط واجهة عربية.
+  'moyenPaiement.VIREMENT': 'تحويل بنكي',
+  'moyenPaiement.TRAITE': 'كمبيالة',
+  'moyenPaiement.CARTE_BANCAIRE': 'بطاقة بنكية',
+  'moyenPaiement.PAIEMENT_EN_LIGNE': 'دفع عبر الإنترنت',
   'paiement.NON_REGLE': 'غير محصَّل',
   'paiement.EN_BORDEREAU': 'ضمن البوليصة',
   'paiement.PAYE': 'محصَّل',
@@ -617,20 +632,57 @@ export const ar: Dictionnaire = {
   'notif.categorie.tournee': 'الجولات',
   'notif.categorie.transfert': 'بين المستودعات',
 
+  // عناوين الإشعارات. العنوان جملة ينتجها الخادم وتُحفظ كما هي في القاعدة،
+  // والمجموعة مغلقة : تسعة عشر عنواناً يربطها `TITRES_NOTIFICATION` بهذه
+  // المفاتيح. أمّا المتن فلا يُترجم لأنه يحمل أرقام تتبّع وأسماء ومبالغ رُكّبت
+  // في الخادم. العنوان غير المعروف يظهر كما هو، وهو السلوك الحالي.
+  // المصطلحات هي المعتمدة في باقي البوابة : طرد، توصيل، استلام، تحصيل، جولة.
+  'notif.titre.colisATraiter': 'طرد جديد في انتظار المعالجة',
+  'notif.titre.colisModifie': 'تم تعديل الطرد',
+  'notif.titre.montantModifie': 'تم تعديل مبلغ الطرد',
+  'notif.titre.piecesModifiees': 'تم تعديل عدد القطع',
+  'notif.titre.statutModifie': 'تم تغيير حالة التوصيل',
+  'notif.titre.colisAffecte': 'عملية توصيل جديدة مطلوبة',
+  'notif.titre.colisDansTournee': 'طرد أُدرج في جولة',
+  'notif.titre.colisAjouteTournee': 'طرد أُضيف إلى جولتك',
+  'notif.titre.colisLivre': 'تم تسليم الطرد',
+  'notif.titre.livraisonPartielle': 'تسليم جزئي',
+  'notif.titre.livraisonReportee': 'تم تأجيل التوصيل',
+  'notif.titre.colisRetourne': 'تم إرجاع الطرد إلى المرسل',
+  'notif.titre.ramassageDemande': 'طلب استلام جديد',
+  'notif.titre.ramassageConfirme': 'تم تأكيد موعد الاستلام',
+  'notif.titre.ramassageACollecter': 'استلام في انتظار التحصيل',
+  'notif.titre.ramassageEffectue': 'تم إنجاز عملية الاستلام',
+  'notif.titre.ramassageAnnule': 'تم إلغاء عملية الاستلام',
+  'notif.titre.encaissementAValider': 'تحصيل في انتظار الاعتماد',
+  'notif.titre.encaissementValide': 'تم اعتماد التحصيل',
+
   // --------------------------------------------------------- gouvernorats
+  // المفاتيح هي قيم `APP_CONFIG.governorates` بحروفها المشكولة : البحث يتم
+  // بالقيمة القادمة من الخادم، ومفتاح مخالف لا يُصادفها أبداً فتظهر التسمية
+  // الفرنسية وسط واجهة عربية. الأسماء هي المتداولة رسمياً في تونس.
   'gou.Ariana': 'أريانة',
+  'gou.Béja': 'باجة',
   'gou.Ben Arous': 'بن عروس',
   'gou.Bizerte': 'بنزرت',
+  'gou.Gabès': 'قابس',
+  'gou.Gafsa': 'قفصة',
+  'gou.Jendouba': 'جندوبة',
   'gou.Kairouan': 'القيروان',
   'gou.Kasserine': 'القصرين',
-  'gou.Manouba': 'منوبة',
-  'gou.Medenine': 'مدنين',
+  'gou.Kébili': 'قبلي',
+  'gou.Le Kef': 'الكاف',
+  'gou.Mahdia': 'المهدية',
+  'gou.La Manouba': 'منوبة',
+  'gou.Médenine': 'مدنين',
   'gou.Monastir': 'المنستير',
   'gou.Nabeul': 'نابل',
   'gou.Sfax': 'صفاقس',
   'gou.Sidi Bouzid': 'سيدي بوزيد',
   'gou.Siliana': 'سليانة',
   'gou.Sousse': 'سوسة',
+  'gou.Tataouine': 'تطاوين',
+  'gou.Tozeur': 'توزر',
   'gou.Tunis': 'تونس',
   'gou.Zaghouan': 'زغوان',
 

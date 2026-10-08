@@ -60,7 +60,7 @@ export function ErrorBanner({ message, onDismiss }: { message: string; onDismiss
           type="button"
           onClick={onDismiss}
           aria-label={libelles['erreur.masquer']}
-          className="text-red-500 hover:text-red-700 font-bold ml-2 shrink-0 cursor-pointer"
+          className="text-red-500 hover:text-red-700 font-bold ms-2 shrink-0 cursor-pointer"
         >
           <span aria-hidden="true">✕</span>
         </button>

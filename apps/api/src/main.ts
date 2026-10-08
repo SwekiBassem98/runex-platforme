@@ -11,6 +11,9 @@ import { errorHandler } from './common/http/async-handler';
 import { prismaService } from './database/prisma.service';
 import { redisService } from './redis/redis.service';
 import { inAppChannel, registerChannel, socketChannel } from './modules/notifications/channels';
+import { pushChannel } from './modules/notifications/push.channel';
+import { initPush, pushInitStatus } from './modules/notifications/push.service';
+import { notificationDispatcher } from './modules/notifications/notification.dispatcher';
 import { closeRealtime, initialiseRealtime } from './modules/notifications/realtime.gateway';
 
 function resolveAllowedOrigins(): string[] {
@@ -138,12 +141,16 @@ async function bootstrap() {
   // pouvoir être poussée, et non seulement retrouvée au rechargement.
   initialiseRealtime(server);
 
-  // Les canaux de diffusion sont enregistrés une fois pour toutes. En ajouter
-  // un — le push, demain — consistera à rappeler `registerChannel` ici, sans
-  // toucher aux modules métier qui produisent les événements.
+  // Les canaux de diffusion sont enregistrés une fois pour toutes.
+  // `push` s'ajoute ici sans toucher aux modules métier qui produisent les événements.
   registerChannel(inAppChannel);
   registerChannel(socketChannel);
-  console.log('[RUNEX API] Canaux de notification : in_app, socket');
+  notificationDispatcher.register(pushChannel);
+  await initPush();
+  const pushStatus = pushInitStatus();
+  console.log(
+    `[RUNEX API] Canaux de notification : in_app, socket, push${pushStatus.enabled ? '' : ' (désactivé: ' + (pushStatus.error ?? 'non configuré') + ')'}` 
+  );
 
   const shutdown = (signal: string) => {
     console.log(`[RUNEX API] ${signal} reçu, arrêt en cours...`);

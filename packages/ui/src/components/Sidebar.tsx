@@ -131,7 +131,7 @@ export function Sidebar({
           <button
             type="button"
             onClick={onFermer}
-            className="p-1.5 -mr-1 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+            className="p-1.5 -me-1 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
             aria-label={libelles['menu.fermer']}
           >
             <X className="w-4 h-4" aria-hidden="true" />
@@ -223,11 +223,11 @@ export function Sidebar({
                 {item.icon}
               </span>
               {!isCollapsed && (
-                <div className="flex-1 flex items-center justify-between text-left truncate min-w-0">
+                <div className="flex-1 flex items-center justify-between text-start truncate min-w-0">
                   <span className="truncate">{item.label}</span>
                   {item.count !== undefined && (
                     <span
-                      className={`ml-2 px-1.5 py-0.2 rounded text-[10px] font-mono shrink-0 ${
+                      className={`ms-2 px-1.5 py-0.2 rounded text-[10px] font-mono shrink-0 ${
                         isActive
                           ? 'bg-red-800 text-white'
                           : item.badgeVariant === 'danger'
@@ -246,7 +246,7 @@ export function Sidebar({
                   l'opérateur l'a repliée. */}
               {isCollapsed && item.count !== undefined && (
                 <span
-                  className={`absolute top-1 right-1 min-w-4 px-1 rounded text-[9px] font-mono text-center leading-4 ${
+                  className={`absolute top-1 end-1 min-w-4 px-1 rounded text-[9px] font-mono text-center leading-4 ${
                     isActive
                       ? 'bg-white text-red-700'
                       : item.badgeVariant === 'danger'
@@ -315,7 +315,7 @@ export function Sidebar({
         <aside
           id={idNavigation}
           data-menu-mobile=""
-          className="fixed inset-y-0 left-0 w-72 max-w-[85vw] bg-[#121417] text-slate-300 flex flex-col z-50 animate-panel-in lg:hidden"
+          className="fixed inset-y-0 start-0 w-72 max-w-[85vw] bg-[#121417] text-slate-300 flex flex-col z-50 animate-panel-in-start lg:hidden"
           aria-label={libelles['menu.navigation']}
         >
           {contenu}
@@ -326,7 +326,7 @@ export function Sidebar({
 
   return (
     <aside
-      className={`bg-[#121417] text-slate-300 flex-col border-r border-slate-800 shrink-0 transition-all duration-300 select-none z-30 hidden lg:flex ${
+      className={`bg-[#121417] text-slate-300 flex-col border-e border-slate-800 shrink-0 transition-all duration-300 select-none z-30 hidden lg:flex ${
         isCollapsed ? 'w-20' : 'w-64'
       }`}
     >

@@ -301,7 +301,9 @@ export default function DashboardPage() {
                     <Coins className="w-3.5 h-3.5 text-emerald-600" />
                     <span>Caisse & CRBT (TND)</span>
                   </div>
-                  <Badge variant="success">0 Déficit</Badge>
+                  <Badge variant={paiementStats.deficitCaisseTND > 0 ? "danger" : "success"}>
+                    {paiementStats.deficitCaisseTND > 0 ? `${formatTND(paiementStats.deficitCaisseTND)} Déficit` : "0 Déficit"}
+                  </Badge>
                 </div>
                 <div className="space-y-1.5 text-xs">
                   <div className="flex justify-between py-0.5 border-b border-slate-100">
@@ -330,7 +332,7 @@ export default function DashboardPage() {
                     <Warehouse className="w-3.5 h-3.5 text-red-600" />
                     <span>Dépôts & Navettes</span>
                   </div>
-                  <Badge variant="outline">4 Agences</Badge>
+                  <Badge variant="outline">{depotStats.agencesActives} Agence{depotStats.agencesActives > 1 ? "s" : ""}</Badge>
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   <div className="p-2 bg-red-50/40 rounded border border-red-100">
@@ -346,8 +348,8 @@ export default function DashboardPage() {
                     <span className="text-base font-bold text-slate-800 font-mono">{depotStats.interDepotsActifs}</span>
                   </div>
                   <div className="p-2 bg-slate-50 rounded border border-slate-200">
-                    <span className="text-slate-500 text-[11px] block">Taux saturation</span>
-                    <span className="text-base font-bold text-slate-900 font-mono">42%</span>
+                    <span className="text-slate-500 text-[11px] block">Stock total</span>
+                    <span className="text-base font-bold text-slate-900 font-mono">{depotStats.colisAuDepot + depotStats.colisInTransit}</span>
                   </div>
                 </div>
               </div>
@@ -374,19 +376,19 @@ export default function DashboardPage() {
                   <div className="flex justify-between">
                     <span className="text-emerald-700 font-medium">Livrés avec succès :</span>
                     <span className="font-bold text-emerald-800 font-mono">
-                      {dashboardData?.charts?.deliveredVsReturned?.[0]?.value || 24}
+                      {dashboardData?.charts?.deliveredVsReturned?.[0]?.value ?? 0}
                     </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-amber-700 font-medium">Reportés (NPAI/Absent) :</span>
                     <span className="font-bold text-amber-800 font-mono">
-                      {dashboardData?.charts?.deliveredVsReturned?.[1]?.value || 3}
+                      {dashboardData?.charts?.deliveredVsReturned?.[1]?.value ?? 0}
                     </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-red-700 font-medium">Retours définitifs :</span>
                     <span className="font-bold text-red-800 font-mono">
-                      {dashboardData?.charts?.deliveredVsReturned?.[2]?.value || 1}
+                      {dashboardData?.charts?.deliveredVsReturned?.[2]?.value ?? 0}
                     </span>
                   </div>
                 </div>

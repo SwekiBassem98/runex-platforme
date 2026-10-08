@@ -99,6 +99,16 @@ export function initialiseRealtime(httpServer: HttpServer): Server {
     const user = socket.data.user;
     if (!user) return;
 
+    // Présence livreur : la connexion socket peut rafraîchir `lastSeenAt`,
+    // mais n'est jamais l'unique source — le battement REST reste canonique.
+    // On ne bloque jamais la connexion et on ignore silencieusement l'absence
+    // de profil livreur (admin/gestionnaire) ou toute erreur DB.
+    if (user.role === 'LIVREUR') {
+      void import('../../modules/presence/presence.service')
+        .then(({ presenceService: svc }) => svc.heartbeatByUserId(user.id))
+        .catch(() => {});
+    }
+
     socket.emit(SOCKET_SYSTEM_EVENTS.READY, { userId: user.id, at: new Date().toISOString() });
 
     // À la reconnexion, le compteur de non-lus est redemandé : entre la perte

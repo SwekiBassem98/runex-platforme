@@ -108,7 +108,7 @@ export function TopNavigation({
           type="button"
           onClick={onOpenMenu}
           aria-label="Ouvrir le menu"
-          className="lg:hidden p-2 -ml-1 rounded-md text-slate-600 hover:bg-slate-100 transition cursor-pointer shrink-0"
+          className="lg:hidden p-2 -ms-1 rounded-md text-slate-600 hover:bg-slate-100 transition cursor-pointer shrink-0"
         >
           <Menu className="w-5 h-5" aria-hidden="true" />
         </button>
@@ -132,7 +132,7 @@ export function TopNavigation({
         {showDepositMenu && (
           <>
             <div className="fixed inset-0 z-20" onClick={() => setShowDepositMenu(false)} />
-            <div className="absolute left-0 mt-1 w-64 max-w-[85vw] bg-white border border-slate-200 rounded-lg shadow-xl py-1 z-30 text-xs animate-menu-in">
+            <div className="absolute start-0 mt-1 w-64 max-w-[85vw] bg-white border border-slate-200 rounded-lg shadow-xl py-1 z-30 text-xs animate-menu-in">
               <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100">
                 Changer d'agence / dépôt
               </div>
@@ -144,7 +144,7 @@ export function TopNavigation({
                     onSelectDeposit?.(dep.id);
                     setShowDepositMenu(false);
                   }}
-                  className="w-full text-left px-3 py-2 flex items-center justify-between hover:bg-slate-50 transition cursor-pointer"
+                  className="w-full text-start px-3 py-2 flex items-center justify-between hover:bg-slate-50 transition cursor-pointer"
                 >
                   <span className={dep.id === activeDepositId ? 'font-bold text-red-600' : 'text-slate-700'}>
                     {dep.name}
@@ -265,7 +265,7 @@ export function TopNavigation({
             <Bell className="w-4 h-4" aria-hidden="true" />
             {unreadNotificationsCount > 0 && (
               <span
-                className="absolute top-1 right-1 min-w-2 h-2 px-0.5 bg-red-600 text-white text-[9px] font-bold rounded-full ring-2 ring-white flex items-center justify-center tabular-nums"
+                className="absolute top-1 end-1 min-w-2 h-2 px-0.5 bg-red-600 text-white text-[9px] font-bold rounded-full ring-2 ring-white flex items-center justify-center tabular-nums"
                 aria-hidden="true"
               >
                 {unreadNotificationsCount > 9 ? '9+' : unreadNotificationsCount}
@@ -276,7 +276,7 @@ export function TopNavigation({
           {showNotifMenu && (
             <>
               <div className="fixed inset-0 z-20" onClick={() => setShowNotifMenu(false)} />
-              <div className="absolute right-0 mt-1 w-[min(22rem,calc(100vw-1.5rem))] bg-white border border-slate-200 rounded-lg shadow-xl py-2 z-30 text-xs animate-menu-in">
+              <div className="absolute end-0 mt-1 w-[min(22rem,calc(100vw-1.5rem))] bg-white border border-slate-200 rounded-lg shadow-xl py-2 z-30 text-xs animate-menu-in">
                 <div className="px-4 py-2 border-b border-slate-100 font-bold text-slate-900 flex justify-between items-center gap-2">
                   <span className="flex items-center gap-1.5">
                     Notifications
@@ -305,7 +305,7 @@ export function TopNavigation({
                         key={notification.id}
                         type="button"
                         onClick={() => onOpenNotification?.(notification)}
-                        className={`w-full text-left p-3 hover:bg-slate-50 transition ${
+                        className={`w-full text-start p-3 hover:bg-slate-50 transition ${
                           notification.isRead ? '' : 'bg-blue-50/40'
                         }`}
                       >
@@ -346,8 +346,8 @@ export function TopNavigation({
         </div>
 
         {/* Profil / Rôle */}
-        <div className="flex items-center gap-2 pl-2 border-l border-slate-200 text-xs">
-          <div className="text-right hidden sm:block min-w-0">
+        <div className="flex items-center gap-2 ps-2 border-s border-slate-200 text-xs">
+          <div className="text-end hidden sm:block min-w-0">
             <span className="font-semibold text-slate-900 block leading-tight">{userName}</span>
             <span className="text-[11px] font-mono text-slate-500 uppercase">{userRole}</span>
           </div>

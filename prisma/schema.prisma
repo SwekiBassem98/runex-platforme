@@ -236,6 +236,10 @@ enum NotificationType {
   RUNSHEET_ASSIGNED
   RAMASSAGE_ASSIGNED
   INTER_DEPOT_RECEIVED
+  // Création d'un compte par un administrateur. Une seule notification par
+  // création, adressée au titulaire : les modifications de champ n'en émettent
+  // aucune, ce serait du bruit dans un centre de notifications opérationnel.
+  ACCOUNT_CREATED
 
   // Valeurs historiques, conservées parce que des notifications déjà
   // enregistrées les portent. Un équivalent existe pour la plupart — voir
@@ -292,14 +296,13 @@ model User {
   auditLogs         AuditLog[]           @relation("UserAuditLogs")
   validatedPayments Payment[]            @relation("PaymentValidators")
   notifications     Notification[]
+  pushDevices       PushDevice[]
 
   /// Jeton de notification poussée, et consentement à le recevoir.
   ///
-  /// Rien ne les écrit encore : la diffusion temps réel passe par Socket.IO,
-  /// qui n'a pas besoin d'un jeton persisté. Ces deux colonnes sont le point
-  /// d'accroche du canal « push » — brancher FCM ou APNs consistera à les
-  /// alimenter et à enregistrer un canal de diffusion supplémentaire, sans
-  /// toucher au modèle des notifications ni aux appelants métier.
+  /// Conservé pour compatibilité avec les installations existantes : les
+  /// nouvelles inscriptions utilisent `PushDevice` (multi-appareils), mais les
+  /// jetons déjà écrits dans `User.pushToken` restent lus en repli.
   pushToken       String?   @db.VarChar(255)
   pushEnabled     Boolean   @default(false)
   /// Dépôts dont cet utilisateur est le responsable opérationnel.
@@ -378,6 +381,34 @@ model Session {
 
   @@index([userId])
   @@index([refreshTokenHash])
+}
+
+/// Appareil enregistré pour la réception de notifications poussées.
+///
+/// Un utilisateur peut posséder plusieurs appareils (téléphone + tablette,
+/// réinstallation, ancien jeton). La table conserve chaque jeton distinct :
+/// l'envoi cible tous les jetons actifs, et les jetons invalides sont
+/// désactivés sans toucher au compte.
+///
+/// `User.pushToken` reste lu en repli pour les installations antérieures ;
+/// `Session.fcmToken` reste la trace par session, mais la vérité multi-appareils
+/// est ici.
+model PushDevice {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @db.Uuid
+  token      String   @unique @db.VarChar(500)
+  platform   String   @default("android") @db.VarChar(30) // android | ios | web
+  deviceId   String?  @db.VarChar(255)
+  isActive   Boolean  @default(true)
+  lastSeenAt DateTime @default(now()) @db.Timestamptz(6)
+  createdAt  DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime @updatedAt @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([isActive])
+  @@index([token])
 }
 
 // ==============================================================================
@@ -631,6 +662,7 @@ model Driver {
   rating         Decimal?  @db.Decimal(3, 2)
   isActive       Boolean   @default(true)
   deletedAt      DateTime? @db.Timestamptz(6)
+  lastSeenAt     DateTime? @db.Timestamptz(6)
   createdAt      DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
 

@@ -10,10 +10,18 @@ import { interDepotsController } from './modules/inter-depots/inter-depots.contr
 import { depotsController } from './modules/depots/depots.controller';
 import { dashboardController } from './modules/dashboard/dashboard.controller';
 import { inventoryController } from './modules/inventory/inventory.controller';
+import { inventoryExceptionsController } from './modules/inventory/inventory-exceptions.controller';
+import { devicesController } from './modules/devices/devices.controller';
+import { presenceController } from './modules/presence/presence.controller';
 import { searchController } from './modules/search/search.controller';
 import { auditController } from './modules/audit/audit.controller';
 import { reportsController } from './modules/reports/reports.controller';
 import { receptionController } from './modules/depot/reception.controller';
+import {
+  usersController,
+  shippersController,
+  driversController,
+} from './modules/admin/admin.controller';
 import { openApiSpecification } from './common/swagger/swagger.config';
 import { asyncHandler } from './common/http/async-handler';
 import {
@@ -309,6 +317,29 @@ export function createApiRouter(): Router {
     asyncHandler((req, res) => inventoryController.facets(req, res))
   );
 
+  // Exceptions d'inventaire — colis suspects / à investiguer.
+  // Ordre : facets avant :id avant liste, pour ne pas capturer « facets » comme id.
+  router.get(
+    '/inventaire/exceptions/facets',
+    authenticateToken,
+    requirePermissions(PermissionCode.INVENTORY_READ),
+    asyncHandler((req, res) => inventoryExceptionsController.facets(req, res))
+  );
+
+  router.get(
+    '/inventaire/exceptions/:id',
+    authenticateToken,
+    requirePermissions(PermissionCode.INVENTORY_READ),
+    asyncHandler((req, res) => inventoryExceptionsController.getById(req, res))
+  );
+
+  router.get(
+    '/inventaire/exceptions',
+    authenticateToken,
+    requirePermissions(PermissionCode.INVENTORY_READ),
+    asyncHandler((req, res) => inventoryExceptionsController.list(req, res))
+  );
+
   router.get(
     '/inventaire',
     authenticateToken,
@@ -412,6 +443,34 @@ export function createApiRouter(): Router {
     asyncHandler((req, res) => notificationsController.markAllRead(req, res))
   );
 
+  // Appareils poussés (FCM) : l'identité vient toujours du jeton JWT, jamais
+  // d'un `userId` fourni par le client. Un livreur ne peut donc pas enregistrer
+  // de jeton pour un autre compte, et la désinstallation d'une application
+  // n'affecte que ses propres jetons.
+  router.get(
+    '/devices',
+    authenticateToken,
+    asyncHandler((req, res) => devicesController.list(req, res))
+  );
+
+  router.post(
+    '/devices/push-token',
+    authenticateToken,
+    asyncHandler((req, res) => devicesController.register(req, res))
+  );
+
+  router.delete(
+    '/devices/push-token',
+    authenticateToken,
+    asyncHandler((req, res) => devicesController.removeByToken(req, res))
+  );
+
+  router.delete(
+    '/devices/:id',
+    authenticateToken,
+    asyncHandler((req, res) => devicesController.removeById(req, res))
+  );
+
   // ---------------------------------------------------------------------
   // Réception en dépôt — Acceptation Magasin
   // ---------------------------------------------------------------------
@@ -488,6 +547,27 @@ export function createApiRouter(): Router {
     authenticateToken,
     requirePermissions(PermissionCode.RUNSHEET_CREATE),
     asyncHandler((req, res) => runsheetsController.create(req, res))
+  );
+
+  router.patch(
+    '/runsheets/:id',
+    authenticateToken,
+    requirePermissions(PermissionCode.RUNSHEET_CREATE),
+    asyncHandler((req, res) => runsheetsController.update(req, res))
+  );
+
+  router.put(
+    '/runsheets/:id',
+    authenticateToken,
+    requirePermissions(PermissionCode.RUNSHEET_CREATE),
+    asyncHandler((req, res) => runsheetsController.update(req, res))
+  );
+
+  router.delete(
+    '/runsheets/:id',
+    authenticateToken,
+    requirePermissions(PermissionCode.RUNSHEET_CREATE),
+    asyncHandler((req, res) => runsheetsController.remove(req, res))
   );
 
   router.post(
@@ -784,6 +864,173 @@ export function createApiRouter(): Router {
       RoleType.LIVREUR
     ),
     asyncHandler((req, res) => dashboardController.getMetrics(req, res))
+  );
+
+  // ---------------------------------------------------------------------
+  // Administration — comptes, expéditeurs, livreurs
+  // ---------------------------------------------------------------------
+  //
+  // Réservé à l'administration par permission, jamais par rôle en dur : c'est la
+  // même porte que le reste de l'API. Un expéditeur qui appelle l'une de ces
+  // routes reçoit 403 — l'autorisation est décidée ici, pas dans l'interface qui
+  // masquerait simplement le lien.
+  //
+  // L'ordre compte : `/users/referentiels` est déclaré avant `/users/:id`, sans
+  // quoi Express lirait « referentiels » comme un identifiant.
+
+  router.get(
+    '/users/referentiels',
+    authenticateToken,
+    requirePermissions(PermissionCode.USER_READ),
+    asyncHandler((req, res) => usersController.referentiels(req, res))
+  );
+
+  router.get(
+    '/users',
+    authenticateToken,
+    requirePermissions(PermissionCode.USER_READ),
+    asyncHandler((req, res) => usersController.list(req, res))
+  );
+
+  router.get(
+    '/users/:id',
+    authenticateToken,
+    requirePermissions(PermissionCode.USER_READ),
+    asyncHandler((req, res) => usersController.getById(req, res))
+  );
+
+  router.post(
+    '/users',
+    authenticateToken,
+    requirePermissions(PermissionCode.USER_CREATE),
+    asyncHandler((req, res) => usersController.create(req, res))
+  );
+
+  router.patch(
+    '/users/:id',
+    authenticateToken,
+    requirePermissions(PermissionCode.USER_UPDATE),
+    asyncHandler((req, res) => usersController.update(req, res))
+  );
+
+  router.patch(
+    '/users/:id/status',
+    authenticateToken,
+    requirePermissions(PermissionCode.USER_UPDATE),
+    asyncHandler((req, res) => usersController.setStatus(req, res))
+  );
+
+  router.get(
+    '/shippers',
+    authenticateToken,
+    requirePermissions(PermissionCode.EXPEDITEUR_READ),
+    asyncHandler((req, res) => shippersController.list(req, res))
+  );
+
+  router.get(
+    '/shippers/:id',
+    authenticateToken,
+    requirePermissions(PermissionCode.EXPEDITEUR_READ),
+    asyncHandler((req, res) => shippersController.getById(req, res))
+  );
+
+  router.post(
+    '/shippers',
+    authenticateToken,
+    requirePermissions(PermissionCode.EXPEDITEUR_CREATE),
+    asyncHandler((req, res) => shippersController.create(req, res))
+  );
+
+  router.patch(
+    '/shippers/:id',
+    authenticateToken,
+    requirePermissions(PermissionCode.EXPEDITEUR_UPDATE),
+    asyncHandler((req, res) => shippersController.update(req, res))
+  );
+
+  router.patch(
+    '/shippers/:id/status',
+    authenticateToken,
+    requirePermissions(PermissionCode.EXPEDITEUR_UPDATE),
+    asyncHandler((req, res) => shippersController.setStatus(req, res))
+  );
+
+  router.post(
+    '/shippers/:id/users',
+    authenticateToken,
+    requirePermissions(PermissionCode.EXPEDITEUR_UPDATE),
+    asyncHandler((req, res) => shippersController.rattacherCompte(req, res))
+  );
+
+  router.delete(
+    '/shippers/:id/users/:userId',
+    authenticateToken,
+    requirePermissions(PermissionCode.EXPEDITEUR_UPDATE),
+    asyncHandler((req, res) => shippersController.detacherCompte(req, res))
+  );
+
+  // Présence livreur : déclaré avant `/:id` pour éviter la capture.
+  router.get(
+    '/drivers/presence',
+    authenticateToken,
+    requirePermissions(PermissionCode.LIVREUR_READ),
+    asyncHandler((req, res) => presenceController.list(req, res))
+  );
+
+  router.get(
+    '/drivers/:id/presence',
+    authenticateToken,
+    requirePermissions(PermissionCode.LIVREUR_READ),
+    asyncHandler((req, res) => presenceController.getOne(req, res))
+  );
+
+  router.post(
+    '/drivers/presence/heartbeat',
+    authenticateToken,
+    asyncHandler((req, res) => presenceController.heartbeat(req, res))
+  );
+
+  // Comptes encore disponibles au rattachement : déclaré avant `/:id`.
+  router.get(
+    '/drivers/comptes-disponibles',
+    authenticateToken,
+    requirePermissions(PermissionCode.LIVREUR_READ),
+    asyncHandler((req, res) => driversController.listComptesDisponibles(req, res))
+  );
+
+  router.get(
+    '/drivers',
+    authenticateToken,
+    requirePermissions(PermissionCode.LIVREUR_READ),
+    asyncHandler((req, res) => driversController.list(req, res))
+  );
+
+  router.get(
+    '/drivers/:id',
+    authenticateToken,
+    requirePermissions(PermissionCode.LIVREUR_READ),
+    asyncHandler((req, res) => driversController.getById(req, res))
+  );
+
+  router.post(
+    '/drivers',
+    authenticateToken,
+    requirePermissions(PermissionCode.LIVREUR_CREATE),
+    asyncHandler((req, res) => driversController.create(req, res))
+  );
+
+  router.patch(
+    '/drivers/:id',
+    authenticateToken,
+    requirePermissions(PermissionCode.LIVREUR_UPDATE),
+    asyncHandler((req, res) => driversController.update(req, res))
+  );
+
+  router.patch(
+    '/drivers/:id/status',
+    authenticateToken,
+    requirePermissions(PermissionCode.LIVREUR_UPDATE),
+    asyncHandler((req, res) => driversController.setStatus(req, res))
   );
 
   return router;

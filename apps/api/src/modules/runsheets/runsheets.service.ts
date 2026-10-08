@@ -13,7 +13,7 @@ import { auditService } from '../../common/audit/audit.service';
 import { toPackageDto, PACKAGE_INCLUDE } from '../../common/database/mappers';
 import type { RunsheetSummaryDto, PackageDto } from '@logixpress/types';
 import { PackageStatus, RoleType, NotificationEvent } from '@logixpress/types';
-import { notFound, badRequest, conflict, asUuid } from '../../common/errors/api-error';
+import { notFound, badRequest, conflict, forbidden, asUuid } from '../../common/errors/api-error';
 import { packageWorkflowService } from '../colis/package-workflow.service';
 import { notificationDispatcher } from '../notifications/notification.dispatcher';
 import {
@@ -159,6 +159,206 @@ export class RunsheetsService {
     });
 
     return this.toDto(created);
+  }
+
+  /**
+   * Met à jour une tournée (driver, date, zone/notes, dépôt).
+   *
+   * Règles d'éditabilité basées sur le statut opérationnel :
+   *  - BROUILLON / EN_ATTENTE : éditable (driver/date/notes/dépôt).
+   *    Si la tournée contient déjà des colis, le changement de livreur ou de
+   *    dépôt est refusé (409) pour éviter l'incohérence colis↔tournée.
+   *  - VALIDEE_DEPART / EN_COURS / RETOUR_DEPOT / CLOTUREE_* / ANNULEE : non
+   *    éditable pour driver/date/dépôt. Seules les notes (zone) peuvent être
+   *    corrigées en EN_ATTENTE ; au-delà, toute modification est refusée.
+   *  Le statut lui-même ne peut être changé que par `updateStatus`/`close`/`validate`.
+   */
+  async update(
+    identifier: string,
+    payload: { driverId?: string; tourDate?: string; notes?: string; depositId?: string; type?: string },
+    actor: { id?: string; fullName: string; depositId?: string | null },
+    scope?: { depositId?: string }
+  ): Promise<RunsheetSummaryDto> {
+    const prisma = getPrisma();
+    const runsheet = await this.findRecord(identifier);
+
+    // Sécurité : périmètre dépôt
+    if (scope?.depositId && runsheet.depositId !== scope.depositId) {
+      throw forbidden("Vous n'avez pas accès à cette tournée (périmètre dépôt).");
+    }
+    if (actor.depositId && runsheet.depositId !== actor.depositId) {
+      // Les utilisateurs rattachés à un dépôt ne peuvent modifier qu'au sein de leur dépôt,
+      // sauf ADMIN/GESTIONNAIRE sans périmètre (scope vide) — ce cas est déjà géré par scope.
+      // On vérifie seulement si l'appelant a un dépôt et n'est pas ADMIN (le scope ADMIN est vide).
+      // Pour éviter un blocage excessif, on se base sur le scope plutôt que l'actor.
+    }
+
+    const persisted = runsheet.status as string;
+    const editableStatuses = ['BROUILLON', 'EN_ATTENTE'];
+    if (!editableStatuses.includes(persisted)) {
+      throw conflict(
+        `La tournée ${runsheet.runsheetNumber} n'est plus modifiable (statut ${persisted}). Seules les tournées en attente peuvent être modifiées.`
+      );
+    }
+
+    const hasPackages = runsheet.runsheetItems.length > 0 || runsheet.totalPackages > 0;
+
+    const data: Record<string, unknown> = {};
+
+    // Driver
+    if (payload.driverId !== undefined) {
+      const trimmed = String(payload.driverId).trim();
+      if (!trimmed) throw badRequest('Le champ « Chauffeur (driverId) » est obligatoire.');
+      if (hasPackages) {
+        throw conflict(
+          'Impossible de changer le livreur : la tournée contient déjà des colis. Retirez les colis ou créez une nouvelle tournée.'
+        );
+      }
+      const driver = await this.resolveDriver({ driverId: trimmed });
+      data.driverId = driver.id;
+    }
+
+    // tourDate
+    if (payload.tourDate !== undefined) {
+      const raw = String(payload.tourDate).trim();
+      if (!raw) throw badRequest('Le champ « Date de tournée (tourDate) » est obligatoire.');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+        throw badRequest('Le champ « Date de tournée » doit être au format AAAA-MM-JJ.');
+      }
+      const parsed = new Date(raw);
+      if (Number.isNaN(parsed.getTime())) throw badRequest('Date de tournée invalide.');
+      data.tourDate = parsed;
+    }
+
+    // notes / zone
+    if (payload.notes !== undefined) {
+      const n = payload.notes === null ? null : String(payload.notes);
+      if (n !== null && n.length > 500) throw badRequest('La zone/notes ne peut dépasser 500 caractères.');
+      data.notes = n;
+    }
+
+    // depositId
+    if (payload.depositId !== undefined) {
+      const raw = String(payload.depositId).trim();
+      if (!raw) throw badRequest('Dépôt invalide.');
+      const uuid = asUuid(raw);
+      if (!uuid) throw badRequest('Identifiant de dépôt invalide (UUID attendu).');
+      const deposit = await prisma.deposit.findUnique({ where: { id: uuid } });
+      if (!deposit) throw notFound('Dépôt introuvable.');
+      if (!deposit.isActive) throw conflict('Ce dépôt est inactif.');
+      if (hasPackages) {
+        throw conflict(
+          'Impossible de changer le dépôt : la tournée contient déjà des colis.'
+        );
+      }
+      data.depositId = deposit.id;
+    }
+
+    // type (optionnel, uniquement en attente)
+    if (payload.type !== undefined) {
+      const allowedTypes = ['DISTRIBUTION', 'RAMASSAGE', 'RETOUR_EXPEDITEUR', 'TRANSFERT_DEPOT'];
+      const t = String(payload.type).trim().toUpperCase();
+      if (t && !allowedTypes.includes(t)) throw badRequest(`Type de tournée invalide : ${payload.type}.`);
+      if (t) data.type = t as never;
+    }
+
+    if (Object.keys(data).length === 0) {
+      throw badRequest('Aucune donnée à mettre à jour.');
+    }
+
+    const updated = await prisma.runsheet.update({
+      where: { id: runsheet.id },
+      data,
+      include: RUNSHEET_INCLUDE,
+    });
+
+    await auditService.record({
+      entityType: 'RUNSHEET',
+      entityId: runsheet.id,
+      action: 'UPDATE',
+      userId: actor.id,
+      reason: `Tournée ${runsheet.runsheetNumber} modifiée : ${Object.keys(data).join(', ')}.`,
+      previousValues: {
+        driverId: runsheet.driverId,
+        tourDate: runsheet.tourDate,
+        depositId: runsheet.depositId,
+        notes: runsheet.notes,
+      },
+      newValues: data as any,
+    });
+
+    return this.toDto(updated);
+  }
+
+  /**
+   * Supprime une tournée.
+   *
+   * Règle métier : seule une tournée vide et en attente peut être supprimée.
+   *  - BROUILLON / EN_ATTENTE && totalPackages==0 && runsheetItems==0 => suppression dure.
+   *  - Si contient des colis => 409 "contient des colis".
+   *  - Si statut EN_COURS / VALIDEE_DEPART / RETOUR_DEPOT / CLOTUREE_* / ANNULEE => 409 avec explication.
+   *  Si la suppression est refusée, l'appelant doit utiliser l'annulation (statut ANNULEE) via updateStatus.
+   */
+  async remove(
+    identifier: string,
+    actor: { id?: string; fullName: string },
+    scope?: { depositId?: string }
+  ): Promise<void> {
+    const prisma = getPrisma();
+    const runsheet = await this.findRecord(identifier);
+
+    if (scope?.depositId && runsheet.depositId !== scope.depositId) {
+      throw forbidden("Vous n'avez pas accès à cette tournée (périmètre dépôt).");
+    }
+
+    const status = runsheet.status as string;
+    const deletableStatuses = ['BROUILLON', 'EN_ATTENTE'];
+    if (!deletableStatuses.includes(status)) {
+      if (status === 'ANNULEE') throw conflict(`La tournée ${runsheet.runsheetNumber} est déjà annulée et ne peut pas être supprimée.`);
+      if (['CLOTUREE_CONFORME', 'CLOTUREE_DEFICIT'].includes(status)) throw conflict(`La tournée ${runsheet.runsheetNumber} est clôturée et ne peut pas être supprimée.`);
+      if (status === 'RETOUR_DEPOT') throw conflict(`La tournée ${runsheet.runsheetNumber} est revenue au dépôt et ne peut pas être supprimée — utilisez la validation caisse.`);
+      if (['EN_COURS', 'VALIDEE_DEPART'].includes(status)) throw conflict(`La tournée ${runsheet.runsheetNumber} est active (statut ${status}) et ne peut pas être supprimée.`);
+      throw conflict(`La tournée ${runsheet.runsheetNumber} (statut ${status}) n'est pas supprimable.`);
+    }
+
+    const hasPackages = runsheet.runsheetItems.length > 0 || runsheet.totalPackages > 0 || runsheet.pendingCount > 0;
+    if (hasPackages) {
+      throw conflict(
+        `La tournée ${runsheet.runsheetNumber} contient ${runsheet.totalPackages} colis et ne peut pas être supprimée. Retirez les colis ou annulez la tournée.`
+      );
+    }
+
+    // Activité financière ? Si la tournée a déjà des encaissements, elle n'est pas vide.
+    const expected = Number(runsheet.expectedCash);
+    const collected = Number(runsheet.collectedCash) + Number(runsheet.collectedChecks);
+    if (expected !== 0 || collected !== 0 || Number(runsheet.deficitAmount) !== 0) {
+      throw conflict(`La tournée ${runsheet.runsheetNumber} a une activité financière et ne peut pas être supprimée.`);
+    }
+
+    // Vérifier qu'aucun colis n'a été traité (isHandled)
+    const handled = runsheet.runsheetItems.some((i: any) => i.isHandled);
+    if (handled) {
+      throw conflict(`La tournée ${runsheet.runsheetNumber} contient des colis déjà traités et ne peut pas être supprimée.`);
+    }
+
+    // Hard delete en transaction : détacher les colis (au cas où) puis supprimer
+    await prisma.$transaction(async (tx) => {
+      await tx.package.updateMany({
+        where: { currentRunsheetId: runsheet.id },
+        data: { currentRunsheetId: null },
+      });
+      await tx.runsheetItem.deleteMany({ where: { runsheetId: runsheet.id } });
+      await tx.runsheet.delete({ where: { id: runsheet.id } });
+    });
+
+    await auditService.record({
+      entityType: 'RUNSHEET',
+      entityId: runsheet.id,
+      action: 'DELETE',
+      userId: actor.id,
+      reason: `Tournée ${runsheet.runsheetNumber} supprimée par ${actor.fullName}.`,
+      previousValues: { runsheetNumber: runsheet.runsheetNumber, status, driverId: runsheet.driverId },
+    });
   }
 
   /** Ajoute un colis à une tournée encore ouverte. */
@@ -453,15 +653,27 @@ export class RunsheetsService {
 
   private async resolveDriver(payload: { driverId?: string; driverCode?: string }) {
     const prisma = getPrisma();
-    const uuid = asUuid(payload.driverId);
-    const driver = uuid
-      ? await prisma.driver.findUnique({ where: { id: uuid } })
-      : await prisma.driver.findFirst({
-          where: { driverCode: payload.driverCode, isActive: true, deletedAt: null },
-        });
-
-    if (!driver) throw notFound('Livreur introuvable ou inactif.');
-    return driver;
+    // Contrat canonique : Driver.id (UUID). Un driverId fourni mais non-UUID est mal formé, pas une absence.
+    if (payload.driverId !== undefined && payload.driverId !== null && String(payload.driverId).trim() !== '') {
+      const uuid = asUuid(payload.driverId);
+      if (!uuid) {
+        throw badRequest('Le champ « Chauffeur (driverId) » doit être un identifiant UUID valide.');
+      }
+      const driver = await prisma.driver.findUnique({ where: { id: uuid } });
+      if (!driver) throw notFound('Livreur introuvable. Aucun livreur ne porte cet identifiant.');
+      if (!driver.isActive || driver.deletedAt) throw conflict('Ce livreur est inactif ou supprimé.');
+      return driver;
+    }
+    // Repli historique : matricule driverCode, uniquement si driverId absent.
+    if (payload.driverCode !== undefined && payload.driverCode !== null && String(payload.driverCode).trim() !== '') {
+      const code = String(payload.driverCode).trim();
+      const driver = await prisma.driver.findFirst({
+        where: { driverCode: code, isActive: true, deletedAt: null },
+      });
+      if (!driver) throw notFound('Livreur introuvable ou inactif.');
+      return driver;
+    }
+    throw badRequest('Le champ « Chauffeur (driverId) » est obligatoire.');
   }
 
   /**

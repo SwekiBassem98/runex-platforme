@@ -119,6 +119,23 @@ export enum PermissionCode {
   RAMASSAGE_READ = 'RAMASSAGE_READ',
   RAMASSAGE_DEMANDE = 'RAMASSAGE_DEMANDE',
   RAMASSAGE_MANAGE = 'RAMASSAGE_MANAGE',
+
+  /**
+   * Administration des comptes.
+   *
+   * Aucune permission existante ne couvrait la gestion des utilisateurs :
+   * `EXPEDITEUR_*` et `LIVREUR_*` portent sur les fiches métier (l'entreprise,
+   * le chauffeur), pas sur les comptes qui s'y rattachent. Les trois codes sont
+   * donc ajoutés, et réservés à l'administration.
+   *
+   * `USER_READ` est distinct des deux autres pour la même raison que partout
+   * ailleurs dans cette énumération : lister les comptes et en créer sont deux
+   * gestes qui n'engagent pas la même responsabilité. Un profil d'audit peut
+   * avoir à lire sans jamais écrire.
+   */
+  USER_READ = 'USER_READ',
+  USER_CREATE = 'USER_CREATE',
+  USER_UPDATE = 'USER_UPDATE',
 }
 
 export interface AuthUser {

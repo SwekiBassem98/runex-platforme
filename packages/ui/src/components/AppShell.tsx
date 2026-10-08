@@ -125,7 +125,7 @@ export function AppShell({
     <div className="h-dvh bg-slate-50 flex text-slate-900 font-sans antialiased overflow-hidden">
       <a
         href="#contenu-principal"
-        className="sr-only focus:not-sr-only focus:fixed focus:z-[100] focus:top-3 focus:left-3 focus:px-4 focus:py-2 focus:bg-slate-900 focus:text-white focus:text-xs focus:font-semibold focus:rounded-md focus:shadow-lg"
+        className="sr-only focus:not-sr-only focus:fixed focus:z-[100] focus:top-3 focus:start-3 focus:px-4 focus:py-2 focus:bg-slate-900 focus:text-white focus:text-xs focus:font-semibold focus:rounded-md focus:shadow-lg"
       >
         Aller au contenu principal
       </a>
