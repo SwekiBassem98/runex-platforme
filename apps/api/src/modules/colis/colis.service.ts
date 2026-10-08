@@ -17,6 +17,7 @@
  */
 
 import { resolveDestinationDepositId, resolveShipperDepositId } from '../../common/routing/deposit-routing';
+import { packageCodeWhere } from '../../common/scan/package-code';
 import { Prisma, PackageStatus as PrismaPackageStatus } from '@prisma/client';
 import {
   PackageStatus,
@@ -100,10 +101,6 @@ function toSharedStatus(status: PrismaPackageStatus): PackageStatus {
   return status as unknown as PackageStatus;
 }
 
-/** Format UUID canonique, le seul que PostgreSQL accepte pour une colonne UUID. */
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 /** Le statut existe-t-il dans la machine à états ? */
 function isPackageStatus(value: string): value is PackageStatus {
   return (Object.values(PackageStatus) as string[]).includes(value);
@@ -119,15 +116,9 @@ function isPackageStatus(value: string): value is PackageStatus {
  * que pour une valeur qui en a effectivement la forme.
  */
 function packageIdentifierWhere(identifier: string): Prisma.PackageWhereInput {
-  return UUID_PATTERN.test(identifier)
-    ? {
-        OR: [
-          { id: identifier },
-          { trackingNumber: identifier },
-          { barcode: identifier },
-        ],
-      }
-    : { OR: [{ trackingNumber: identifier }, { barcode: identifier }] };
+  // UUID, numéro de suivi, code-barres ou étiquette de pièce (`code-N`) :
+  // le code lu sur le bon de livraison mène toujours au colis.
+  return packageCodeWhere(identifier);
 }
 
 /**

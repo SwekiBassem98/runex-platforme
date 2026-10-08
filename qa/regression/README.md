@@ -9,6 +9,7 @@ base fraîchement seedée (`npm run prisma:deploy && npm run prisma:seed`).
 | `../qa-interdepot-26.mjs` | inter-dépôts au scan (livraison, retours, pièces) | API seule |
 | `../qa-interdepot-ui-26.mjs` | écrans inter-dépôts + organiser un ramassage | web + navigateur |
 | `../qa-bon-livraison-27.mjs` | bon de livraison : contenu, périmètre, impression, QR décodé, PDF A4 | web + navigateur (+ `JSQR`, `PNGJS` pour décoder le QR) |
+| `../qa-scan-mobile-27.mjs` | scan mobile : `/scan`, relations, actions, codes de refus, étiquettes de pièce partout | API seule |
 | `../qa-runsheet-ui-26.mjs` | cycle de tournée cliqué dans le back-office | web + navigateur |
 | `../qa-colis-ui-26.mjs` | « Nouveau colis » de l'exploitation | web + navigateur |
 | `qa-runsheet-flow-25-1`, `qa-dashboard-25`, `qa-integrated-25-5`, `qa-presence`, `qa6-livreur`, `qa7-push` | flux métier API | API seule (`qa-integrated` vieillit un colis via `psql`) |

@@ -1004,3 +1004,59 @@ export interface BonLivraisonDto {
     taxRegistration?: string;
   };
 }
+
+// ---------------------------------------------------------------------------
+// Scan d'un colis (application mobile du livreur, lecteurs du dépôt)
+// ---------------------------------------------------------------------------
+
+/** Raison d'un scan refusé, stable : l'application mobile s'y fie. */
+export type ScanErrorCode =
+  | 'INVALID_CODE' // illisible : ni code-barres, ni numéro, ni étiquette de pièce
+  | 'UNKNOWN_CODE' // bien formé, mais aucun colis ne porte ce code
+  | 'PIECE_NOT_FOUND' // étiquette d'une pièce au-delà du nombre de pièces du colis
+  | 'NOT_ASSIGNED' // livreur : colis ni dans sa tournée, ni à ramasser chez un de ses expéditeurs
+  | 'OUT_OF_SCOPE'; // agent de dépôt : colis d'un autre dépôt
+
+/** Lien entre l'utilisateur qui scanne et le colis. */
+export type ScanRelation =
+  | 'DELIVERY' // livreur : colis qui lui est affecté (tournée)
+  | 'PICKUP' // livreur : colis à ramasser chez l'expéditeur d'un de ses ramassages
+  | 'SHIPPER' // expéditeur : son propre colis
+  | 'DEPOT' // agent : colis de son dépôt
+  | 'BACK_OFFICE'; // administration, gestion, finance
+
+/** Action proposée après le scan : l'appel exact à faire. */
+export interface ScanAction {
+  key:
+    | 'start'
+    | 'deliver'
+    | 'partial-delivery'
+    | 'exchange'
+    | 'postpone'
+    | 'failed-attempt'
+    | 'return'
+    | 'pickup-attach'
+    | 'pickup-detach';
+  label: string;
+  method: 'POST' | 'PATCH';
+  /** Chemin relatif à `/api/v1`. */
+  path: string;
+  /** Corps à envoyer tel quel (pour le ramassage) ; sinon voir la documentation de l'action. */
+  body?: Record<string, unknown>;
+}
+
+export interface ScanResultDto {
+  /** Code tel que lu, nettoyé. */
+  code: string;
+  kind: 'barcode' | 'piece' | 'business-number' | 'uuid';
+  /** Pièce lue sur l'étiquette (bon de livraison d'un colis à plusieurs pièces). */
+  piece: { number: number; count: number } | null;
+  relation: ScanRelation;
+  /** Ramassage concerné, pour la relation PICKUP. */
+  pickup?: { referenceNumber: string; status: string; attached: boolean };
+  /** Statuts atteignables depuis le statut courant (machine à états). */
+  nextStatuses: PackageStatus[];
+  /** Actions utiles pour ce rôle, dans cet état. */
+  actions: ScanAction[];
+  package: PackageDto;
+}

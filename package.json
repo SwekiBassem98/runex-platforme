@@ -58,7 +58,8 @@
     "qa:runsheet-ui": "node qa/qa-runsheet-ui-26.mjs",
     "qa:colis-ui": "node qa/qa-colis-ui-26.mjs",
     "qa:interdepot-ui": "node qa/qa-interdepot-ui-26.mjs",
-    "qa:bon-livraison": "node qa/qa-bon-livraison-27.mjs"
+    "qa:bon-livraison": "node qa/qa-bon-livraison-27.mjs",
+    "qa:scan": "node qa/qa-scan-mobile-27.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
