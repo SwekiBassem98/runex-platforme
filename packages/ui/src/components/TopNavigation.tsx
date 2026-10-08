@@ -55,6 +55,8 @@ interface TopNavigationProps {
   /** Ouvre la navigation en calque sur les écrans étroits. */
   onOpenMenu?: () => void;
   refBoutonMenu?: React.RefObject<HTMLButtonElement | null>;
+  /** Commandes propres à l'application, placées avant la cloche (réglage du son…). */
+  actionsSupplementaires?: React.ReactNode;
 }
 
 export function TopNavigation({
@@ -78,6 +80,7 @@ export function TopNavigation({
   userRole = 'ADMIN',
   onRefresh,
   isRefreshing = false,
+  actionsSupplementaires,
   onOpenMenu,
   refBoutonMenu,
 }: TopNavigationProps) {
@@ -247,6 +250,7 @@ export function TopNavigation({
 
       {/* Actions à droite */}
       <div className="flex items-center gap-3">
+        {actionsSupplementaires}
         {/* Notifications */}
         <div className="relative">
           <button

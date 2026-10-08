@@ -13,6 +13,7 @@
  * À gauche, les colis du dépôt qui peuvent partir vers l'agence choisie.
  */
 
+import { feedback } from '@/lib/feedback';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -39,7 +40,6 @@ import {
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { imprimerBordereau } from './bordereau';
-import { sons } from './sons';
 
 const VARIANTE: Record<string, BadgeVariant> = {
   CRE: 'danger',
@@ -190,12 +190,13 @@ export function InterDepotEdition({ type: typeInitial, numero }: { type: InterDe
       const res = await interDepotsApi.scan(transfert.transferNumber, saisie, retirer ? 'remove' : 'add');
       if (res.data) setTransfert(res.data);
       setRetour({ type: retirer ? 'retrait' : 'succes', message: res.message ?? 'OK' });
-      if (retirer) sons.retrait();
-      else sons.succes();
+      // Colis chargé : bip de lecteur ; retiré : deux notes descendantes.
+      if (retirer) feedback.remove();
+      else feedback.scan();
       void chargerCandidats(transfert.transferNumber);
     } catch (e) {
       setRetour({ type: 'erreur', message: e instanceof ApiError ? e.message : 'Scan refusé.' });
-      sons.erreur();
+      feedback.error();
     } finally {
       setEnCours(false);
       setCode('');

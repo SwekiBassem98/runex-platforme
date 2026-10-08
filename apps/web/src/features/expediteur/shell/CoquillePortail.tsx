@@ -22,6 +22,7 @@
  * rien à savoir de sa persistance.
  */
 
+import { SoundSettingsButton } from '@/components/SoundSettingsButton';
 import React from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
@@ -286,6 +287,8 @@ function CoquilleInterieur({ children }: { children: React.ReactNode }) {
             >
               <Search className="w-5 h-5" aria-hidden="true" />
             </Link>
+
+            <SoundSettingsButton />
 
             <Link
               href="/expediteur/notifications"

@@ -113,6 +113,12 @@ async function resolvePackageIds(values: unknown[], strict: boolean): Promise<st
   return [...ids];
 }
 
+/** Minuit à Tunis (UTC+1, sans heure d'été), en instant UTC. */
+function startOfTunisDay(now = new Date()): Date {
+  const tunis = new Date(now.getTime() + 60 * 60 * 1000);
+  return new Date(Date.UTC(tunis.getUTCFullYear(), tunis.getUTCMonth(), tunis.getUTCDate()) - 60 * 60 * 1000);
+}
+
 function assertDriverOwnsPickup(
   pickup: { assignedDriverId: string | null },
   actor: PickupActor
@@ -207,7 +213,15 @@ export class RamassagesService {
     if (!actor.driverId) return [];
 
     const records = await prisma.pickupAppointment.findMany({
-      where: { assignedDriverId: actor.driverId, status: { notIn: ['ANNULE', 'EFFECTUE'] } },
+      // À faire, plus ceux effectués aujourd'hui : l'onglet « Effectués » de
+      // l'application ne se vide pas au premier rafraîchissement.
+      where: {
+        assignedDriverId: actor.driverId,
+        OR: [
+          { status: { notIn: ['ANNULE', 'EFFECTUE'] } },
+          { status: 'EFFECTUE', completedAt: { gte: startOfTunisDay() } },
+        ],
+      },
       include: PICKUP_INCLUDE,
       orderBy: [{ scheduledDate: 'asc' }, { timeSlotStartHour: 'asc' }],
     });

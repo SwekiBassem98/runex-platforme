@@ -14,6 +14,7 @@ import { inventoryController } from './modules/inventory/inventory.controller';
 import { inventoryExceptionsController } from './modules/inventory/inventory-exceptions.controller';
 import { devicesController } from './modules/devices/devices.controller';
 import { presenceController } from './modules/presence/presence.controller';
+import { getOwnDriverProfile } from './modules/admin/driver-self.controller';
 import { searchController } from './modules/search/search.controller';
 import { auditController } from './modules/audit/audit.controller';
 import { reportsController } from './modules/reports/reports.controller';
@@ -1067,6 +1068,14 @@ export function createApiRouter(): Router {
     authenticateToken,
     requirePermissions(PermissionCode.LIVREUR_READ),
     asyncHandler((req, res) => presenceController.getOne(req, res))
+  );
+
+  // Fiche du livreur connecté (application mobile) : déclarée avant `/:id`.
+  router.get(
+    '/drivers/me',
+    authenticateToken,
+    requireRoles(RoleType.LIVREUR),
+    asyncHandler((req, res) => getOwnDriverProfile(req, res))
   );
 
   router.post(

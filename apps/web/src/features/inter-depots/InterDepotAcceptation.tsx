@@ -9,6 +9,7 @@
  * attendus.
  */
 
+import { feedback } from '@/lib/feedback';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Check, CircleDashed } from 'lucide-react';
@@ -16,7 +17,6 @@ import { Badge, Card, ErrorState, PageHeader, Spinner } from '@logixpress/ui';
 import { ApiError, interDepotsApi, type AcceptanceBoard, type InterDepotFormOptions, type InterDepotType } from '@/lib/api';
 import { RoleType } from '@logixpress/types';
 import { useAuth } from '@/lib/auth';
-import { sons } from './sons';
 
 const TAILLE: Record<string, string> = {
   LEGERE: 'légère(s)',
@@ -70,11 +70,15 @@ export function InterDepotAcceptation({ type }: { type: InterDepotType }) {
     try {
       const res = await interDepotsApi.acceptScan(saisie, type, depot || undefined);
       setRetour({ ok: true, message: res.message ?? 'Pièce reçue.' });
-      sons.succes();
+      // Pièce lue → bip ; colis complet → succès ; bordereau entièrement reçu → arpège.
+      const r = res.data;
+      if (r?.transferStatus === 'RECU' && r.packageComplete) feedback.complete();
+      else if (r?.packageComplete) feedback.success();
+      else feedback.scan();
       await charger();
     } catch (err) {
       setRetour({ ok: false, message: err instanceof ApiError ? err.message : 'Scan refusé.' });
-      sons.erreur();
+      feedback.error();
     } finally {
       setEnCours(false);
       setCode('');

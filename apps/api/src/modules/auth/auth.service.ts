@@ -192,8 +192,43 @@ export class AuthService {
     return tokens;
   }
 
+  /**
+   * Identifiant de connexion : l'email pour tous ; pour un livreur, aussi son
+   * code livreur (LIV-BEN-001), le matricule de son véhicule ou son numéro de téléphone — ce que l'appli
+   * mobile lui demande. Un téléphone partagé par plusieurs comptes n'identifie
+   * personne : il est traité comme un identifiant inconnu.
+   */
+  private async findUserForLogin(identifier: string): Promise<UserWithRelations | null> {
+    const value = identifier.trim();
+    if (!value) return null;
+    if (value.includes('@')) return this.findUser(value, true);
+    const prisma = getPrisma();
+    const byCode = await prisma.driver.findFirst({
+      where: { driverCode: { equals: value, mode: 'insensitive' }, deletedAt: null },
+      select: { userId: true },
+    });
+    if (byCode) return this.findUser(byCode.userId);
+    // Matricule du véhicule (« 6383 TUN 181 ») : espaces et casse ignorés.
+    if (/[a-z]/i.test(value)) {
+      const plate = value.replace(/\s+/g, '').toUpperCase();
+      const rows = await prisma.$queryRaw<{ userId: string }[]>`
+        SELECT "userId"::text FROM "Driver"
+        WHERE "deletedAt" IS NULL AND upper(replace("licensePlate", ' ', '')) = ${plate}
+        LIMIT 2`;
+      return rows.length === 1 ? this.findUser(rows[0]!.userId) : null;
+    }
+    const digits = value.replace(/[\s.-]/g, '').replace(/^(\+216|00216)/, '');
+    if (!/^\d{8}$/.test(digits)) return null;
+    const byPhone = await prisma.user.findMany({
+      where: { driverProfile: { isNot: null }, OR: [{ phone: digits }, { phone: `+216${digits}` }, { phone: `216${digits}` }] },
+      select: { id: true },
+      take: 2,
+    });
+    return byPhone.length === 1 ? this.findUser(byPhone[0]!.id) : null;
+  }
+
   async login(email: string, passwordPlain: string, meta: SessionMeta = {}): Promise<LoginResponse> {
-    const user = await this.findUser(String(email), true);
+    const user = await this.findUserForLogin(String(email));
 
     // Le mot de passe est vérifié AVANT tout autre contrôle : un message
     // « compte désactivé » ne doit pas révéler qu'une adresse existe.

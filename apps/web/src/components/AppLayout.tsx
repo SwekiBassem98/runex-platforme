@@ -10,6 +10,7 @@
 import React from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useNotifications, PREVIEW_SIZE } from '@/lib/notification-provider';
+import { SoundSettingsButton } from '@/components/SoundSettingsButton';
 import {
   Activity,
   Archive,
@@ -261,6 +262,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       }}
       onOpenNotificationCenter={() => router.push('/notifications')}
       onMarkAllRead={() => void markAllRead()}
+      actionsSupplementaires={<SoundSettingsButton />}
     >
       {children}
     </AppShell>

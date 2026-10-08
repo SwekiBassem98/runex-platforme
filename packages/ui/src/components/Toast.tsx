@@ -12,6 +12,12 @@ export interface ToastItem {
   title: string;
   message?: string;
   duration?: number;
+  /**
+   * Son associé : par défaut celui du type (succès, erreur, avertissement) ;
+   * un nom de son pour le remplacer (« complete » après une opération majeure),
+   * `false` pour une notification silencieuse.
+   */
+  sound?: string | false;
 }
 
 interface ToastContextType {
@@ -22,7 +28,14 @@ interface ToastContextType {
 
 const ToastContext = createContext<ToastContextType | undefined>(undefined);
 
-export function ToastProvider({ children }: { children: React.ReactNode }) {
+export function ToastProvider({
+  children,
+  onToast,
+}: {
+  children: React.ReactNode;
+  /** Appelé à chaque notification affichée (retour sonore de l'application). */
+  onToast?: (toast: Omit<ToastItem, 'id'>) => void;
+}) {
   const { libelles } = useLibellesUI();
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   /** Minuterie de disparition, pour la suspendre au survol et au focus. */
@@ -35,14 +48,15 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const addToast = useCallback(
-    ({ type, title, message, duration = 4000 }: Omit<ToastItem, 'id'>) => {
+    ({ type, title, message, duration = 4000, sound }: Omit<ToastItem, 'id'>) => {
       const id = `toast-${Date.now()}-${Math.random()}`;
+      onToast?.({ type, title, message, duration, sound });
       setToasts((prev) => [...prev, { id, type, title, message, duration }]);
       if (duration > 0) {
         minuteries.current[id] = setTimeout(() => removeToast(id), duration);
       }
     },
-    [removeToast]
+    [removeToast, onToast]
   );
 
   /**

@@ -20,6 +20,7 @@
  * Un lien caché n'est pas une porte fermée.
  */
 
+import { useFeedbackOn } from '@/lib/useFeedbackOn';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Pencil, Plus, RotateCcw, ShieldCheck } from 'lucide-react';
 import {
@@ -124,6 +125,10 @@ export default function AdminUtilisateursPage() {
   const [enEdition, setEnEdition] = useState<UserDto | null>(null);
   const [soumission, setSoumission] = useState(false);
   const [erreurForm, setErreurForm] = useState<string | null>(null);
+  // Retour sonore des actions de l'écran (succès, refus).
+  useFeedbackOn(message, 'success');
+  useFeedbackOn(erreurForm, 'error');
+  useFeedbackOn(erreur, 'error');
   const [erreursChamps, setErreursChamps] = useState<Record<string, string>>({});
   const [desactivation, setDesactivation] = useState<UserDto | null>(null);
   const [motifDesactivation, setMotifDesactivation] = useState('');

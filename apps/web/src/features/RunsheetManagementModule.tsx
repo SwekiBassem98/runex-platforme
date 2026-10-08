@@ -334,6 +334,7 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
         addToast({
           type: 'success',
           title: 'Feuille de Tournée Créée',
+          sound: 'complete',
           message: `N° ${data.data.runsheetNumber} pour ${data.data.driverName}`,
         });
         setShowCreateModal(false);
@@ -404,6 +405,7 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
         addToast({
           type: 'success',
           title: 'Colis Ajouté',
+          sound: 'scan',
           message: `Colis #${packageIdentifier} intégré à la tournée.`,
         });
       } else {
@@ -437,6 +439,7 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
         addToast({
           type: 'warning',
           title: 'Colis Retiré',
+          sound: 'remove',
           message: `Colis #${packageIdentifier} replacé en stock dépôt.`,
         });
       } else {
@@ -469,7 +472,7 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
       if (data.success) {
         setRunsheet(data.data);
         loadRunsheets();
-        addToast({ type: 'success', title: 'Caisse validée', message: `Tournée ${runsheet.runsheetNumber} clôturée.` });
+        addToast({ type: 'success', title: 'Caisse validée', message: `Tournée ${runsheet.runsheetNumber} clôturée.`, sound: 'complete' });
       } else {
         addToast({ type: 'error', title: 'Validation impossible', message: data.message });
       }
@@ -501,6 +504,7 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
         addToast({
           type: 'success',
           title: 'Caisse Clôturée avec Succès',
+          sound: 'complete',
           message: `Tournée terminée avec ${closeForm.collectedCash} DT encaissés.`,
         });
       } else {
@@ -566,7 +570,7 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
       });
       const data = await res.json();
       if (data.success || res.ok) {
-        addToast({ type: 'success', title: 'Tournée supprimée', message: `N° ${target.runsheetNumber} supprimée.` });
+        addToast({ type: 'success', title: 'Tournée supprimée', message: `N° ${target.runsheetNumber} supprimée.`, sound: 'remove' });
         setSuppressionAConfirmer(null);
         if (viewMode === 'detail' && runsheet?.runsheetNumber === target.runsheetNumber) {
           setViewMode('list');

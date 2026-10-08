@@ -18,6 +18,7 @@
  *     la lecture d'un code, puis la confirmation, enregistrent quelque chose.
  */
 
+import { feedback } from '@/lib/feedback';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
@@ -163,9 +164,14 @@ export default function MagasinPage() {
       try {
         const resultat = await receptionApi.receive(lu, depotId || undefined);
         setVerdict(resultat);
+        // Reçu : succès ; déjà reçu : avertissement ; refusé : erreur.
+        if (resultat.accepted) feedback.success();
+        else if (resultat.outcome === 'ALREADY_RECEIVED') feedback.warning();
+        else feedback.error();
         setCode('');
         if (resultat.accepted) void chargerRecents(depotId);
       } catch (error) {
+        feedback.error();
         setVerdict({
           outcome: 'UNKNOWN_CODE',
           accepted: false,
@@ -192,6 +198,8 @@ export default function MagasinPage() {
     setIsBusy(true);
     try {
       const lu1 = await receptionApi.lookup(lu, depotId || undefined);
+      if (lu1.package) feedback.scan();
+      else feedback.error();
       if (lu1.package) {
         // Une simple lecture ne ré-annonce pas une réception : `RECEIVED`
         // affichait « Réception enregistrée » en vert alors que rien n'avait été

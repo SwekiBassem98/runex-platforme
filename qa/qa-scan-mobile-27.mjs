@@ -131,5 +131,22 @@ console.log('\n5. Étiquettes de pièce dans les écrans existants');
 const lk = await api(admin, 'POST', '/depot/reception/lookup', { code: `${C.barcode}-1` });
 ok(lk.status === 200 && lk.data?.kind !== 'malformed' && lk.data?.package?.trackingNumber === C.trackingNumber, 'réception : aperçu par étiquette de pièce', JSON.stringify(lk.data?.kind));
 
+console.log('\n6. Application livreur : connexion et profil');
+for (const id of ['50123456', '+216 50 123 456', 'LIV-BEN-001', 'liv-ben-001', '214 tun 4512', 'livreur.hamza@logixpress.tn']) {
+  const r = await api(null, 'POST', '/auth/login', { identifier: id, password: 'Liv123!' });
+  ok(r.status === 200 && r.data.user.driverId === hamzaId, `connexion livreur par « ${id} »`, String(r.status));
+}
+ok((await api(null, 'POST', '/auth/login', { identifier: '50123456', password: 'faux' })).status === 401, 'mauvais mot de passe → 401');
+ok((await api(null, 'POST', '/auth/login', { identifier: '99999999', password: 'Liv123!' })).status === 401, 'téléphone inconnu → 401');
+ok((await api(null, 'POST', '/auth/login', { email: 'admin@logixpress.tn', password: 'Admin123!' })).status === 200, 'champ « email » toujours accepté');
+const me = await api(hamza, 'GET', '/drivers/me');
+ok(me.status === 200 && me.data.driverCode === 'LIV-BEN-001' && me.data.licensePlate === '214 TUN 4512' && me.data.depositName, 'GET /drivers/me : fiche du livreur connecté');
+ok((await api(admin, 'GET', '/drivers/me')).status === 403, 'GET /drivers/me réservé aux livreurs');
+const done = await api(admin, 'PATCH', `/ramassages/${ref}/start`, {});
+const fin = await api(hamza, 'PATCH', `/ramassages/${ref}/complete`, {});
+ok(fin.status === 200 && fin.data.status === 'EFFECTUE', 'ramassage clôturé par le livreur', `${done.status} ${fin.status} ${fin.json?.message ?? ''}`);
+const liste = (await api(hamza, 'GET', '/ramassages/driver/active')).data;
+ok(liste.some((p) => p.referenceNumber === ref && p.status === 'EFFECTUE'), 'ramassages du livreur : effectués du jour inclus');
+
 console.log(`\n${pass} vérifications réussies, ${failures.length} échec(s)`);
 if (failures.length) { console.log(failures.map((f) => ` - ${f}`).join('\n')); process.exit(1); }

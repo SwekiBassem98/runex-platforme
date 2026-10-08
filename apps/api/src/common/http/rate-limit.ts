@@ -98,8 +98,10 @@ export const loginFailuresLimiter = rateLimit({
   windowMs: 15 * MIN,
   max: Number(process.env.RATE_LIMIT_LOGIN_FAILURES ?? 8),
   key: (req) => {
-    const email = bodyField(req, 'email');
-    return email ? `${email}|${ip(req)}` : null;
+    // Même compteur quel que soit le champ : `identifier` (appli livreur :
+    // téléphone, code, matricule) ou `email`.
+    const account = (bodyField(req, 'identifier') || bodyField(req, 'email')).replace(/\s+/g, '');
+    return account ? `${account}|${ip(req)}` : null;
   },
   countOnly: failed,
   message: 'Trop de tentatives de connexion échouées pour ce compte. Réessayez dans 15 minutes.',

@@ -17,6 +17,7 @@
  * l'entreprise, et l'opération est journalisée.
  */
 
+import { useFeedbackOn } from '@/lib/useFeedbackOn';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Building2, Pencil, Plus, RotateCcw, ShieldCheck, UserPlus, UserX } from 'lucide-react';
 import {
@@ -90,6 +91,10 @@ export default function AdminExpediteursPage() {
   const [enEdition, setEnEdition] = useState<ShipperDto | null>(null);
   const [soumission, setSoumission] = useState(false);
   const [erreurForm, setErreurForm] = useState<string | null>(null);
+  // Retour sonore des actions de l'écran (succès, refus).
+  useFeedbackOn(message, 'success');
+  useFeedbackOn(erreurForm, 'error');
+  useFeedbackOn(erreur, 'error');
   const [erreursChamps, setErreursChamps] = useState<Record<string, string>>({});
   const [avecCompte, setAvecCompte] = useState(true);
 

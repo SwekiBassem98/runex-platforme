@@ -41,6 +41,8 @@ interface AppShellProps {
   onGlobalSearch?: (term: string) => void;
   notifications?: TopNavigationNotification[];
   unreadNotificationsCount?: number;
+  /** Transmis à la barre supérieure, avant la cloche. */
+  actionsSupplementaires?: React.ReactNode;
   isRealtimeConnected?: boolean;
   onOpenNotification?: (notification: TopNavigationNotification) => void;
   onOpenNotificationCenter?: () => void;
@@ -60,6 +62,7 @@ export function AppShell({
   onGlobalSearch,
   notifications,
   unreadNotificationsCount,
+  actionsSupplementaires,
   isRealtimeConnected,
   onOpenNotification,
   onOpenNotificationCenter,
@@ -160,6 +163,7 @@ export function AppShell({
           onGlobalSearch={onGlobalSearch}
           notifications={notifications}
           unreadNotificationsCount={unreadNotificationsCount}
+          actionsSupplementaires={actionsSupplementaires}
           isRealtimeConnected={isRealtimeConnected}
           onOpenNotification={onOpenNotification}
           onOpenNotificationCenter={onOpenNotificationCenter}

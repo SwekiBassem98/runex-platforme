@@ -200,7 +200,7 @@ export default function RamassagesPage() {
   const effectuer = async (p: PickupAppointmentDto) => {
     try {
       const res = await ramassagesApi.complete(p.referenceNumber);
-      addToast({ type: 'success', title: 'Ramassage effectué', message: res.message });
+      addToast({ type: 'success', title: 'Ramassage effectué', message: res.message, sound: 'complete' });
       void charger();
     } catch (e) {
       addToast({ type: 'error', title: 'Action impossible', message: e instanceof ApiError ? e.message : undefined });
@@ -213,7 +213,7 @@ export default function RamassagesPage() {
     if (!p) return;
     try {
       await ramassagesApi.cancel(p.referenceNumber);
-      addToast({ type: 'success', title: 'Ramassage annulé' });
+      addToast({ type: 'success', title: 'Ramassage annulé', sound: 'remove' });
       void charger();
     } catch (e) {
       addToast({ type: 'error', title: 'Annulation impossible', message: e instanceof ApiError ? e.message : undefined });
