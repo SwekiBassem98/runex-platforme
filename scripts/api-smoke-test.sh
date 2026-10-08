@@ -38,7 +38,7 @@ echo "$H" | grep -q '"database":{"status":"up"' && check "health: PostgreSQL up"
 echo "$H" | grep -q '"redis":{"status":"up"' && check "health: Redis up" 1 1 || check "health: Redis up" 1 0
 
 # ---------- Auth ----------
-check "GET /auth/demo-users (public)" 200 "$(code "$BASE/auth/demo-users")"
+check "GET /auth/demo-users (désactivé hors démonstration) -> liste vide" '[]' "$(curl -s "$BASE/auth/demo-users" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.stringify(JSON.parse(s).data)))")"
 check "POST /auth/login sans corps -> 400" 400 "$(code -X POST "$BASE/auth/login" -H 'Content-Type: application/json' -d '{}')"
 check "POST /auth/login mauvais mdp -> 401" 401 "$(code -X POST "$BASE/auth/login" -H 'Content-Type: application/json' -d '{"email":"admin@logixpress.tn","password":"faux"}')"
 check "POST /auth/refresh sans jeton -> 400" 400 "$(code -X POST "$BASE/auth/refresh" -H 'Content-Type: application/json' -d '{}')"
@@ -183,13 +183,26 @@ RUN_BODY_2="{\"driverId\":\"$DRIVER_ID\",\"tourDate\":\"2026-10-02\"}"
 check "POST /runsheets valide -> 201" 201 \
   "$(code -X POST "${AUTH_ADMIN[@]}" -H 'Content-Type: application/json' \
       -d "$RUN_BODY_2" "$BASE/runsheets")"
-PKG_BODY="{\"packageIdentifier\":\"$NEXT\"}"
+# Prompt 26 : un colis déjà livré ne peut plus entrer dans une tournée. La
+# tournée de test reçoit donc un colis neuf, encore à livrer.
+RS_PKG=$(json -X POST "${AUTH_EXP[@]}" -H 'Content-Type: application/json' \
+  -d '{"customerName":"Client Tournee","customerPhone":"20000009","address":"Tunis","totalPrice":30,"pieceCount":1}' \
+  "$BASE/colis" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).data.id))")
+PKG_BODY="{\"packageIdentifier\":\"$RS_PKG\"}"
+check "POST /runsheets/{id}/add-package (colis déjà livré) -> 409" 409 \
+  "$(code -X POST "${AUTH_ADMIN[@]}" -H 'Content-Type: application/json' -d "{\"packageIdentifier\":\"$NEXT\"}" "$BASE/runsheets/$RUNID/add-package")"
 check "POST /runsheets/{id}/add-package" 200 \
   "$(code -X POST "${AUTH_ADMIN[@]}" -H 'Content-Type: application/json' -d "$PKG_BODY" "$BASE/runsheets/$RUNID/add-package")"
 check "POST /runsheets/{id}/add-package sans identifiant -> 400" 400 \
   "$(code -X POST "${AUTH_ADMIN[@]}" -H 'Content-Type: application/json' -d '{}' "$BASE/runsheets/$RUNID/add-package")"
 check "POST /runsheets/{id}/remove-package" 200 \
   "$(code -X POST "${AUTH_ADMIN[@]}" -H 'Content-Type: application/json' -d "$PKG_BODY" "$BASE/runsheets/$RUNID/remove-package")"
+check "POST /runsheets/{id}/status EN_COURS (tournée vide) -> 409" 409 \
+  "$(code -X POST "${AUTH_ADMIN[@]}" -H 'Content-Type: application/json' -d '{"status":"EN_COURS"}' "$BASE/runsheets/$RUNID/status")"
+check "POST /runsheets/{id}/add-package (remise en tournée)" 200 \
+  "$(code -X POST "${AUTH_ADMIN[@]}" -H 'Content-Type: application/json' -d "$PKG_BODY" "$BASE/runsheets/$RUNID/add-package")"
+check "POST /runsheets/{id}/status TERMINE sans caisse -> 409" 409 \
+  "$(code -X POST "${AUTH_ADMIN[@]}" -H 'Content-Type: application/json' -d '{"status":"TERMINE"}' "$BASE/runsheets/$RUNID/status")"
 check "POST /runsheets/{id}/status EN_COURS" 200 \
   "$(code -X POST "${AUTH_ADMIN[@]}" -H 'Content-Type: application/json' -d '{"status":"EN_COURS"}' "$BASE/runsheets/$RUNID/status")"
 check "POST /runsheets/{id}/status invalide -> 400" 400 \
@@ -200,7 +213,7 @@ check "POST /runsheets/{id}/close" 200 \
   "$(code -X POST "${AUTH_ADMIN[@]}" -H 'Content-Type: application/json' -d '{"collectedCash":120.5,"notes":"OK"}' "$BASE/runsheets/$RUNID/close")"
 check "POST /runsheets/{id}/validate" 200 \
   "$(code -X POST "${AUTH_ADMIN[@]}" -H 'Content-Type: application/json' -d '{"notes":"rapproché"}' "$BASE/runsheets/$RUNID/validate")"
-check "POST /runsheets/{id}/validate (inconnu) -> 400" 400 \
+check "POST /runsheets/{id}/validate (inconnu) -> 404" 404 \
   "$(code -X POST "${AUTH_ADMIN[@]}" -H 'Content-Type: application/json' -d '{}' "$BASE/runsheets/RUN-999999/validate")"
 
 # ---------- Ramassages ----------

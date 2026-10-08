@@ -452,7 +452,14 @@ export const authApi = {
 
   me: () => requestData<AuthUser>('/auth/me'),
 
-  logout: () => request<unknown>('/auth/logout', { method: 'POST' }),
+  // Le refresh token est transmis : l'API ferme précisément cette session,
+  // sans toucher aux autres appareils de l'utilisateur.
+  logout: () =>
+    request<unknown>('/auth/logout', {
+      method: 'POST',
+      body: { refreshToken: tokenStorage.getRefreshToken() ?? undefined },
+      skipAuthRefresh: true,
+    }),
 
   demoUsers: () => requestData<DemoUser[]>('/auth/demo-users'),
 
@@ -1379,10 +1386,19 @@ async function performRaw(
   const { method = 'GET', body, headers: extraHeaders, signal } = options;
 
   const send = async (): Promise<Response> => {
-    const headers: Record<string, string> = {
-      Accept: 'application/json',
-      ...extraHeaders,
-    };
+    // Les en-têtes arrivent en minuscules depuis `createApiFetch` (objet
+    // Headers) : sans normalisation, « content-type » et « Content-Type »
+    // coexistaient et le navigateur envoyait « application/json,
+    // application/json », que l'API ne reconnaît pas comme JSON — le corps
+    // était ignoré et chaque action de ces écrans répondait 400.
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    for (const [key, value] of Object.entries(extraHeaders ?? {})) {
+      const lower = key.toLowerCase();
+      if (lower === 'content-type') headers['Content-Type'] = value;
+      else if (lower === 'authorization') headers.Authorization = value;
+      else if (lower === 'accept') headers.Accept = value;
+      else headers[key] = value;
+    }
     if (body !== undefined && !headers['Content-Type']) {
       headers['Content-Type'] = 'application/json';
     }
@@ -1426,6 +1442,10 @@ async function performRaw(
   if (response.status === 401) {
     const refreshed = await refreshTokens();
     if (refreshed) {
+      // Un en-tête Authorization fourni par l'appelant (jeton figé dans une
+      // prop) est périmé : la nouvelle tentative utilise le jeton rafraîchi.
+      delete extraHeaders?.Authorization;
+      delete extraHeaders?.authorization;
       try {
         response = await send();
       } catch (error) {

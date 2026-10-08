@@ -1,6 +1,7 @@
 import { runsheetsService } from './runsheets.service';
 import type { Response } from 'express';
 import type { AuthenticatedRequest } from '../../common/auth/auth.middleware';
+import { respondError } from '../../common/errors/respond-error';
 import { RoleType, RunsheetStatus } from '@logixpress/types';
 import {
   requireString,
@@ -27,6 +28,7 @@ export class RunsheetsController {
     // filtre par query.
     const list = await runsheetsService.findAll({
       driverId: req.dataScope?.assignedDriverId ?? ((driverId as string) || undefined),
+      depositId: req.dataScope?.depositId,
       status: status as string,
       date: date as string,
     });
@@ -49,7 +51,10 @@ export class RunsheetsController {
     }
     // Un livreur ne lit que ses propres tournées : même un numéro deviné ne
     // doit pas ouvrir la tournée d'un collègue (adresses et montants clients).
-    if (req.user?.role === RoleType.LIVREUR && runsheet.driverId !== req.user?.driverId) {
+    if (
+      (req.dataScope?.assignedDriverId && runsheet.driverId !== req.dataScope.assignedDriverId) ||
+      (req.dataScope?.depositId && runsheet.depositId !== req.dataScope.depositId)
+    ) {
       res.status(404).json({ success: false, message: 'Feuille de tournée introuvable' });
       return;
     }
@@ -87,9 +92,8 @@ export class RunsheetsController {
         data: runsheet,
         message: `Feuille de tournée #${runsheet.runsheetNumber} créée avec succès.`,
       });
-    } catch (err: any) {
-      const status = typeof err?.status === 'number' ? err.status : 400;
-      res.status(status).json({ success: false, message: err.message });
+    } catch (err: unknown) {
+      respondError(res, err, 'Opération impossible sur la tournée.');
     }
   }
 
@@ -110,9 +114,8 @@ export class RunsheetsController {
         data: runsheet,
         message: `Colis #${packageIdentifier} ajouté à la feuille de tournée #${runsheet.runsheetNumber}.`,
       });
-    } catch (err: any) {
-      const status = typeof err?.status === 'number' ? err.status : 400;
-      res.status(status).json({ success: false, message: err.message });
+    } catch (err: unknown) {
+      respondError(res, err, 'Opération impossible sur la tournée.');
     }
   }
 
@@ -130,9 +133,8 @@ export class RunsheetsController {
         data: runsheet,
         message: `Colis #${packageIdentifier} retiré de la tournée.`,
       });
-    } catch (err: any) {
-      const status = typeof err?.status === 'number' ? err.status : 400;
-      res.status(status).json({ success: false, message: err.message });
+    } catch (err: unknown) {
+      respondError(res, err, 'Opération impossible sur la tournée.');
     }
   }
 
@@ -151,9 +153,8 @@ export class RunsheetsController {
         data: runsheet,
         message: `Statut de la tournée passé à [${status}].`,
       });
-    } catch (err: any) {
-      const status = typeof err?.status === 'number' ? err.status : 400;
-      res.status(status).json({ success: false, message: err.message });
+    } catch (err: unknown) {
+      respondError(res, err, 'Opération impossible sur la tournée.');
     }
   }
 
@@ -181,9 +182,8 @@ export class RunsheetsController {
         data: runsheet,
         message: `Tournée #${runsheet.runsheetNumber} terminée avec ${collectedCash.toFixed(3)} DT encaissés.`,
       });
-    } catch (err: any) {
-      const status = typeof err?.status === 'number' ? err.status : 400;
-      res.status(status).json({ success: false, message: err.message });
+    } catch (err: unknown) {
+      respondError(res, err, 'Opération impossible sur la tournée.');
     }
   }
 
@@ -200,9 +200,8 @@ export class RunsheetsController {
         data: runsheet,
         message: `Tournée #${runsheet.runsheetNumber} validée et rapprochée en caisse.`,
       });
-    } catch (err: any) {
-      const status = typeof err?.status === 'number' ? err.status : 400;
-      res.status(status).json({ success: false, message: err.message });
+    } catch (err: unknown) {
+      respondError(res, err, 'Opération impossible sur la tournée.');
     }
   }
 
@@ -229,9 +228,8 @@ export class RunsheetsController {
         req.dataScope
       );
       res.json({ success: true, data: runsheet, message: `Tournée #${runsheet.runsheetNumber} mise à jour.` });
-    } catch (err: any) {
-      const status = typeof err?.status === 'number' ? err.status : 400;
-      res.status(status).json({ success: false, message: err.message });
+    } catch (err: unknown) {
+      respondError(res, err, 'Opération impossible sur la tournée.');
     }
   }
 
@@ -244,9 +242,8 @@ export class RunsheetsController {
         req.dataScope
       );
       res.json({ success: true, message: 'Tournée supprimée.' });
-    } catch (err: any) {
-      const status = typeof err?.status === 'number' ? err.status : 400;
-      res.status(status).json({ success: false, message: err.message });
+    } catch (err: unknown) {
+      respondError(res, err, 'Opération impossible sur la tournée.');
     }
   }
 

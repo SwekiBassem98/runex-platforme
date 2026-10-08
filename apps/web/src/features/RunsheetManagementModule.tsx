@@ -87,6 +87,7 @@ import {
   type AuthUser,
 } from '@logixpress/types';
 import { createApiFetch } from '@/lib/api';
+import { PermissionCode } from '@logixpress/types';
 
 // Les requêtes de ce module passent par le client API commun : aucune URL
 // d'API n'est écrite en dur ici.
@@ -107,8 +108,12 @@ const RUNSHEET_STATUS_BADGES: Record<string, { label: string; bg: string; text: 
   VALIDE: { label: 'Validé & Rapproché', bg: 'bg-emerald-50', text: 'text-emerald-800', border: 'border-emerald-300' },
   ANNULE: { label: 'Annulé', bg: 'bg-rose-50', text: 'text-rose-800', border: 'border-rose-300' },
   // Compatibilité
-  EN_ATTENTE: { label: 'En attente', bg: 'bg-amber-50', text: 'text-amber-800', border: 'border-amber-300' },
-  CLOTUREE_CONFORME: { label: 'Clôturé Conforme', bg: 'bg-emerald-50', text: 'text-emerald-800', border: 'border-emerald-300' },
+  EN_ATTENTE: { label: 'Prête au départ', bg: 'bg-amber-50', text: 'text-amber-800', border: 'border-amber-300' },
+  VALIDEE_DEPART: { label: 'Départ validé', bg: 'bg-purple-50', text: 'text-purple-700', border: 'border-purple-200' },
+  RETOUR_DEPOT: { label: 'Retour dépôt (caisse à valider)', bg: 'bg-sky-50', text: 'text-sky-800', border: 'border-sky-300' },
+  CLOTUREE_CONFORME: { label: 'Clôturée conforme', bg: 'bg-emerald-50', text: 'text-emerald-800', border: 'border-emerald-300' },
+  CLOTUREE_DEFICIT: { label: 'Clôturée en déficit', bg: 'bg-rose-50', text: 'text-rose-800', border: 'border-rose-300' },
+  ANNULEE: { label: 'Annulée', bg: 'bg-rose-50', text: 'text-rose-800', border: 'border-rose-300' },
 };
 
 export function RunsheetManagementModule({ currentUser, token }: RunsheetManagementModuleProps) {
@@ -271,19 +276,31 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
   // Chargement des colis disponibles au dépôt
   const loadAvailablePackages = async () => {
     try {
-      const res = await fetch('/api/v1/packages?limit=100', {
+      const res = await fetch('/api/v1/packages?limit=200', {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
       if (data.success) {
         // Colis au dépôt sans runsheet ou en statut RECU_DEPOT / RECU_DEPOT_DESTINATION
-        const unassigned = data.data.filter(
-          (p: PackageDto) =>
+        // Colis éligibles (mêmes règles que l'API) : hors tournée, dans un
+        // statut qui peut partir en distribution, et libres ou déjà affectés
+        // au livreur de cette tournée.
+        const eligibles: string[] = [
+          PackageStatus.CREE,
+          PackageStatus.RECU_DEPOT,
+          PackageStatus.RECU_DEPOT_DESTINATION,
+          PackageStatus.AFFECTE_RUNSHEET,
+          PackageStatus.REPORTE,
+          PackageStatus.ECHEC_LIVRAISON,
+        ];
+        const unassigned = data.data.filter((p: PackageDto) => {
+          const driverId = (p as PackageDto & { assignedDriverId?: string | null }).assignedDriverId ?? null;
+          return (
             !p.runsheetNumber &&
-            (p.status === PackageStatus.RECU_DEPOT ||
-              p.status === PackageStatus.RECU_DEPOT_DESTINATION ||
-              p.status === PackageStatus.CREE)
-        );
+            eligibles.includes(p.status) &&
+            (!driverId || !runsheet || driverId === runsheet.driverId)
+          );
+        });
         setAvailablePackages(unassigned);
       }
     } catch {}
@@ -433,6 +450,36 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
   };
 
   // Clôture financière de la runsheet
+  // La déclaration et la validation de caisse exigent RUNSHEET_VALIDATE (caisse, exploitation).
+  const peutValiderCaisse =
+    currentUser.role === 'ADMIN' ||
+    (currentUser.permissions ?? []).includes(PermissionCode.RUNSHEET_VALIDATE);
+
+  // Validation de la caisse : la tournée revenue au dépôt est clôturée.
+  const handleValidateRunsheet = async () => {
+    if (!runsheet) return;
+    setIsSubmitting(true);
+    try {
+      const res = await fetch(`/api/v1/runsheets/${runsheet.runsheetNumber}/validate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setRunsheet(data.data);
+        loadRunsheets();
+        addToast({ type: 'success', title: 'Caisse validée', message: `Tournée ${runsheet.runsheetNumber} clôturée.` });
+      } else {
+        addToast({ type: 'error', title: 'Validation impossible', message: data.message });
+      }
+    } catch {
+      addToast({ type: 'error', title: 'Erreur', message: 'Échec de la validation de caisse.' });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleCloseRunsheet = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!runsheet) return;
@@ -688,11 +735,12 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
                 options={[
                   { label: 'Tous les statuts', value: 'ALL' },
                   { label: 'Brouillon', value: 'BROUILLON' },
-                  { label: 'Préparé', value: 'PREPARE' },
-                  { label: 'Assigné', value: 'ASSIGNE' },
-                  { label: 'En Tournée', value: 'EN_COURS' },
-                  { label: 'Terminé', value: 'TERMINE' },
-                  { label: 'Validé', value: 'VALIDE' },
+                  { label: 'Prête au départ', value: 'EN_ATTENTE' },
+                  { label: 'En tournée', value: 'EN_COURS' },
+                  { label: 'Retour dépôt (caisse à valider)', value: 'RETOUR_DEPOT' },
+                  { label: 'Clôturée conforme', value: 'CLOTUREE_CONFORME' },
+                  { label: 'Clôturée en déficit', value: 'CLOTUREE_DEFICIT' },
+                  { label: 'Annulée', value: 'ANNULEE' },
                 ]}
               />
 
@@ -1066,65 +1114,74 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
             <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-xs">
                 <span className="font-bold text-slate-500 uppercase tracking-wider text-[11px]">Workflow :</span>
-                {runsheet.status === RunsheetStatus.BROUILLON && (
+                {/* Cycle réel de l'API : BROUILLON → EN_ATTENTE → EN_COURS
+                    → (déclaration de caisse) RETOUR_DEPOT → (validation caisse)
+                    CLOTUREE_CONFORME / CLOTUREE_DEFICIT. */}
+                {String(runsheet.status) === 'BROUILLON' && (
                   <button
                     type="button"
                     disabled={isSubmitting}
-                    onClick={() => setTransitionAConfirmer({ status: RunsheetStatus.PREPARE, label: 'Marquer la tournée « préparée »' })}
+                    onClick={() => setTransitionAConfirmer({ status: RunsheetStatus.EN_ATTENTE, label: 'Marquer la tournée « prête au départ »' })}
                     className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded font-semibold text-xs transition cursor-pointer"
                   >
-                    1. Marquer Préparé (Colis vérifiés)
+                    1. Marquer prête (colis vérifiés)
                   </button>
                 )}
-                {runsheet.status === RunsheetStatus.PREPARE && (
+                {['EN_ATTENTE', 'VALIDEE_DEPART'].includes(String(runsheet.status)) && (
                   <button
                     type="button"
-                    disabled={isSubmitting}
-                    onClick={() => setTransitionAConfirmer({ status: RunsheetStatus.ASSIGNE, label: 'Assigner la tournée et la transmettre au livreur' })}
-                    className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded font-semibold text-xs transition cursor-pointer"
-                  >
-                    2. Assigner & Transmettre au Livreur
-                  </button>
-                )}
-                {runsheet.status === RunsheetStatus.ASSIGNE && (
-                  <button
-                    type="button"
-                    disabled={isSubmitting}
+                    disabled={isSubmitting || runsheet.totalPackages === 0}
+                    title={runsheet.totalPackages === 0 ? 'Ajoutez au moins un colis avant le départ' : undefined}
                     onClick={() => setTransitionAConfirmer({ status: RunsheetStatus.EN_COURS, label: 'Valider le départ de la tournée' })}
-                    className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded font-semibold text-xs transition cursor-pointer"
+                    className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded font-semibold text-xs transition cursor-pointer"
                   >
-                    3. Valider Départ Tournée (En Cours)
+                    2. Valider le départ (en tournée)
                   </button>
                 )}
-                {runsheet.status === RunsheetStatus.EN_COURS && (
-                  <button
-                    disabled={isSubmitting}
-                    onClick={() => handleStatusChange(RunsheetStatus.TERMINE)}
-                    className="px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white rounded font-semibold text-xs transition cursor-pointer"
-                  >
-                    4. Enregistrer Retour Chauffeur au Dépôt
-                  </button>
-                )}
-                {runsheet.status === RunsheetStatus.TERMINE && (
+                {String(runsheet.status) === 'EN_COURS' && peutValiderCaisse && (
                   <button
                     type="button"
                     disabled={isSubmitting}
                     onClick={() => setShowCloseModal(true)}
-                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded font-semibold text-xs transition cursor-pointer"
+                    className="px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white rounded font-semibold text-xs transition cursor-pointer"
                   >
-                    5. Clôturer & Rapprocher la Caisse
+                    3. Retour chauffeur : déclarer la caisse
                   </button>
                 )}
-                {runsheet.status === RunsheetStatus.VALIDE && (
-                  <Badge variant="success">
+                {String(runsheet.status) === 'RETOUR_DEPOT' && peutValiderCaisse && (
+                  <button
+                    type="button"
+                    disabled={isSubmitting}
+                    onClick={() => void handleValidateRunsheet()}
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded font-semibold text-xs transition cursor-pointer"
+                  >
+                    4. Valider la caisse et clôturer
+                  </button>
+                )}
+                {['CLOTUREE_CONFORME', 'CLOTUREE_DEFICIT'].includes(String(runsheet.status)) && (
+                  <Badge variant={String(runsheet.status) === 'CLOTUREE_DEFICIT' ? 'warning' : 'success'}>
                     <Check className="w-3.5 h-3.5" />
-                    <span>Tournée Clôturée et Caisse Validée</span>
+                    <span>
+                      {String(runsheet.status) === 'CLOTUREE_DEFICIT'
+                        ? `Clôturée avec déficit de ${Number(runsheet.deficitAmount).toFixed(3)} DT`
+                        : 'Tournée clôturée, caisse conforme'}
+                    </span>
                   </Badge>
+                )}
+                {['BROUILLON', 'EN_ATTENTE', 'VALIDEE_DEPART'].includes(String(runsheet.status)) && (
+                  <button
+                    type="button"
+                    disabled={isSubmitting}
+                    onClick={() => setTransitionAConfirmer({ status: RunsheetStatus.ANNULE, label: 'Annuler la tournée (les colis restent affectés au livreur)' })}
+                    className="px-3 py-1.5 bg-white border border-rose-300 text-rose-700 hover:bg-rose-50 rounded font-semibold text-xs transition cursor-pointer"
+                  >
+                    Annuler la tournée
+                  </button>
                 )}
               </div>
 
               {/* Bouton Ajouter Colis si avant départ */}
-              {[RunsheetStatus.BROUILLON, RunsheetStatus.PREPARE, RunsheetStatus.ASSIGNE].includes(runsheet.status) && (
+              {['BROUILLON', 'EN_ATTENTE'].includes(String(runsheet.status)) && (
                 <button
                   onClick={() => {
                     loadAvailablePackages();
@@ -1219,7 +1276,7 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
                 title="Aucun colis dans cette tournée"
                 description="Cette feuille de tournée ne contient aucun colis pour le moment."
                 action={
-                  [RunsheetStatus.BROUILLON, RunsheetStatus.PREPARE, RunsheetStatus.ASSIGNE].includes(runsheet.status) ? (
+                  ['BROUILLON', 'EN_ATTENTE'].includes(String(runsheet.status)) ? (
                     <button
                       onClick={() => {
                         loadAvailablePackages();
@@ -1256,8 +1313,8 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
                         text: 'text-slate-800',
                         border: 'border-slate-300',
                       };
-                      const canRemove = [RunsheetStatus.BROUILLON, RunsheetStatus.PREPARE, RunsheetStatus.ASSIGNE].includes(
-                        runsheet.status
+                      const canRemove = ['BROUILLON', 'EN_ATTENTE'].includes(
+                        String(runsheet.status)
                       );
 
                       return (

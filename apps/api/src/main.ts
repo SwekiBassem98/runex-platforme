@@ -8,6 +8,8 @@ import { APP_CONFIG } from '@logixpress/config';
 import { auditContextMiddleware } from './common/audit/audit-context.middleware';
 import { createApiRouter } from './app.router';
 import { errorHandler } from './common/http/async-handler';
+import { securityHeaders } from './common/http/rate-limit';
+import { rejectNullBytes } from './common/http/input-guard';
 import { prismaService } from './database/prisma.service';
 import { redisService } from './redis/redis.service';
 import { inAppChannel, registerChannel, socketChannel } from './modules/notifications/channels';
@@ -63,9 +65,11 @@ function createApp() {
 
   app.disable('x-powered-by');
 
-  app.use(express.json());
-  app.use(express.urlencoded({ extended: true }));
+  app.use(securityHeaders);
   app.use(corsMiddleware(resolveAllowedOrigins()));
+  app.use(express.json({ limit: '200kb' }));
+  app.use(express.urlencoded({ extended: false, limit: '200kb' }));
+  app.use(rejectNullBytes);
 
   // Derrière un proxy — load balancer, reverse proxy, passerelle — l'adresse
   // de connexion est celle du proxy, pas celle de l'utilisateur. Le journal
@@ -74,7 +78,10 @@ function createApp() {
   // d'Express par défaut est justement de ne croire personne.
   const trustProxy = process.env.TRUST_PROXY === 'true';
   if (trustProxy) {
-    app.set('trust proxy', true);
+    // Nombre de proxys de confiance devant l'API (1 par défaut). `true`
+    // ferait confiance à n'importe quel X-Forwarded-For envoyé par le client,
+    // ce qui permettrait de contourner la limitation de débit.
+    app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS ?? 1));
   }
   app.use((req, res, next) => auditContextMiddleware(req, res, next, trustProxy));
 
@@ -135,6 +142,13 @@ async function bootstrap() {
     console.log(`[RUNEX API] Health Check : http://localhost:${port}/api/v1/health`);
     console.log(`[RUNEX API] Swagger Docs  : http://localhost:${port}/api/v1/docs`);
   });
+
+  // Derrière un relais (Next.js, nginx, load balancer), le relais réutilise ses
+  // connexions keep-alive. Avec le délai Node par défaut (5 s), l'API ferme une
+  // connexion au moment où le relais l'emploie : « socket hang up », servi en
+  // 500 au navigateur. L'API doit garder ses connexions plus longtemps que le relais.
+  server.keepAliveTimeout = Number(process.env.HTTP_KEEP_ALIVE_TIMEOUT_MS ?? 65_000);
+  server.headersTimeout = server.keepAliveTimeout + 1_000;
 
   // La passerelle temps réel se monte sur le même serveur HTTP qu'un chemin
   // distinct : une notification écrite après le démarrage de l'API doit

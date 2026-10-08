@@ -1,3 +1,4 @@
+import { toSafeHttpError } from '../errors/respond-error';
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 
 /**
@@ -28,30 +29,12 @@ export function errorHandler(
     return;
   }
 
-  const status =
-    typeof error?.status === 'number' && error.status >= 400 && error.status < 600
-      ? error.status
-      : 500;
-
-  // Un 4xx est un résultat attendu d'une règle métier (colis déjà livré,
-  // ressource absente) : le consigner comme une « erreur non rattrapée »
-  // noierait les vraies pannes sous des dizaines de lignes attendues.
-  if (status >= 500) {
+  const safe = toSafeHttpError(error);
+  if (safe.status >= 500) {
     console.error('[RUNEX API] Erreur non rattrapée :', error);
   } else {
-    console.warn(
-      `[RUNEX API] Requête refusée (${status}) : ${error?.message ?? 'raison inconnue'}`
-    );
+    console.warn(`[RUNEX API] Requête refusée (${safe.status}) : ${safe.message}`);
   }
 
-  res.status(status).json({
-    success: false,
-    message:
-      status === 500
-        ? 'Erreur interne du serveur.'
-        : error?.message || 'Requête invalide.',
-    ...(process.env.NODE_ENV !== 'production' && status === 500 && error?.message
-      ? { detail: String(error.message) }
-      : {}),
-  });
+  res.status(safe.status).json({ success: false, message: safe.message });
 }

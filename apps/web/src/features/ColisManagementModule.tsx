@@ -93,7 +93,7 @@ import {
   type DeliveryAttempt,
   type AuditModificationLog,
 } from '@logixpress/types';
-import { createApiFetch, runsheetsApi, searchApi } from '@/lib/api';
+import { createApiFetch, runsheetsApi, searchApi, shippersApi } from '@/lib/api';
 
 // Les requêtes de ce module passent par le client API commun : aucune URL
 // d'API n'est écrite en dur ici.
@@ -271,7 +271,27 @@ export function ColisManagementModule({ currentUser, token }: ColisManagementMod
     contentSummary: '',
     allowOpen: true,
     notes: '',
+    // Saisie par l'exploitation : expéditeur pour le compte duquel le colis
+    // est créé. Ignoré par l'API pour un compte expéditeur.
+    shipperId: '',
   });
+
+  // Un compte sans expéditeur (exploitation) doit en désigner un.
+  const saisiePourExpediteur = !currentUser.shipperId;
+  const [expediteurs, setExpediteurs] = useState<Array<{ id: string; label: string }>>([]);
+  useEffect(() => {
+    if (!saisiePourExpediteur || viewMode !== 'nouveau' || expediteurs.length > 0) return;
+    shippersApi
+      .list({ status: 'actif', limit: 200 })
+      .then((page) =>
+        setExpediteurs(
+          page.items
+            .filter((s) => s.isActive)
+            .map((s) => ({ id: s.id, label: `${s.brandName || s.companyName} (${s.code})` }))
+        )
+      )
+      .catch(() => setExpediteurs([]));
+  }, [saisiePourExpediteur, viewMode, expediteurs.length]);
 
   /*
    * Livreurs proposés à l'affectation.
@@ -920,6 +940,24 @@ export function ColisManagementModule({ currentUser, token }: ColisManagementMod
             <Card>
               <form onSubmit={handleCreateColis} className="space-y-6 text-xs">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {saisiePourExpediteur && (
+                    <div className="sm:col-span-2">
+                      <FormField label="Expéditeur (compte client) *" required>
+                        <Select
+                          required
+                          value={newColisForm.shipperId}
+                          onChange={(e) => setNewColisForm({ ...newColisForm, shipperId: e.target.value })}
+                        >
+                          <option value="">— Choisir l'expéditeur —</option>
+                          {expediteurs.map((x) => (
+                            <option key={x.id} value={x.id}>
+                              {x.label}
+                            </option>
+                          ))}
+                        </Select>
+                      </FormField>
+                    </div>
+                  )}
                   <FormField label="Nom complet du client *" required>
                     <Input
                       required

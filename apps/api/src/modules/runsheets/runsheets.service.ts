@@ -8,11 +8,19 @@
  * livraison saisie tardivement soit immédiatement répercutée.
  */
 
+import { Prisma } from '@prisma/client';
 import { getPrisma } from '../../common/database/prisma-context';
+import { nextRunsheetNumber, tunisDayStamp } from '../../common/database/numbering';
 import { auditService } from '../../common/audit/audit.service';
 import { toPackageDto, PACKAGE_INCLUDE } from '../../common/database/mappers';
 import type { RunsheetSummaryDto, PackageDto } from '@logixpress/types';
-import { PackageStatus, RoleType, NotificationEvent } from '@logixpress/types';
+import {
+  PackageStatus,
+  RoleType,
+  NotificationEvent,
+  PACKAGE_STATUS_LABELS,
+  canTransition,
+} from '@logixpress/types';
 import { notFound, badRequest, conflict, forbidden, asUuid } from '../../common/errors/api-error';
 import { packageWorkflowService } from '../colis/package-workflow.service';
 import { notificationDispatcher } from '../notifications/notification.dispatcher';
@@ -33,10 +41,61 @@ const RUNSHEET_INCLUDE = {
   },
 } as const;
 
+/** Date de tournée `AAAA-MM-JJ` ; une valeur illisible est refusée (400). */
+const RUNSHEET_TYPES = ['DISTRIBUTION', 'RAMASSAGE', 'RETOUR_EXPEDITEUR', 'TRANSFERT_DEPOT'];
+
+/**
+ * Cycle de vie d'une tournée via `POST /runsheets/:id/status`.
+ * RETOUR_DEPOT et CLOTUREE_* s'obtiennent uniquement par `close` et `validate`.
+ */
+const RUNSHEET_STATUS_TRANSITIONS: Record<string, string[]> = {
+  BROUILLON: ['EN_ATTENTE', 'ANNULEE'],
+  EN_ATTENTE: ['BROUILLON', 'VALIDEE_DEPART', 'EN_COURS', 'ANNULEE'],
+  VALIDEE_DEPART: ['EN_ATTENTE', 'EN_COURS', 'ANNULEE'],
+  EN_COURS: [],
+  RETOUR_DEPOT: [],
+  CLOTUREE_CONFORME: [],
+  CLOTUREE_DEFICIT: [],
+  ANNULEE: [],
+};
+
+/** Colis qui partent en distribution au départ de la tournée. */
+const DEPARTING_STATUSES: PackageStatus[] = [PackageStatus.AFFECTE_RUNSHEET, PackageStatus.REPORTE];
+/** Colis encore « sur la route » : non traités à la clôture. */
+const PENDING_ON_TOUR: PackageStatus[] = [
+  PackageStatus.AFFECTE_RUNSHEET,
+  PackageStatus.EN_COURS_LIVRAISON,
+];
+/** Statuts dont l'encaissement est entre les mains du livreur. */
+const CASH_STATUSES: PackageStatus[] = [PackageStatus.LIVRE, PackageStatus.LIVRAISON_PARTIELLE];
+/** Un colis ne quitte une tournée ouverte que s'il n'a pas encore été traité. */
+const REMOVABLE_STATUSES: PackageStatus[] = [
+  PackageStatus.AFFECTE_RUNSHEET,
+  PackageStatus.REPORTE,
+  PackageStatus.ECHEC_LIVRAISON,
+  PackageStatus.RECU_DEPOT,
+  PackageStatus.RECU_DEPOT_DESTINATION,
+  PackageStatus.CREE,
+];
+
+/** Jour calendaire de Tunis, `AAAA-MM-JJ`. */
+function tunisIsoDay(now = new Date()): string {
+  const stamp = tunisDayStamp(now);
+  return `${stamp.slice(0, 4)}-${stamp.slice(4, 6)}-${stamp.slice(6, 8)}`;
+}
+
+function parseTourDate(raw: string): Date {
+  const value = String(raw).trim();
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T00:00:00.000Z`) : new Date(NaN);
+  if (Number.isNaN(date.getTime())) throw badRequest('Date de tournée invalide (format AAAA-MM-JJ).');
+  return date;
+}
+
 export class RunsheetsService {
   /** Liste les tournées, avec le périmètre livreur lorsqu'il est fourni. */
   async findAll(filters?: {
     driverId?: string;
+    depositId?: string;
     status?: string;
     date?: string;
   }): Promise<RunsheetSummaryDto[]> {
@@ -53,10 +112,11 @@ export class RunsheetsService {
     const records = await prisma.runsheet.findMany({
       where: {
         ...(filters?.driverId && filters.driverId !== 'ALL'
-          ? { driverId: filters.driverId }
+          ? { driverId: asUuid(filters.driverId) ?? '00000000-0000-0000-0000-000000000000' }
           : {}),
+        ...(filters?.depositId ? { depositId: filters.depositId } : {}),
         ...(persistedStatus ? { status: persistedStatus } : {}),
-        ...(filters?.date ? { tourDate: new Date(filters.date) } : {}),
+        ...(filters?.date ? { tourDate: parseTourDate(filters.date) } : {}),
       },
       include: RUNSHEET_INCLUDE,
       orderBy: { tourDate: 'desc' },
@@ -96,69 +156,48 @@ export class RunsheetsService {
     packageIds?: string[];
   }): Promise<RunsheetSummaryDto> {
     const prisma = getPrisma();
-
     const driver = await this.resolveDriver(payload);
-    const deposit = payload.depositId
-      ? await prisma.deposit.findUnique({ where: { id: payload.depositId } })
-      : await prisma.deposit.findFirst({ where: { isMainHub: true } });
 
+    const depositUuid = payload.depositId ? asUuid(String(payload.depositId)) : null;
+    if (payload.depositId && !depositUuid) {
+      throw badRequest('Identifiant de dépôt invalide (UUID attendu).');
+    }
+    const deposit = depositUuid
+      ? await prisma.deposit.findUnique({ where: { id: depositUuid } })
+      : await prisma.deposit.findFirst({ where: { isMainHub: true } });
     if (!deposit) {
       throw badRequest('Dépôt introuvable : renseignez un dépôt de départ valide.');
     }
+    if (!deposit.isActive) throw conflict('Ce dépôt est inactif.');
 
-    const tourDate = payload.tourDate ? new Date(payload.tourDate) : new Date();
-    const packages = payload.packageIds?.length
-      ? await prisma.package.findMany({
-          where: { id: { in: payload.packageIds }, deletedAt: null },
-        })
-      : [];
+    const type = payload.type ? String(payload.type).trim().toUpperCase() : 'DISTRIBUTION';
+    if (!RUNSHEET_TYPES.includes(type)) throw badRequest(`Type de tournée invalide : ${payload.type}.`);
+    const tourDate = payload.tourDate ? parseTourDate(payload.tourDate) : new Date(`${tunisIsoDay()}T00:00:00.000Z`);
+    const notes = payload.notes === undefined || payload.notes === null ? null : String(payload.notes);
+    if (notes && notes.length > 500) throw badRequest('Les notes ne peuvent dépasser 500 caractères.');
 
-    const misfit = packages.filter(
-      (p) => p.assignedDriverId && p.assignedDriverId !== driver.id
-    );
-    if (misfit.length > 0) {
-      throw conflict(
-        `${misfit.length} colis sont déjà affectés à un autre livreur et ne peuvent pas intégrer cette tournée.`
-      );
-    }
+    const packageIds = Array.isArray(payload.packageIds) ? [...new Set(payload.packageIds.map(String))] : [];
 
-    const number = await this.nextRunsheetNumber();
-    const totalPieces = packages.reduce((sum, p) => sum + (p.pieceCount ?? 1), 0);
-    const expectedCash = packages
-      .filter((p) => p.status !== PackageStatus.ANNULE)
-      .reduce((sum, p) => sum + Number(p.totalPrice), 0);
-
-    const created = await prisma.runsheet.create({
-      data: {
-        runsheetNumber: number,
-        depositId: deposit.id,
-        driverId: driver.id,
-        tourDate,
-        type: (payload.type as never) ?? 'DISTRIBUTION',
-        status: 'EN_ATTENTE',
-        totalPackages: packages.length,
-        totalPieces,
-        pendingCount: packages.length,
-        expectedCash,
-        notes: payload.notes ?? null,
-        runsheetItems: packages.length
-          ? {
-              create: packages.map((p, index) => ({
-                packageId: p.id,
-                orderIndex: index + 1,
-              })),
-            }
-          : undefined,
-        // Le rattachement à la tournée se fait aussi sur le colis : c'est ce
-        // champ que consulte l'écran de livraison du livreur.
-        packages: packages.length
-          ? { connect: packages.map((p) => ({ id: p.id })) }
-          : undefined,
-      },
-      include: RUNSHEET_INCLUDE,
+    const created = await prisma.$transaction(async (tx) => {
+      const runsheet = await tx.runsheet.create({
+        data: {
+          runsheetNumber: await nextRunsheetNumber(tx, tunisDayStamp()),
+          depositId: deposit.id,
+          driverId: driver.id,
+          tourDate,
+          type: type as never,
+          status: 'EN_ATTENTE',
+          notes,
+        },
+        include: { driver: { include: { user: { select: { fullName: true } } } } },
+      });
+      for (const identifier of packageIds) {
+        await this.attachPackage(tx, runsheet, identifier, { fullName: 'Exploitation' });
+      }
+      return runsheet;
     });
 
-    return this.toDto(created);
+    return (await this.findByNumber(created.runsheetNumber))!;
   }
 
   /**
@@ -361,7 +400,6 @@ export class RunsheetsService {
     });
   }
 
-  /** Ajoute un colis à une tournée encore ouverte. */
   async addPackage(
     runsheetId: string,
     packageIdentifier: string,
@@ -371,53 +409,14 @@ export class RunsheetsService {
     const runsheet = await this.findRecord(runsheetId);
     this.assertOpen(runsheet.status, 'ajouter un colis');
 
-    const pkg = await prisma.package.findFirst({
-      where: UUID_PATTERN.test(packageIdentifier)
-        ? { OR: [{ id: packageIdentifier }, { trackingNumber: packageIdentifier }] }
-        : { trackingNumber: packageIdentifier },
-    });
-    if (!pkg) throw notFound('Colis introuvable.');
+    const attached = await prisma.$transaction((tx) =>
+      this.attachPackage(tx, runsheet, packageIdentifier, user)
+    );
 
-    if (pkg.currentRunsheetId === runsheet.id) {
-      throw conflict(`Le colis #${pkg.trackingNumber} figure déjà dans cette tournée.`);
-    }
-    if (pkg.assignedDriverId && pkg.assignedDriverId !== runsheet.driverId) {
-      throw conflict(`Le colis #${pkg.trackingNumber} est affecté à un autre livreur.`);
-    }
-
-    await prisma.$transaction([
-      prisma.runsheetItem.create({
-        data: { runsheetId: runsheet.id, packageId: pkg.id },
-      }),
-      prisma.runsheet.update({
-        where: { id: runsheet.id },
-        data: {
-          totalPackages: { increment: 1 },
-          totalPieces: { increment: pkg.pieceCount ?? 1 },
-          pendingCount: { increment: 1 },
-        },
-      }),
-      prisma.package.update({
-        where: { id: pkg.id },
-        data: { currentRunsheetId: runsheet.id },
-      }),
-    ]);
-
-    await auditService.record({
-      entityType: 'RUNSHEET',
-      entityId: runsheet.id,
-      action: 'PACKAGE_ADDED',
-      userId: user.id,
-      reason: `Colis #${pkg.trackingNumber} ajouté à la tournée ${runsheet.runsheetNumber}.`,
-    });
-
-    // Le livreur de la tournée doit apprendre qu'elle s'est allongée. Le poste
-    // de commandement suit le volume par un autre chemin ; ce qui compte ici,
-    // c'est que le conductor sache qu'il a un arrêt supplémentaire.
     await notificationDispatcher.notify({
       event: NotificationEvent.RUNSHEET_ASSIGNED,
       title: 'Colis ajouté à votre tournée',
-      content: `Le colis #${pkg.trackingNumber} a été ajouté à la tournée ${runsheet.runsheetNumber}.`,
+      content: `Le colis #${attached.trackingNumber} a été ajouté à la tournée ${runsheet.runsheetNumber}.`,
       relatedEntity: 'RUNSHEET',
       relatedEntityId: runsheet.id,
       runsheetId: runsheet.id,
@@ -427,51 +426,178 @@ export class RunsheetsService {
     return (await this.findByNumber(runsheet.runsheetNumber))!;
   }
 
-  /** Retire un colis d'une tournée, uniquement avant son départ. */
+  /**
+   * Rattache un colis à une tournée ouverte, dans la transaction fournie.
+   *
+   * Règles :
+   *  - le colis existe, n'est pas supprimé, et son statut permet de partir en
+   *    distribution (AFFECTE_RUNSHEET ou une transition légale vers ce statut) ;
+   *  - il n'est pas déjà dans une autre tournée ouverte ;
+   *  - il n'est pas affecté à un autre livreur.
+   *
+   * Effets, tous atomiques : ligne de tournée, compteurs et montant attendu de
+   * la tournée, affectation du colis au livreur de la tournée et passage en
+   * AFFECTE_RUNSHEET (chronologie + audit par la machine à états).
+   */
+  async attachPackage(
+    tx: Prisma.TransactionClient,
+    runsheet: { id: string; runsheetNumber: string; driverId: string; status: string },
+    packageIdentifier: string,
+    user: { id?: string; fullName: string }
+  ): Promise<{ id: string; trackingNumber: string }> {
+    const identifier = String(packageIdentifier ?? '').trim();
+    if (!identifier) throw badRequest('Identifiant du colis requis.');
+
+    // Verrou de la tournée : deux ajouts simultanés ne se marchent pas dessus.
+    await tx.$queryRaw`SELECT id::text FROM "Runsheet" WHERE id = ${runsheet.id}::uuid FOR UPDATE`;
+
+    const pkg = await tx.package.findFirst({
+      where: {
+        deletedAt: null,
+        ...(UUID_PATTERN.test(identifier)
+          ? { OR: [{ id: identifier }, { trackingNumber: identifier }, { barcode: identifier }] }
+          : { OR: [{ trackingNumber: identifier }, { barcode: identifier }] }),
+      },
+      include: { currentRunsheet: { select: { id: true, runsheetNumber: true, status: true } } },
+    });
+    if (!pkg) throw notFound(`Colis ${identifier} introuvable.`);
+
+    if (pkg.currentRunsheetId === runsheet.id) {
+      throw conflict(`Le colis #${pkg.trackingNumber} figure déjà dans cette tournée.`);
+    }
+    if (pkg.currentRunsheet && !isTerminalRunsheetStatus(pkg.currentRunsheet.status)) {
+      throw conflict(
+        `Le colis #${pkg.trackingNumber} est déjà dans la tournée ${pkg.currentRunsheet.runsheetNumber}. ` +
+          "Retirez-le d'abord de cette tournée."
+      );
+    }
+    if (pkg.assignedDriverId && pkg.assignedDriverId !== runsheet.driverId) {
+      throw conflict(`Le colis #${pkg.trackingNumber} est affecté à un autre livreur.`);
+    }
+
+    const status = pkg.status as unknown as PackageStatus;
+    const alreadyAssigned = status === PackageStatus.AFFECTE_RUNSHEET;
+    if (!alreadyAssigned && !canTransition(status, PackageStatus.AFFECTE_RUNSHEET)) {
+      throw conflict(
+        `Le colis #${pkg.trackingNumber} ne peut pas partir en tournée depuis le statut « ${PACKAGE_STATUS_LABELS[status] ?? status} ».`
+      );
+    }
+
+    const itemCount = await tx.runsheetItem.count({ where: { runsheetId: runsheet.id } });
+    await tx.runsheetItem.create({
+      data: { runsheetId: runsheet.id, packageId: pkg.id, orderIndex: itemCount + 1 },
+    });
+    await tx.runsheet.update({
+      where: { id: runsheet.id },
+      data: {
+        totalPackages: { increment: 1 },
+        totalPieces: { increment: pkg.pieceCount ?? 1 },
+        pendingCount: { increment: 1 },
+        expectedCash: { increment: pkg.status === 'ANNULE' ? 0 : pkg.totalPrice },
+      },
+    });
+
+    const data = { assignedDriverId: runsheet.driverId, currentRunsheetId: runsheet.id };
+    if (alreadyAssigned) {
+      await tx.package.update({ where: { id: pkg.id }, data });
+      await packageWorkflowService.annotate({
+        packageId: pkg.id,
+        actor: { id: user.id, fullName: user.fullName, role: RoleType.GESTIONNAIRE },
+        title: `Intégré à la tournée ${runsheet.runsheetNumber}`,
+        auditAction: 'RUNSHEET_PACKAGE_ADDED',
+        runsheetNumber: runsheet.runsheetNumber,
+        newValues: { runsheetId: runsheet.id },
+        client: tx,
+      });
+    } else {
+      await packageWorkflowService.transition({
+        packageId: pkg.id,
+        to: PackageStatus.AFFECTE_RUNSHEET,
+        actor: { id: user.id, fullName: user.fullName, role: RoleType.GESTIONNAIRE },
+        title: `Intégré à la tournée ${runsheet.runsheetNumber}`,
+        runsheetNumber: runsheet.runsheetNumber,
+        auditAction: 'RUNSHEET_PACKAGE_ADDED',
+        data,
+        client: tx,
+      });
+    }
+
+    await auditService.record(
+      {
+        entityType: 'RUNSHEET',
+        entityId: runsheet.id,
+        action: 'PACKAGE_ADDED',
+        userId: user.id ?? null,
+        reason: `Colis #${pkg.trackingNumber} ajouté à la tournée ${runsheet.runsheetNumber}.`,
+      },
+      tx
+    );
+
+    return { id: pkg.id, trackingNumber: pkg.trackingNumber };
+  }
+
   async removePackage(
     runsheetId: string,
-    packageIdentifier: string
+    packageIdentifier: string,
+    user: { id?: string; fullName: string } = { fullName: 'Exploitation' }
   ): Promise<RunsheetSummaryDto> {
     const prisma = getPrisma();
     const runsheet = await this.findRecord(runsheetId);
     this.assertOpen(runsheet.status, 'retirer un colis');
 
     const item = runsheet.runsheetItems.find((i) => {
-      const identifier = i.package.trackingNumber;
-      return i.packageId === packageIdentifier || identifier === packageIdentifier;
+      const p = i.package;
+      return i.packageId === packageIdentifier || p.trackingNumber === packageIdentifier || p.barcode === packageIdentifier;
     });
     if (!item) {
-      throw notFound("Ce colis ne figure pas dans la tournée.");
+      throw notFound('Ce colis ne figure pas dans la tournée.');
     }
-    if (item.isHandled) {
-      throw conflict('Ce colis a déjà été traité : il ne peut plus être retiré de la tournée.');
+    const status = item.package.status as unknown as PackageStatus;
+    if (item.isHandled || !REMOVABLE_STATUSES.includes(status)) {
+      throw conflict(
+        `Le colis #${item.package.trackingNumber} a déjà été traité (statut « ${PACKAGE_STATUS_LABELS[status] ?? status} ») : ` +
+          'il ne peut plus être retiré de la tournée.'
+      );
     }
 
-    await prisma.$transaction([
-      prisma.runsheetItem.delete({ where: { id: item.id } }),
-      prisma.runsheet.update({
+    await prisma.$transaction(async (tx) => {
+      await tx.runsheetItem.delete({ where: { id: item.id } });
+      await tx.runsheet.update({
         where: { id: runsheet.id },
         data: {
           totalPackages: { decrement: 1 },
           totalPieces: { decrement: item.package.pieceCount ?? 1 },
           pendingCount: { decrement: 1 },
+          expectedCash: { decrement: item.package.totalPrice },
         },
-      }),
-      prisma.package.update({
+      });
+      // Le colis reste affecté au livreur (« affecté sans tournée ») : il peut
+      // être réaffecté ou intégré à une autre tournée.
+      await tx.package.update({
         where: { id: item.packageId },
         data: { currentRunsheetId: null },
-      }),
-    ]);
+      });
+      await auditService.record(
+        {
+          entityType: 'RUNSHEET',
+          entityId: runsheet.id,
+          action: 'PACKAGE_REMOVED',
+          userId: user.id ?? null,
+          reason: `Colis #${item.package.trackingNumber} retiré de la tournée ${runsheet.runsheetNumber}.`,
+        },
+        tx
+      );
+    });
 
     return (await this.findByNumber(runsheet.runsheetNumber))!;
   }
 
   /**
-   * Fait évoluer le statut d'une tournée.
+   * Changement de statut d'une tournée (préparation, départ, annulation).
    *
-   * Le départ (EN_COURS) déclenche la bascule des colis encore en attente
-   * vers « en cours de livraison » : sans cela, l'écran du livreur ne verrait
-   * rien bouger au moment où il démarre.
+   * Le retour au dépôt et la clôture ne passent PAS par ici : ils exigent la
+   * déclaration de caisse (`close`) puis sa validation (`validate`). Sans cette
+   * règle, une tournée pouvait être « clôturée conforme » sans un dinar déclaré.
    */
   async updateStatus(
     runsheetId: string,
@@ -480,40 +606,72 @@ export class RunsheetsService {
   ): Promise<RunsheetSummaryDto> {
     const prisma = getPrisma();
     const runsheet = await this.findRecord(runsheetId);
-
     const target = toPersistedRunsheetStatus(newStatus);
     if (!target) {
       throw badRequest(`Statut de tournée inconnu : ${newStatus}.`);
     }
+    if (target === 'RETOUR_DEPOT' || target === 'CLOTUREE_CONFORME' || target === 'CLOTUREE_DEFICIT') {
+      throw conflict(
+        'Le retour au dépôt se déclare avec la clôture de caisse, puis la caisse valide la tournée.'
+      );
+    }
     if (runsheet.status === target) {
       throw conflict(`La tournée est déjà au statut ${newStatus}.`);
     }
-    if (isTerminalRunsheetStatus(runsheet.status)) {
+    const allowed = RUNSHEET_STATUS_TRANSITIONS[runsheet.status] ?? [];
+    if (!allowed.includes(target)) {
       throw conflict(
-        `La tournée ${runsheet.runsheetNumber} est clôturée (${runsheet.status}) et ne peut plus changer de statut.`
+        `Transition de tournée impossible : ${runsheet.status} → ${target}.` +
+          (allowed.length ? ` Possibles : ${allowed.join(', ')}.` : ' La tournée ne peut plus changer de statut ici.')
       );
     }
 
     if (target === 'EN_COURS') {
-      await this.startPackages(runsheet, user);
+      await this.depart(runsheet, user);
+    } else if (target === 'ANNULEE') {
+      await prisma.$transaction(async (tx) => {
+        // Les colis quittent la tournée annulée ; ils restent affectés au livreur.
+        await tx.package.updateMany({
+          where: { currentRunsheetId: runsheet.id },
+          data: { currentRunsheetId: null },
+        });
+        await tx.runsheet.update({ where: { id: runsheet.id }, data: { status: 'ANNULEE' } });
+        await auditService.record(
+          {
+            entityType: 'RUNSHEET',
+            entityId: runsheet.id,
+            action: 'RUNSHEET_ANNULEE',
+            userId: user.id ?? null,
+            reason: `Tournée ${runsheet.runsheetNumber} annulée par ${user.fullName}.`,
+            previousValues: { status: runsheet.status },
+            newValues: { status: 'ANNULEE' },
+          },
+          tx
+        );
+      });
+    } else {
+      await prisma.runsheet.update({ where: { id: runsheet.id }, data: { status: target } });
+      await auditService.record({
+        entityType: 'RUNSHEET',
+        entityId: runsheet.id,
+        action: 'RUNSHEET_STATUT',
+        userId: user.id ?? null,
+        reason: `Tournée ${runsheet.runsheetNumber} : ${runsheet.status} → ${target}.`,
+        previousValues: { status: runsheet.status },
+        newValues: { status: target },
+      });
     }
-
-    await prisma.runsheet.update({
-      where: { id: runsheet.id },
-      data: {
-        status: target,
-        ...(target === 'EN_COURS' ? { departureTime: new Date() } : {}),
-        ...(target === 'RETOUR_DEPOT' ? { closureTime: new Date() } : {}),
-      },
-    });
 
     return (await this.findByNumber(runsheet.runsheetNumber))!;
   }
 
   /**
-   * Clôture de caisse : le livreur déclare les espèces et chèques remis.
+   * Déclaration de caisse au retour du livreur : la tournée passe en
+   * RETOUR_DEPOT.
    *
-   * Le déficit est calculé, jamais saisi : `attendu − (espèces + chèques)`.
+   * Le montant attendu est recalculé à cet instant à partir de ce qui a été
+   * réellement encaissé sur les colis de la tournée (livrés ou partiellement
+   * livrés) : un colis retourné ne crée pas de faux déficit. Calcul en Decimal.
    */
   async closeRunsheet(
     runsheetId: string,
@@ -522,56 +680,90 @@ export class RunsheetsService {
   ): Promise<RunsheetSummaryDto> {
     const prisma = getPrisma();
     const runsheet = await this.findRecord(runsheetId);
-
-    if (isTerminalRunsheetStatus(runsheet.status)) {
-      throw conflict(`La tournée ${runsheet.runsheetNumber} est déjà clôturée.`);
-    }
-    if (runsheet.status === 'EN_ATTENTE' || runsheet.status === 'BROUILLON') {
-      throw conflict('Une tournée non partie ne peut pas être clôturée.');
-    }
-
-    const cash = Number(payload.collectedCash);
-    const checks = Number(payload.collectedChecks ?? 0);
-    if (!Number.isFinite(cash) || cash < 0) {
-      throw badRequest('Le montant d\'espèces remises est invalide.');
+    if (runsheet.status !== 'EN_COURS' && runsheet.status !== 'VALIDEE_DEPART') {
+      throw conflict(
+        runsheet.status === 'EN_ATTENTE' || runsheet.status === 'BROUILLON'
+          ? 'Une tournée non partie ne peut pas être clôturée.'
+          : `La tournée ${runsheet.runsheetNumber} est déjà clôturée.`
+      );
     }
 
-    const expected = Number(runsheet.expectedCash);
-    const deficit = Math.max(0, expected - (cash + checks));
+    const cash = new Prisma.Decimal(String(payload.collectedCash));
+    const checks = new Prisma.Decimal(String(payload.collectedChecks ?? 0));
+    if (!cash.isFinite() || cash.isNegative() || !checks.isFinite() || checks.isNegative()) {
+      throw badRequest("Les montants déclarés doivent être des nombres positifs.");
+    }
+    const notes = payload.notes === undefined || payload.notes === null ? runsheet.notes : String(payload.notes);
+    if (notes && notes.length > 500) throw badRequest('Les notes ne peuvent dépasser 500 caractères.');
 
-    await prisma.runsheet.update({
-      where: { id: runsheet.id },
-      data: {
-        status: 'RETOUR_DEPOT',
-        collectedCash: cash,
-        collectedChecks: checks,
-        deficitAmount: deficit,
-        closureTime: new Date(),
-        notes: payload.notes ?? runsheet.notes,
-      },
+    const now = new Date();
+    const updated = await prisma.$transaction(async (tx) => {
+      const items = await tx.runsheetItem.findMany({
+        where: { runsheetId: runsheet.id },
+        include: { package: { select: { status: true, collectedAmount: true } } },
+      });
+      let expected = new Prisma.Decimal(0);
+      for (const item of items) {
+        const status = item.package.status as unknown as PackageStatus;
+        const handled = !PENDING_ON_TOUR.includes(status);
+        const collected = CASH_STATUSES.includes(status) ? item.package.collectedAmount : new Prisma.Decimal(0);
+        expected = expected.plus(collected);
+        await tx.runsheetItem.update({
+          where: { id: item.id },
+          data: {
+            isHandled: handled,
+            statusAtClose: item.package.status,
+            collectedAmount: collected,
+            scannedAtReturn: now,
+          },
+        });
+      }
+      const declared = cash.plus(checks);
+      const deficit = expected.greaterThan(declared) ? expected.minus(declared) : new Prisma.Decimal(0);
+
+      const result = await tx.runsheet.updateMany({
+        where: { id: runsheet.id, status: runsheet.status },
+        data: {
+          status: 'RETOUR_DEPOT',
+          expectedCash: expected,
+          collectedCash: cash,
+          collectedChecks: checks,
+          deficitAmount: deficit,
+          closureTime: now,
+          notes,
+        },
+      });
+      if (result.count !== 1) throw conflict('La tournée vient d’être modifiée. Rechargez-la.');
+
+      await auditService.record(
+        {
+          entityType: 'RUNSHEET',
+          entityId: runsheet.id,
+          action: 'CAISSE_DECLAREE',
+          userId: user.id ?? null,
+          reason:
+            `Caisse déclarée pour ${runsheet.runsheetNumber} : ` +
+            `${cash.toFixed(3)} DT espèces, ${checks.toFixed(3)} DT chèques, ` +
+            `attendu ${expected.toFixed(3)} DT, écart ${deficit.toFixed(3)} DT.`,
+          newValues: {
+            collectedCash: cash.toFixed(3),
+            collectedChecks: checks.toFixed(3),
+            expectedCash: expected.toFixed(3),
+            deficitAmount: deficit.toFixed(3),
+          },
+        },
+        tx
+      );
+      return result;
     });
-
-    await auditService.record({
-      entityType: 'RUNSHEET',
-      entityId: runsheet.id,
-      action: 'CAISSE_DECLAREE',
-      userId: user.id,
-      reason:
-        `Caisse déclarée pour ${runsheet.runsheetNumber} : ` +
-        `${cash.toFixed(3)} DT espèces, ${checks.toFixed(3)} DT chèques, ` +
-        `attendu ${expected.toFixed(3)} DT, écart ${deficit.toFixed(3)} DT.`,
-      newValues: { collectedCash: cash, collectedChecks: checks, deficitAmount: deficit },
-    });
+    void updated;
 
     return (await this.findByNumber(runsheet.runsheetNumber))!;
   }
 
   /**
-   * Validation financière par la caisse.
-   *
-   * La clôture est « conforme » ou « à déficit » selon l'écart calculé à la
-   * clôture : c'est cette distinction, et non une valeur saisie, qui
-   * détermine le statut final.
+   * Validation par la caisse : la tournée est clôturée, conforme ou en
+   * déficit, et l'argent remis sort du solde du livreur.
    */
   async validateRunsheet(
     runsheetId: string,
@@ -580,30 +772,50 @@ export class RunsheetsService {
   ): Promise<RunsheetSummaryDto> {
     const prisma = getPrisma();
     const runsheet = await this.findRecord(runsheetId);
-
     if (runsheet.status !== 'RETOUR_DEPOT') {
       throw conflict(
         'Seule une tournée revenue au dépôt et en attente de validation peut être validée par la caisse.'
       );
     }
+    if (notes !== undefined && notes !== null && String(notes).length > 500) {
+      throw badRequest('Les notes ne peuvent dépasser 500 caractères.');
+    }
 
-    const deficit = Number(runsheet.deficitAmount);
-    const status = deficit > 0 ? 'CLOTUREE_DEFICIT' : 'CLOTUREE_CONFORME';
+    const deficit = new Prisma.Decimal(runsheet.deficitAmount);
+    const status = deficit.greaterThan(0) ? 'CLOTUREE_DEFICIT' : 'CLOTUREE_CONFORME';
+    const handedOver = new Prisma.Decimal(runsheet.collectedCash).plus(runsheet.collectedChecks);
 
-    await prisma.runsheet.update({
-      where: { id: runsheet.id },
-      data: { status, notes: notes ?? runsheet.notes, closedByUserId: user.id ?? null },
-    });
+    await prisma.$transaction(async (tx) => {
+      const result = await tx.runsheet.updateMany({
+        where: { id: runsheet.id, status: 'RETOUR_DEPOT' },
+        data: { status, notes: notes ?? runsheet.notes, closedByUserId: user.id ?? null },
+      });
+      if (result.count !== 1) throw conflict('La tournée vient d’être validée par un autre poste.');
 
-    await auditService.record({
-      entityType: 'RUNSHEET',
-      entityId: runsheet.id,
-      action: 'CAISSE_VALIDEE',
-      userId: user.id,
-      reason:
-        `Tournée ${runsheet.runsheetNumber} validée en ${status}.` +
-        (deficit > 0 ? ` Déficit de ${deficit.toFixed(3)} DT à couvrir.` : ''),
-      newValues: { status },
+      // L'argent remis à la caisse n'est plus dans les mains du livreur.
+      const driver = await tx.driver.findUnique({
+        where: { id: runsheet.driverId },
+        select: { currentBalance: true },
+      });
+      if (driver) {
+        const balance = new Prisma.Decimal(driver.currentBalance);
+        const next = balance.greaterThan(handedOver) ? balance.minus(handedOver) : new Prisma.Decimal(0);
+        await tx.driver.update({ where: { id: runsheet.driverId }, data: { currentBalance: next } });
+      }
+
+      await auditService.record(
+        {
+          entityType: 'RUNSHEET',
+          entityId: runsheet.id,
+          action: 'CAISSE_VALIDEE',
+          userId: user.id ?? null,
+          reason:
+            `Tournée ${runsheet.runsheetNumber} validée en ${status}.` +
+            (deficit.greaterThan(0) ? ` Déficit de ${deficit.toFixed(3)} DT à couvrir.` : ''),
+          newValues: { status, handedOver: handedOver.toFixed(3) },
+        },
+        tx
+      );
     });
 
     return (await this.findByNumber(runsheet.runsheetNumber))!;
@@ -677,91 +889,83 @@ export class RunsheetsService {
   }
 
   /**
-   * Bascule les colis non traités en « en cours de livraison ».
-   *
-   * Le départ d'une tournée est une transition de masse, mais elle ne
-   * dispense d'aucune règle : chaque colis passe par le service domaine. Deux
-   * Bretons d'usage justifient ce choix.
-   *
-   * D'abord, la liste des colis réellement modifiés doit coïncider avec la
-   * liste des événements écrits. Un `updateMany` filtré suivi d'un
-   * `createMany` non filtré laisse une trace « départ en tournée » sur des
-   * colis qui, eux, n'ont pas bougé : l'historique raconte alors une tournée
-   * qui n'a pas eu lieu.
-   *
-   * Ensuite, le refus doit être global et motivé. On contrôle donc toutes les
-   * transitions avant d'en écrire une seule, pour ne pas laisser une tournée
-   * à moitié démarrée.
+   * Départ de la tournée : tous les colis en attente passent en
+   * EN_COURS_LIVRAISON et la tournée en EN_COURS, dans une seule transaction.
+   * Si un seul colis ne peut pas partir, rien ne bouge.
    */
-  private async startPackages(
+  private async depart(
     runsheet: {
       id: string;
       runsheetNumber: string;
+      status: string;
       driver: { user: { fullName: string } };
-      runsheetItems: { packageId: string; isHandled: boolean; package: unknown }[];
+      runsheetItems: { packageId: string; isHandled: boolean; package: { status: unknown; trackingNumber: string } }[];
     },
     user: { id?: string; fullName: string; role?: RoleType }
   ): Promise<void> {
     const prisma = getPrisma();
-    const pending = runsheet.runsheetItems.filter((item) => !item.isHandled);
-    if (pending.length === 0) return;
+    const pending = runsheet.runsheetItems.filter(
+      (item) => !item.isHandled && DEPARTING_STATUSES.includes(item.package.status as PackageStatus)
+    );
+    if (runsheet.runsheetItems.length === 0) {
+      throw conflict(`La tournée ${runsheet.runsheetNumber} est vide : ajoutez des colis avant le départ.`);
+    }
+    const blocked = runsheet.runsheetItems.filter(
+      (item) =>
+        !item.isHandled &&
+        !DEPARTING_STATUSES.includes(item.package.status as PackageStatus) &&
+        (item.package.status as PackageStatus) !== PackageStatus.EN_COURS_LIVRAISON
+    );
+    if (pending.length === 0 && blocked.length === 0) {
+      throw conflict(`La tournée ${runsheet.runsheetNumber} n'a aucun colis à distribuer.`);
+    }
 
-    const operatorName = user.fullName || runsheet.driver.user.fullName;
     const actor = {
       id: user.id,
-      fullName: operatorName,
+      fullName: user.fullName || runsheet.driver.user.fullName,
       role: user.role ?? RoleType.GESTIONNAIRE,
     };
+    const now = new Date();
 
-    // Contrôle préalable : on refuse la tournée entière si un seul colis est
-    // dans un état qui ne permet pas le départ.
-    const refusals: string[] = [];
-    for (const item of pending) {
-      const verdict = await packageWorkflowService.check(item.packageId, PackageStatus.EN_COURS_LIVRAISON);
-      if (!verdict.allowed) refusals.push(verdict.reason ?? `Colis ${item.packageId}.`);
-    }
-    if (refusals.length > 0) {
-      throw conflict(
-        `Départ impossible : ${refusals.length} colis de la tournée ${runsheet.runsheetNumber} ` +
-          `ne peuvent pas passer en livraison. ${refusals.slice(0, 3).join(' ')}`
-      );
-    }
-
-    for (const item of pending) {
-      await packageWorkflowService.transition({
-        packageId: item.packageId,
-        to: PackageStatus.EN_COURS_LIVRAISON,
-        actor,
-        title: 'Départ en tournée',
-        note: `Tournée ${runsheet.runsheetNumber}`,
-        location: 'En tournée',
-        runsheetNumber: runsheet.runsheetNumber,
-        auditAction: 'RUNSHEET_DEPARTURE',
-      });
-    }
-
-    await prisma.runsheetItem.updateMany({
-      where: { runsheetId: runsheet.id, isHandled: false },
-      data: { scannedAtDeparture: new Date() },
-    });
-  }
-
-  /** Numéro de tournée incrémental, lisible et unique par jour. */
-  private async nextRunsheetNumber(): Promise<string> {
-    const prisma = getPrisma();
-    const today = new Date();
-    const stamp = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}${String(
-      today.getDate()
-    ).padStart(2, '0')}`;
-
-    const last = await prisma.runsheet.findFirst({
-      where: { runsheetNumber: { startsWith: `RUN-${stamp}` } },
-      orderBy: { runsheetNumber: 'desc' },
-      select: { runsheetNumber: true },
-    });
-
-    const sequence = last ? Number(last.runsheetNumber.split('-').pop() ?? '0') + 1 : 1;
-    return `RUN-${stamp}-${String(sequence).padStart(4, '0')}`;
+    await prisma.$transaction(
+      async (tx) => {
+        for (const item of pending) {
+          await packageWorkflowService.transition({
+            packageId: item.packageId,
+            to: PackageStatus.EN_COURS_LIVRAISON,
+            actor,
+            title: 'Départ en tournée',
+            note: `Tournée ${runsheet.runsheetNumber}`,
+            location: 'En tournée',
+            runsheetNumber: runsheet.runsheetNumber,
+            auditAction: 'RUNSHEET_DEPARTURE',
+            client: tx,
+          });
+        }
+        await tx.runsheetItem.updateMany({
+          where: { runsheetId: runsheet.id, isHandled: false },
+          data: { scannedAtDeparture: now },
+        });
+        const result = await tx.runsheet.updateMany({
+          where: { id: runsheet.id, status: runsheet.status as never },
+          data: { status: 'EN_COURS', departureTime: now },
+        });
+        if (result.count !== 1) throw conflict('La tournée vient d’être modifiée. Rechargez-la.');
+        await auditService.record(
+          {
+            entityType: 'RUNSHEET',
+            entityId: runsheet.id,
+            action: 'RUNSHEET_DEPART',
+            userId: user.id ?? null,
+            reason: `Départ de la tournée ${runsheet.runsheetNumber} (${pending.length} colis).`,
+            previousValues: { status: runsheet.status },
+            newValues: { status: 'EN_COURS' },
+          },
+          tx
+        );
+      },
+      { timeout: 30_000 }
+    );
   }
 
   /**

@@ -103,8 +103,9 @@ echo
 # obligatoire, sinon les dates calculées tombent dans le passé.
 DAY() {
   case "$1" in
-    -*) date -v"$1"d +%Y-%m-%d ;;
-    *)  date -v"+$1d" +%Y-%m-%d ;;
+    # GNU date (Linux/CI) puis BSD date (macOS).
+    -*) date -d "$1 day" +%Y-%m-%d 2>/dev/null || date -v"$1"d +%Y-%m-%d ;;
+    *)  date -d "+$1 day" +%Y-%m-%d 2>/dev/null || date -v"+$1d" +%Y-%m-%d ;;
   esac
 }
 

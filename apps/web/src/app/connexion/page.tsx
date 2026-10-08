@@ -49,8 +49,10 @@ export default function LoginPage() {
           setApiReachable(true);
         }
       })
-      .catch(() => {
-        if (!cancelled) setApiReachable(false);
+      .catch((err: unknown) => {
+        // 404 = comptes de démonstration désactivés (production) : l'API répond,
+        // simplement sans liste. Seule une erreur réseau signale une API absente.
+        if (!cancelled) setApiReachable(err instanceof ApiError && err.status !== 0);
       });
     return () => {
       cancelled = true;
@@ -64,6 +66,14 @@ export default function LoginPage() {
 
     try {
       const loggedUser = await login(email.trim(), password);
+
+      if (loggedUser.role === RoleType.LIVREUR) {
+        // Le livreur travaille depuis l'application mobile : l'espace web
+        // d'exploitation ne lui est pas ouvert.
+        await logout();
+        setError("L'espace livreur est disponible dans l'application mobile RUNEX.");
+        return;
+      }
 
       if (loggedUser.role === RoleType.EXPEDITEUR) {
         // Les identifiants sont justes, mais ce n'est pas la bonne porte. La

@@ -68,7 +68,11 @@ export class DashboardService {
       }),
       this.driverActivity(depositId),
       this.countPickupsByStatus(),
-      this.voucherTotals(),
+      // Les bordereaux expéditeurs relèvent de la caisse centrale : un tableau
+      // de bord limité à un dépôt ne les montre pas.
+      depositId
+        ? Promise.resolve({ confirmed: { count: 0, total: 0 }, paid: 0, returnFees: 0 })
+        : this.voucherTotals(),
       this.runsheetTotals(depositId),
       prisma.runsheet.count({
         where: {

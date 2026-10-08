@@ -76,8 +76,10 @@ function Ecran() {
           setDemoUsers(list.filter((account) => account.role === RoleType.EXPEDITEUR));
         }
       })
-      .catch(() => {
-        if (!cancelled) setApiReachable(false);
+      .catch((err: unknown) => {
+        // 404 = comptes de démonstration désactivés (production) : l'API répond,
+        // simplement sans liste. Seule une erreur réseau signale une API absente.
+        if (!cancelled) setApiReachable(err instanceof ApiError && err.status !== 0);
       });
     return () => {
       cancelled = true;

@@ -264,13 +264,62 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
  * Garde de rendu côté client : redirige vers /connexion tant qu'aucune session
  * n'est établie, et affiche un écran d'attente pendant la vérification.
  */
+/**
+ * Accès requis par écran de l'espace d'exploitation.
+ *
+ * L'API reste seule décisive : cette table évite seulement d'afficher un écran
+ * dont toutes les requêtes seraient refusées (et d'exposer sa structure).
+ */
+const ACCES_ECRANS: { prefix: string; roles?: RoleType[]; permission?: PermissionCode }[] = [
+  { prefix: '/dashboard', roles: [RoleType.ADMIN, RoleType.GESTIONNAIRE, RoleType.FINANCE, RoleType.AGENT_DEPOT] },
+  { prefix: '/colis', permission: PermissionCode.COLIS_READ },
+  { prefix: '/magasin', permission: PermissionCode.DEPOT_SCAN },
+  { prefix: '/runsheets', permission: PermissionCode.RUNSHEET_READ },
+  { prefix: '/ramassages', permission: PermissionCode.RAMASSAGE_READ },
+  { prefix: '/inter-depots', permission: PermissionCode.INTERDEPOT_READ },
+  { prefix: '/inventaire', permission: PermissionCode.INVENTORY_READ },
+  { prefix: '/paiements/bordereaux', permission: PermissionCode.PAYMENT_READ },
+  { prefix: '/paiements', permission: PermissionCode.PAYMENT_CASH_READ },
+  { prefix: '/finance', permission: PermissionCode.PAYMENT_CASH_READ },
+  { prefix: '/rapports', permission: PermissionCode.REPORT_READ },
+  { prefix: '/recherche', permission: PermissionCode.SEARCH_GLOBAL },
+  { prefix: '/audit', permission: PermissionCode.AUDIT_READ },
+  { prefix: '/admin/utilisateurs', permission: PermissionCode.USER_READ },
+  { prefix: '/admin/expediteurs', permission: PermissionCode.EXPEDITEUR_READ },
+  { prefix: '/admin/livreurs', permission: PermissionCode.LIVREUR_READ },
+  { prefix: '/design-system', roles: [RoleType.ADMIN] },
+];
+
+function ecranAutorise(
+  pathname: string,
+  user: { role: RoleType; permissions?: PermissionCode[] }
+): boolean {
+  const regle = ACCES_ECRANS.find((r) => pathname === r.prefix || pathname.startsWith(`${r.prefix}/`));
+  if (!regle) return true; // notifications, etc. : tout profil d'exploitation
+  if (regle.roles && !regle.roles.includes(user.role)) return false;
+  if (regle.permission && user.role !== RoleType.ADMIN && !(user.permissions ?? []).includes(regle.permission)) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Garde de rendu côté client de l'espace d'exploitation.
+ *
+ *  - sans session : redirection vers /connexion ;
+ *  - expéditeur : redirection vers son portail (l'espace interne ne lui est pas ouvert) ;
+ *  - livreur : écran d'information (il travaille depuis l'application mobile) ;
+ *  - écran non autorisé pour le profil : écran « accès refusé ».
+ */
 export function RequireAuth({ children }: { children: React.ReactNode }) {
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, logout } = useAuth();
   const router = useRouter();
-  const pathname = usePathname();
+  const pathname = usePathname() ?? '/';
 
   React.useEffect(() => {
-    if (!isLoading && !user) router.replace('/connexion');
+    if (isLoading) return;
+    if (!user) router.replace('/connexion');
+    else if (user.role === RoleType.EXPEDITEUR) router.replace('/expediteur');
   }, [isLoading, user, router]);
 
   if (isLoading) {
@@ -284,13 +333,57 @@ export function RequireAuth({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (!user) {
-    // Le rendu est neutralisé tant que la redirection n'a pas eu lieu.
-    return null;
+  // Le rendu est neutralisé tant que la redirection n'a pas eu lieu.
+  if (!user || user.role === RoleType.EXPEDITEUR) return null;
+
+  if (user.role === RoleType.LIVREUR) {
+    return (
+      <AccesRefuse
+        titre="Accès refusé — espace livreur sur mobile"
+        message="Les livreurs utilisent l'application mobile RUNEX. L'espace web d'exploitation ne leur est pas ouvert."
+        action="Se déconnecter"
+        onAction={() => void logout()}
+      />
+    );
   }
 
-  void pathname;
+  if (!ecranAutorise(pathname, user)) {
+    return (
+      <AccesRefuse
+        titre="Accès refusé"
+        message="Votre profil ne permet pas d'ouvrir cet écran."
+        action="Retour au tableau de bord"
+        onAction={() => router.replace(user.role === RoleType.ADMIN || user.role === RoleType.GESTIONNAIRE || user.role === RoleType.FINANCE || user.role === RoleType.AGENT_DEPOT ? '/dashboard' : '/connexion')}
+      />
+    );
+  }
+
   return <>{children}</>;
+}
+
+function AccesRefuse(props: { titre: string; message: string; action: string; onAction: () => void }) {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
+      <div className="w-full max-w-md bg-white border border-slate-200 rounded-2xl shadow-sm p-8 text-center space-y-4">
+        <div className="flex justify-center">
+          <span className="inline-flex items-center justify-center w-11 h-11 rounded-full bg-amber-50 border border-amber-200">
+            <ShieldCheck className="w-5 h-5 text-amber-700" aria-hidden="true" />
+          </span>
+        </div>
+        <div className="space-y-1.5">
+          <h1 className="text-lg font-bold text-slate-900">{props.titre}</h1>
+          <p className="text-sm text-slate-600 leading-relaxed">{props.message}</p>
+        </div>
+        <button
+          type="button"
+          onClick={props.onAction}
+          className="inline-block w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-md font-semibold text-xs transition"
+        >
+          {props.action}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 /** Icône de déconnexion réutilisée par l'en-tête (gardée pour cohérence). */

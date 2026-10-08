@@ -52,7 +52,11 @@
     "db:audit-lock": "psql -d logixpress_db -f scripts/audit-ownership.sql",
     "qa:rapports": "bash scripts/verify-reports.sh",
     "qa:rapports-ecran": "node scripts/verify-reports-ecran.mjs",
-    "qa:formateurs": "tsx scripts/verify-formateurs.ts"
+    "qa:formateurs": "tsx scripts/verify-formateurs.ts",
+    "qa:security": "node qa/qa-security-26.mjs",
+    "qa:interdepot": "node qa/qa-interdepot-26.mjs",
+    "qa:runsheet-ui": "node qa/qa-runsheet-ui-26.mjs",
+    "qa:colis-ui": "node qa/qa-colis-ui-26.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",

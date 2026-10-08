@@ -18,7 +18,7 @@
  */
 
 import type { Response } from 'express';
-import type { AuthenticatedRequest } from '../../common/auth/auth.middleware';
+import { resolveOperatingDeposit, type AuthenticatedRequest } from '../../common/auth/auth.middleware';
 import { RoleType } from '@logixpress/types';
 import { receptionService } from './reception.service';
 import { badRequest } from '../../common/errors/api-error';
@@ -66,7 +66,7 @@ export class ReceptionController {
     }
 
     const code = String(req.body?.code ?? req.query.code ?? '').trim();
-    const depositId = req.body?.depositId ?? req.query.depositId ?? req.user.depositId ?? null;
+    const depositId = await resolveOperatingDeposit(req, req.body?.depositId ?? req.query.depositId);
 
     try {
       const result = await receptionService.lookup(code, depositId);
@@ -104,7 +104,7 @@ export class ReceptionController {
 
     // Le dépôt omis retombe sur celui de l'opérateur : un agent affecté à
     // Sousse n'a pas à choisir le dépôt à chaque scan.
-    const depositId = req.body?.depositId ?? req.user.depositId ?? null;
+    const depositId = await resolveOperatingDeposit(req, req.body?.depositId);
 
     const result = await receptionService.receive({
       code,
@@ -129,9 +129,8 @@ export class ReceptionController {
       res.status(401).json({ success: false, message: 'Non authentifié.' });
       return;
     }
+    const depositId = await resolveOperatingDeposit(req, req.query.depositId);
     try {
-      const brut = req.query.depositId;
-      const depositId = (typeof brut === 'string' ? brut : null) ?? req.user.depositId ?? null;
       const limitBrut = req.query.limit;
       const limit = Math.min(Number(typeof limitBrut === 'string' ? limitBrut : 20) || 20, 50);
       res.json({ success: true, data: await receptionService.recentReceptions(depositId, limit) });

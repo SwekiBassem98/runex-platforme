@@ -18,6 +18,7 @@
  */
 
 import type { PackageDto } from '@logixpress/types';
+import { code128Svg } from './code128';
 
 const MAX_IMPRESSION_COLIS = 500;
 const PAGE_SIZE_IMPRESSION = 100;
@@ -165,13 +166,7 @@ ${header}
   <div class="barcode-label">Code-barres</div>
   <div class="barcode-value" dir="ltr">${esc(colis.barcode)}</div>
   <div class="barcode-sub" dir="ltr">${esc(colis.trackingNumber)} · ${esc(colis.barcode)}</div>
-  <div style="margin-top:6px; display:flex; justify-content:center; gap:2px; height:36px; align-items:end;">
-    ${esc(colis.barcode).split('').slice(0,22).map((ch, i) => {
-      const h = 14 + (ch.charCodeAt(0) % 22);
-      const w = ch >= '0' && ch <= '9' ? 3 : 2;
-      return `<span style="display:inline-block; width:${w}px; height:${h}px; background:#0f172a; margin:0 1px;"></span>`;
-    }).join('')}
-  </div>
+  <div style="margin-top:6px; display:flex; justify-content:center;">${code128Svg(colis.barcode, { height: 52, moduleWidth: 1.6 })}</div>
 </div>
 
 <div class="info-grid">
@@ -264,12 +259,7 @@ export function genererHtmlColisListe(
         <span>·</span>
         <span>${esc(ctx.formatDate(c.createdAt))}</span>
       </div>
-      <div style="margin-top:8px; display:flex; justify-content:center; gap:1.5px; height:28px; align-items:end;">
-        ${esc(c.barcode).split('').slice(0,18).map(ch => {
-          const h = 10 + (ch.charCodeAt(0) % 18);
-          return `<span style="display:inline-block; width:2.5px; height:${h}px; background:#0f172a;"></span>`;
-        }).join('')}
-      </div>
+      <div style="margin-top:8px; display:flex; justify-content:center;">${code128Svg(c.barcode, { height: 36, moduleWidth: 1.2 })}</div>
     </div>
   `).join('');
 

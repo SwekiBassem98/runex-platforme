@@ -179,39 +179,47 @@ export class PackageWorkflowService {
    */
   async transition(command: TransitionCommand): Promise<TransitionResult> {
     const { packageId, to, actor } = command;
-
-    const record = await this.prisma.package.findUnique({
-      where: { id: packageId },
-      select: {
-        status: true,
-        trackingNumber: true,
-        assignedDriverId: true,
-        pieceCount: true,
-        totalPrice: true,
-      },
-    });
-    if (!record) {
-      throw new BusinessRuleError('Colis introuvable.', 404);
-    }
-
-    this.assertTransitionAllowed(record.status, record.trackingNumber, to, {
-      allowSameStatus: command.allowSameStatus,
-    });
-    this.assertActorOwnsPackage(record.assignedDriverId, actor);
-    this.assertJustified(to, command, record.totalPrice, record.pieceCount);
-
     const location = command.location?.trim() || null;
     const reason = command.reason?.trim() || null;
     const now = new Date();
 
-    // Un client de transaction n'a pas de `$transaction` : c'est l'appelant qui
-    // la possède. Dans ce cas on écrit directement, et l'atomicité est celle
-    // de la transaction appelante. Sinon, on ouvre la nôtre.
-    const write = async (tx: Prisma.TransactionClient): Promise<void> => {
-      await tx.package.update({
+    // La lecture du statut courant et l'écriture se font dans la MÊME
+    // transaction, et l'écriture est conditionnée au statut lu : deux gestes
+    // concurrents sur le même colis (double tap, deux postes) ne peuvent pas
+    // réussir tous les deux. Le second reçoit un 409 explicite.
+    const write = async (tx: Prisma.TransactionClient): Promise<TransitionResult> => {
+      const record = await tx.package.findUnique({
         where: { id: packageId },
-        data: { ...command.data, status: toPrismaStatus(to) },
+        select: {
+          status: true,
+          trackingNumber: true,
+          assignedDriverId: true,
+          pieceCount: true,
+          totalPrice: true,
+          deletedAt: true,
+        },
       });
+      if (!record || record.deletedAt) {
+        throw new BusinessRuleError('Colis introuvable.', 404);
+      }
+
+      this.assertTransitionAllowed(record.status, record.trackingNumber, to, {
+        allowSameStatus: command.allowSameStatus,
+      });
+      this.assertActorOwnsPackage(record.assignedDriverId, actor);
+      this.assertJustified(to, command, record.totalPrice, record.pieceCount);
+
+      const updated = await tx.package.updateMany({
+        where: { id: packageId, status: record.status, deletedAt: null },
+        data: { ...(command.data as Prisma.PackageUncheckedUpdateManyInput), status: toPrismaStatus(to) },
+      });
+      if (updated.count !== 1) {
+        throw new BusinessRuleError(
+          `Le colis #${record.trackingNumber} vient d'être modifié par une autre opération. ` +
+            'Rechargez-le avant de recommencer.',
+          409
+        );
+      }
       await tx.packageTimeline.create({
         data: {
           packageId,
@@ -238,15 +246,13 @@ export class PackageWorkflowService {
         },
         tx
       );
+      return { from: toSharedStatus(record.status), to, trackingNumber: record.trackingNumber };
     };
 
     if (command.client) {
-      await write(command.client);
-    } else {
-      await this.prisma.$transaction(write);
+      return write(command.client);
     }
-
-    return { from: toSharedStatus(record.status), to, trackingNumber: record.trackingNumber };
+    return this.prisma.$transaction(write);
   }
 
   /**

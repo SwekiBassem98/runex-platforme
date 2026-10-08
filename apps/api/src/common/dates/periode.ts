@@ -33,12 +33,45 @@ function estDateSeule(valeur: string): boolean {
  * @param valeur     `AAAA-MM-JJ` ou une horodatage complet.
  * @param finDeJour  Porter au lendemain du jour demandé, pour une borne haute.
  */
+/**
+ * Instant UTC correspondant à 00:00 à Tunis pour la date `AAAA-MM-JJ`.
+ * Le décalage est lu via Intl (pas de constante figée), pour rester juste si
+ * la Tunisie réintroduisait l'heure d'été.
+ */
+export function debutJourneeTunis(jour: string): Date | null {
+  const minuitUtc = new Date(`${jour}T00:00:00.000Z`);
+  if (Number.isNaN(minuitUtc.getTime())) return null;
+  const decalageMinutes = (instant: Date): number => {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Africa/Tunis',
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).formatToParts(instant);
+    const get = (t: string) => Number(parts.find((p) => p.type === t)?.value);
+    const local = Date.UTC(get('year'), get('month') - 1, get('day'), get('hour'), get('minute'));
+    return Math.round((local - instant.getTime()) / 60000);
+  };
+  const premier = new Date(minuitUtc.getTime() - decalageMinutes(minuitUtc) * 60000);
+  return new Date(minuitUtc.getTime() - decalageMinutes(premier) * 60000);
+}
+
 export function parseDay(valeur: string | undefined | null, finDeJour = false): Date | null {
   const brut = valeur?.trim();
   if (!brut) return null;
-  const date = estDateSeule(brut) ? new Date(`${brut}T00:00:00.000Z`) : new Date(brut);
+  // Une date seule désigne une JOURNÉE DE TUNIS (Africa/Tunis), pas une
+  // journée UTC : sinon tout ce qui se passe entre 00:00 et 01:00 heure locale
+  // serait compté la veille.
+  if (estDateSeule(brut)) {
+    const debut = debutJourneeTunis(brut);
+    if (!debut) return null;
+    return finDeJour ? new Date(debut.getTime() + 24 * 3600 * 1000) : debut;
+  }
+  const date = new Date(brut);
   if (Number.isNaN(date.getTime())) return null;
-  if (finDeJour && estDateSeule(brut)) date.setUTCDate(date.getUTCDate() + 1);
   return date;
 }
 

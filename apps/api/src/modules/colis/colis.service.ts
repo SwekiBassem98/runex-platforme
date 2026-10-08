@@ -23,6 +23,7 @@ import {
   PackageSize,
   RoleType,
   canTransition,
+  isTerminalStatus,
   isLockedForEditing,
   isFullyEditableByShipper,
   isRestrictedForShipper,
@@ -43,6 +44,9 @@ import type {
 } from '@logixpress/types';
 import { getPrisma } from '../../common/database/prisma-context';
 import { cashService, toDecimal } from '../payments/cash.service';
+import { runsheetsService } from '../runsheets/runsheets.service';
+import { periode } from '../../common/dates/periode';
+import { nextCustomerCode, nextReturnNumber } from '../../common/database/numbering';
 import { toPackageDto, PACKAGE_INCLUDE, type PackageWithRelations } from '../../common/database/mappers';
 import { auditService } from '../../common/audit/audit.service';
 import { notificationService } from '../../common/notifications/notification.service';
@@ -150,6 +154,26 @@ const MAX_DELIVERY_ATTEMPTS = 3;
  * l'encaissé et le repris s'additionnent exactement. Arrondir avant d'écrire
  * est donc la condition pour que l'égalité tienne.
  */
+/** Date facultative saisie par le livreur ; une valeur illisible est refusée. */
+function parseOptionalDate(value: unknown, label: string): Date | null {
+  if (value === undefined || value === null || value === '') return null;
+  const date = new Date(String(value));
+  if (Number.isNaN(date.getTime())) {
+    throw new BusinessRuleError(`Le champ « ${label} » n'est pas une date valide.`, 400);
+  }
+  return date;
+}
+
+/** Statuts où un colis est entre les mains d'un livreur ou en transfert : pas de réaffectation. */
+const NOT_REASSIGNABLE: PackageStatus[] = [
+  PackageStatus.EN_COURS_LIVRAISON,
+  PackageStatus.LIVRAISON_PARTIELLE,
+  PackageStatus.EN_LOT_INTER_DEPOT,
+  PackageStatus.EN_TRANSIT_INTER_DEPOT,
+  PackageStatus.EN_RUNSHEET_RETOUR,
+  PackageStatus.RETOUR_DEPOT,
+];
+
 function round3(value: number): number {
   return Math.round((value + Number.EPSILON) * 1000) / 1000;
 }
@@ -204,8 +228,13 @@ export { BusinessRuleError } from '../../common/errors/api-error';
  * avec un message qui parle du colis et non de la machine à états.
  */
 function assertDriverOwnsPackage(pkg: { assignedDriverId: string | null }, user: DriverActor): void {
-  if (user.role !== RoleType.LIVREUR) return;
-  if (!pkg.assignedDriverId || pkg.assignedDriverId !== user.driverId) {
+  if (user.role === RoleType.ADMIN || user.role === RoleType.GESTIONNAIRE) return;
+  if (user.role !== RoleType.LIVREUR) {
+    // Défense en profondeur : la route l'interdit déjà. Un expéditeur ou un
+    // autre profil ne déclare jamais un événement de livraison.
+    throw new BusinessRuleError("Action réservée au livreur affecté ou à l'exploitation.", 403);
+  }
+  if (!user.driverId || !pkg.assignedDriverId || pkg.assignedDriverId !== user.driverId) {
     throw new BusinessRuleError("Ce colis n'est pas affecté à ce livreur.", 403);
   }
 }
@@ -290,11 +319,10 @@ export class ColisService {
       }
     }
     if (params.date) {
-      const start = new Date(params.date);
-      start.setHours(0, 0, 0, 0);
-      const end = new Date(start);
-      end.setDate(end.getDate() + 1);
-      and.push({ createdAt: { gte: start, lt: end } });
+      // Journée de Tunis, indépendante du fuseau du serveur (UTC en conteneur).
+      const range = periode(params.date, params.date);
+      if (range) and.push({ createdAt: range });
+      else and.push({ id: '00000000-0000-0000-0000-000000000000' });
     }
 
     if (and.length > 0) where.AND = and;
@@ -337,6 +365,9 @@ export class ColisService {
           packageIdentifierWhere(idOrTracking),
           ...(scope?.shipperId ? [{ shipperId: scope.shipperId }] : []),
           ...(scope?.assignedDriverId ? [{ assignedDriverId: scope.assignedDriverId }] : []),
+          ...(scope?.depositId
+            ? [{ OR: [{ currentDepositId: scope.depositId }, { destinationDepositId: scope.depositId }] }]
+            : []),
         ],
       },
       include: PACKAGE_INCLUDE,
@@ -388,6 +419,8 @@ export class ColisService {
       note?: string;
       auditAction?: string;
       data?: Prisma.PackageUncheckedUpdateInput;
+      /** Transaction de l'appelant : la notification est alors à sa charge, après validation. */
+      client?: Prisma.TransactionClient;
     },
     options: { allowSameStatus?: boolean } = {}
   ): Promise<void> {
@@ -413,31 +446,65 @@ export class ColisService {
       data: context.data,
       auditAction: context.auditAction,
       allowSameStatus: options.allowSameStatus,
+      client: context.client,
     };
     await packageWorkflowService.transition(command);
-
-    // Toute transition passe ici, et nulle part ailleurs : c'est donc le seul
-    // endroit d'où l'on peut être sûr que l'événement « le statut a changé »
-    // accompanye réellement l'écriture. Le contenir dans la machine à états
-    // aurait été plus strict, mais la machine ignore qui regarde : la
-    // notification, elle, a des destinataires.
-    if (to !== undefined && options.allowSameStatus !== true) {
-      const fresh = await this.prisma.package.findUnique({
-        where: { id: packageId },
-        select: { trackingNumber: true },
-      });
-      if (fresh) {
-        await notificationDispatcher.notify({
-          event: NotificationEvent.DELIVERY_STATUS_CHANGED,
-          title: 'Statut de livraison modifié',
-          content: `${context.actorName} a porté le colis #${fresh.trackingNumber} au statut « ${packageStatusLabel(to)} ».`,
-          relatedEntity: 'PACKAGE',
-          relatedEntityId: packageId,
-          packageId,
-          actorUserId: context.actorId ?? null,
-        });
-      }
+    if (context.client) return;
+    if (options.allowSameStatus !== true) {
+      await this.notifyStatusChanged(packageId, to, context.actorName, context.actorId);
     }
+  }
+
+  /**
+   * Notification « statut modifié », envoyée une fois l'écriture validée.
+   *
+   * Elle n'est jamais émise depuis l'intérieur d'une transaction : un échec de
+   * diffusion ne doit pas annuler un geste métier, et un geste annulé ne doit
+   * pas avoir été annoncé.
+   */
+  private async notifyStatusChanged(
+    packageId: string,
+    to: PackageStatus,
+    actorName: string,
+    actorId?: string
+  ): Promise<void> {
+    const fresh = await this.prisma.package.findUnique({
+      where: { id: packageId },
+      select: { trackingNumber: true },
+    });
+    if (!fresh) return;
+    await notificationDispatcher.notify({
+      event: NotificationEvent.DELIVERY_STATUS_CHANGED,
+      title: 'Statut de livraison modifié',
+      content: `${actorName} a porté le colis #${fresh.trackingNumber} au statut « ${packageStatusLabel(to)} ».`,
+      relatedEntity: 'PACKAGE',
+      relatedEntityId: packageId,
+      packageId,
+      actorUserId: actorId ?? null,
+    });
+  }
+
+  /**
+   * Livreur au titre duquel un événement de livraison est enregistré.
+   *
+   * Le livreur agit pour lui-même ; l'exploitation agit pour le livreur affecté
+   * au colis. Un colis confié à personne ne peut pas être « livré » : l'argent
+   * encaissé n'aurait aucun porteur.
+   */
+  private async assertTransitionPossible(packageId: string, to: PackageStatus): Promise<void> {
+    const verdict = await packageWorkflowService.check(packageId, to);
+    if (!verdict.allowed) throw new BusinessRuleError(verdict.reason ?? 'Transition interdite.', 409);
+  }
+
+  private fieldDriverId(record: { assignedDriverId: string | null }, user: DriverActor): string {
+    const driverId = user.role === RoleType.LIVREUR ? user.driverId : record.assignedDriverId;
+    if (!driverId) {
+      throw new BusinessRuleError(
+        "Ce colis n'est affecté à aucun livreur : affectez-le avant d'enregistrer un événement de livraison.",
+        409
+      );
+    }
+    return driverId;
   }
 
   /** Dépôt principal, utilisé comme origine et destination par défaut. */
@@ -461,49 +528,54 @@ export class ColisService {
    * Le modèle relationnel exige un client référencé : on réconcilie donc par
    * téléphone, qui est l'identifiant naturel chez un expéditeur.
    */
-  private async resolveCustomer(payload: Record<string, unknown>) {
-    const name = String(payload.customerName ?? '').trim();
-    const phone = String(payload.customerPhone ?? '').trim();
+  private async resolveCustomer(tx: Prisma.TransactionClient, payload: Record<string, unknown>) {
+    const name = String(payload.customerName ?? '').trim().slice(0, 150);
+    const phone = String(payload.customerPhone ?? '').trim().slice(0, 30);
     if (!name || !phone) {
       throw new BusinessRuleError('Nom du destinataire et téléphone sont obligatoires.');
     }
+    const governorate = String(payload.governorate ?? 'Ben Arous').trim().slice(0, 50) || 'Ben Arous';
+    const delegation = String(payload.delegation ?? governorate).trim().slice(0, 100) || governorate;
+    const locality = payload.locality ? String(payload.locality).trim().slice(0, 100) : null;
+    const streetAddress =
+      String(payload.address ?? '').trim().slice(0, 255) || 'Adresse de livraison';
 
-    const existing = await this.prisma.customer.findFirst({
-      where: { primaryPhone: phone },
-      include: { addresses: { where: { isDefault: true }, take: 1 }, phones: true },
+    // Un destinataire est reconnu par son téléphone ET son nom : deux
+    // expéditeurs qui livrent le même numéro sous deux noms différents ne
+    // s'écrasent plus mutuellement le nom affiché sur leurs colis.
+    const existing = await tx.customer.findFirst({
+      where: { primaryPhone: phone, fullName: { equals: name, mode: 'insensitive' } },
+      include: { addresses: true },
     });
 
     if (existing) {
-      if (existing.fullName !== name) {
-        await this.prisma.customer.update({
-          where: { id: existing.id },
-          data: { fullName: name },
-        });
-      }
-      const address = existing.addresses[0];
-      if (address) return { customerId: existing.id, addressId: address.id };
+      // L'adresse saisie pour CE colis fait foi : une adresse identique est
+      // réutilisée, sinon une nouvelle est créée. On ne livre jamais un colis
+      // à l'ancienne adresse d'un client parce que son numéro est connu.
+      const same = existing.addresses.find(
+        (a) =>
+          a.streetAddress.trim().toLowerCase() === streetAddress.toLowerCase() &&
+          a.governorate.trim().toLowerCase() === governorate.toLowerCase() &&
+          a.delegation.trim().toLowerCase() === delegation.toLowerCase() &&
+          (a.locality ?? '').trim().toLowerCase() === (locality ?? '').toLowerCase()
+      );
+      if (same) return { customerId: existing.id, addressId: same.id };
+      const address = await tx.customerAddress.create({
+        data: { customerId: existing.id, governorate, delegation, locality, streetAddress, isDefault: false },
+      });
+      return { customerId: existing.id, addressId: address.id };
     }
 
-    const created = await this.prisma.customer.create({
+    const created = await tx.customer.create({
       data: {
-        code: `CLI-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`,
+        code: await nextCustomerCode(tx),
         fullName: name,
         primaryPhone: phone,
         phones: { create: { phoneNumber: phone, label: 'Personnel' } },
       },
-      include: { addresses: true },
     });
-
-    const governorate = String(payload.governorate ?? 'Ben Arous');
-    const address = await this.prisma.customerAddress.create({
-      data: {
-        customerId: created.id,
-        governorate,
-        delegation: String(payload.delegation ?? governorate),
-        locality: payload.locality ? String(payload.locality) : null,
-        streetAddress: String(payload.address ?? 'Adresse de livraison'),
-        isDefault: true,
-      },
+    const address = await tx.customerAddress.create({
+      data: { customerId: created.id, governorate, delegation, locality, streetAddress, isDefault: true },
     });
 
     return { customerId: created.id, addressId: address.id };
@@ -536,12 +608,15 @@ export class ColisService {
       where: { id: shipperId },
       include: { config: true },
     });
-    if (!shipper) {
+    if (!shipper || (shipper as { deletedAt?: Date | null }).deletedAt) {
       throw new BusinessRuleError('Expéditeur introuvable.', 404);
+    }
+    if (shipper.isActive === false) {
+      throw new BusinessRuleError("Ce compte expéditeur est désactivé : aucun nouveau colis ne peut être créé.", 409);
     }
 
     const deposit = await this.defaultDeposit();
-    const { customerId, addressId } = await this.resolveCustomer(payload);
+
     // Le numéro de business est tiré d'une séquence en base : c'est elle, et non
     // une vérification a posteriori, qui garantit l'unicité sous concurrence.
     const trackingNumber = await generateBusinessNumber();
@@ -555,42 +630,54 @@ export class ColisService {
     const totalPrice = Number(payload.totalPrice ?? 0);
     const pieceCount = Number(payload.pieceCount ?? 1);
 
-    const record = await this.prisma.package.create({
-      data: {
-        trackingNumber,
-        barcode,
-        shipperReference: payload.shipperReference ? String(payload.shipperReference) : null,
-        shipperId,
-        customerId,
-        customerAddressId: addressId,
-        originDepositId: deposit.id,
-        currentDepositId: deposit.id,
-        destinationDepositId: deposit.id,
-        packageType: ((payload.packageType as PackageType) ?? PackageType.NORMAL),
-        sizeCategory: ((payload.sizeCategory as PackageSize) ?? PackageSize.MOYENNE),
-        pieceCount: Number.isFinite(pieceCount) && pieceCount > 0 ? pieceCount : 1,
-        contentSummary: String(payload.contentSummary ?? 'Colis sans description'),
-        allowOpen: payload.allowOpen === true,
-        totalPrice: Number.isFinite(totalPrice) ? totalPrice : 0,
-        deliveryFee: shipper.config?.defaultDeliveryFee ?? 7,
-        shipperNotes: payload.notes ? String(payload.notes) : null,
-        items: {
-          create: {
-            description: String(payload.contentSummary ?? 'Colis sans description'),
-            quantity: Number.isFinite(pieceCount) && pieceCount > 0 ? pieceCount : 1,
+    const packageTypes = Object.values(PackageType) as string[];
+    const sizes = Object.values(PackageSize) as string[];
+    if (payload.packageType !== undefined && !packageTypes.includes(String(payload.packageType))) {
+      throw new BusinessRuleError(`Type de colis inconnu : ${String(payload.packageType)}.`, 400);
+    }
+    if (payload.sizeCategory !== undefined && !sizes.includes(String(payload.sizeCategory))) {
+      throw new BusinessRuleError(`Catégorie de taille inconnue : ${String(payload.sizeCategory)}.`, 400);
+    }
+
+    const record = await this.prisma.$transaction(async (tx) => {
+      const { customerId, addressId } = await this.resolveCustomer(tx, payload);
+      return tx.package.create({
+        data: {
+          trackingNumber,
+          barcode,
+          shipperReference: payload.shipperReference ? String(payload.shipperReference) : null,
+          shipperId,
+          customerId,
+          customerAddressId: addressId,
+          originDepositId: deposit.id,
+          currentDepositId: deposit.id,
+          destinationDepositId: deposit.id,
+          packageType: ((payload.packageType as PackageType) ?? PackageType.NORMAL),
+          sizeCategory: ((payload.sizeCategory as PackageSize) ?? PackageSize.MOYENNE),
+          pieceCount: Number.isFinite(pieceCount) && pieceCount > 0 ? pieceCount : 1,
+          contentSummary: String(payload.contentSummary ?? 'Colis sans description'),
+          allowOpen: payload.allowOpen === true,
+          totalPrice: Number.isFinite(totalPrice) ? totalPrice : 0,
+          deliveryFee: shipper.config?.defaultDeliveryFee ?? 7,
+          shipperNotes: payload.notes ? String(payload.notes) : null,
+          items: {
+            create: {
+              description: String(payload.contentSummary ?? 'Colis sans description'),
+              quantity: Number.isFinite(pieceCount) && pieceCount > 0 ? pieceCount : 1,
+            },
+          },
+          statusHistory: {
+            create: {
+              status: PackageStatus.CREE,
+              title: 'Colis créé par l\'expéditeur',
+              description: `Colis enregistré par ${user?.shipperName ?? shipper.brandName ?? shipper.companyName}`,
+              locationName: deposit.name,
+              operatorName: user?.fullName ?? 'Expéditeur',
+            },
           },
         },
-        statusHistory: {
-          create: {
-            status: PackageStatus.CREE,
-            title: 'Colis créé par l\'expéditeur',
-            description: `Colis enregistré par ${user?.shipperName ?? shipper.brandName ?? shipper.companyName}`,
-            locationName: deposit.name,
-            operatorName: user?.fullName ?? 'Expéditeur',
-          },
-        },
-      },
-      include: PACKAGE_INCLUDE,
+        include: PACKAGE_INCLUDE,
+      });
     });
 
     // L'exploitation prend connaissance du nouveau colis. L'expéditeur
@@ -690,6 +777,28 @@ export class ColisService {
     // pas la même réaction. Les suivre séparément permet surtout de n'avertir
     // que de ce qui change réellement la conduite du livreur.
 
+    // Validation des saisies avant toute écriture : un montant illisible ou
+    // négatif, un nombre de pièces non entier, une énumération inconnue sont
+    // refusés plutôt que d'écrire NaN ou de laisser la base répondre.
+    if (payload.totalPrice !== undefined) {
+      const amount = Number(payload.totalPrice);
+      if (!Number.isFinite(amount) || amount < 0) {
+        throw new BusinessRuleError('Le montant à encaisser doit être un nombre positif ou nul.', 400);
+      }
+    }
+    if (payload.pieceCount !== undefined) {
+      const pieces = Number(payload.pieceCount);
+      if (!Number.isInteger(pieces) || pieces < 1) {
+        throw new BusinessRuleError('Le nombre de pièces doit être un entier positif.', 400);
+      }
+    }
+    if (payload.sizeCategory !== undefined && !(Object.values(PackageSize) as string[]).includes(String(payload.sizeCategory))) {
+      throw new BusinessRuleError(`Catégorie de taille inconnue : ${String(payload.sizeCategory)}.`, 400);
+    }
+    if (payload.packageType !== undefined && !(Object.values(PackageType) as string[]).includes(String(payload.packageType))) {
+      throw new BusinessRuleError(`Type de colis inconnu : ${String(payload.packageType)}.`, 400);
+    }
+
     // Un changement de montant est le cas de référence : il change ce que le
     // livreur a à demander au client, donc ce qu'il doit savoir avant de
     // passer à la caisse.
@@ -735,24 +844,24 @@ export class ColisService {
     if (payload.shipperNotes !== undefined) data.shipperNotes = String(payload.shipperNotes);
 
     // Les coordonnées du destinataire sont portées par le client et son adresse.
-    let addressId: string | undefined;
-    if (payload.customerName !== undefined || payload.customerPhone !== undefined || payload.address !== undefined) {
-      const { customerId, addressId: resolvedAddressId } = await this.resolveCustomer({
-        customerName: payload.customerName ?? record.customer.fullName,
-        customerPhone: payload.customerPhone ?? record.customer.primaryPhone,
-        address: payload.address ?? record.customerAddress.streetAddress,
-        governorate: payload.governorate ?? record.customerAddress.governorate,
-        delegation: payload.delegation ?? record.customerAddress.delegation,
+    const updated = await this.prisma.$transaction(async (tx) => {
+      if (addressChanged) {
+        const { customerId, addressId } = await this.resolveCustomer(tx, {
+          customerName: payload.customerName ?? record.customer.fullName,
+          customerPhone: payload.customerPhone ?? record.customer.primaryPhone,
+          address: payload.address ?? record.customerAddress.streetAddress,
+          governorate: payload.governorate ?? record.customerAddress.governorate,
+          delegation: payload.delegation ?? record.customerAddress.delegation,
+          locality: payload.locality ?? record.customerAddress.locality,
+        });
+        data.customerId = customerId;
+        data.customerAddressId = addressId;
+      }
+      return tx.package.update({
+        where: { id: record.id },
+        data,
+        include: PACKAGE_INCLUDE,
       });
-      data.customerId = customerId;
-      addressId = resolvedAddressId;
-    }
-    if (addressId) data.customerAddressId = addressId;
-
-    const updated = await this.prisma.package.update({
-      where: { id: record.id },
-      data,
-      include: PACKAGE_INCLUDE,
     });
 
     // Journal d'audit : obligatoire dès qu'un champ critique change.
@@ -973,21 +1082,23 @@ export class ColisService {
     user: { id?: string; fullName: string; role: RoleType }
   ): Promise<PackageDto> {
     const record = await this.findRecord(identifier);
+    const status = record.status as PackageStatus;
 
-    if (record.status === PackageStatus.ANNULE) {
-      throw new BusinessRuleError("Impossible d'affecter un colis annulé.", 409);
-    }
-    if (record.status === PackageStatus.LIVRE) {
-      throw new BusinessRuleError('Ce colis est déjà livré.', 409);
+    if (isTerminalStatus(status) || NOT_REASSIGNABLE.includes(status)) {
+      throw new BusinessRuleError(
+        `Impossible d'affecter ce colis : il est au statut « ${packageStatusLabel(status)} ».`,
+        409
+      );
     }
 
     const driver = await this.resolveDriver(payload);
-    const runsheet = payload.runsheetNumber
-      ? await this.prisma.runsheet.findUnique({ where: { runsheetNumber: payload.runsheetNumber } })
+    const runsheetNumber = payload.runsheetNumber ? String(payload.runsheetNumber).trim() : '';
+    const runsheet = runsheetNumber
+      ? await this.prisma.runsheet.findUnique({ where: { runsheetNumber } })
       : null;
 
-    if (payload.runsheetNumber && !runsheet) {
-      throw new BusinessRuleError(`Tournée ${payload.runsheetNumber} introuvable.`, 404);
+    if (runsheetNumber && !runsheet) {
+      throw new BusinessRuleError(`Tournée ${runsheetNumber} introuvable.`, 404);
     }
     if (runsheet && runsheet.driverId !== driver.id) {
       throw new BusinessRuleError(
@@ -1002,48 +1113,58 @@ export class ColisService {
       );
     }
 
-    const data: Prisma.PackageUncheckedUpdateInput = {
-      assignedDriverId: driver.id,
-      currentRunsheetId: runsheet?.id ?? null,
-    };
-
-    // Un colis reçu au dépôt entre officiellement en tournée.
-    const shouldAffect =
-      record.status === PackageStatus.RECU_DEPOT ||
-      record.status === PackageStatus.CREE ||
-      record.status === PackageStatus.RAMASSAGE_PROGRAMME ||
-      record.status === PackageStatus.RAMASSE;
-
-    if (shouldAffect) {
-      await this.applyStatusChange(record.id, PackageStatus.AFFECTE_RUNSHEET, {
-        actorName: user.fullName,
-        actorId: user.id,
-        role: user.role,
-        title: `Colis affecté à ${driver.user.fullName}`,
-        description: runsheet
-          ? `Intégré à la tournée ${runsheet.runsheetNumber}`
-          : 'Affecté sans tournée',
-        locationName: packageLocation(record),
-        runsheetNumber: runsheet?.runsheetNumber,
-        auditAction: 'ASSIGN_DRIVER',
-        data,
+    // Un colis déjà chargé dans une tournée ouverte d'un autre livreur doit en
+    // être retiré d'abord : sinon il figurerait dans la tournée de A en étant
+    // affecté à B, et aucun des deux ne pourrait le livrer proprement.
+    if (record.currentRunsheet && record.currentRunsheetId !== runsheet?.id) {
+      const current = await this.prisma.runsheet.findUnique({
+        where: { id: record.currentRunsheetId! },
+        select: { runsheetNumber: true, status: true, driverId: true },
       });
-    } else {
-      // Réaffectation : le statut ne bouge pas, l'événement n'est donc pas
-      // une transition. Il est écrit directement, avec le statut courant.
-      await this.prisma.package.update({ where: { id: record.id }, data });
-      await this.prisma.packageTimeline.create({
-        data: {
-          packageId: record.id,
-          status: record.status,
-          title: `Colis réaffecté à ${driver.user.fullName}`,
-          description: `Affectation modifiée depuis le statut ${record.status}`,
-          locationName: packageLocation(record),
-          runsheetNumber: runsheet?.runsheetNumber ?? null,
-          operatorName: user.fullName,
-        },
-      });
+      if (current && !['RETOUR_DEPOT', 'CLOTUREE_CONFORME', 'CLOTUREE_DEFICIT', 'ANNULEE'].includes(current.status)) {
+        if (current.driverId !== driver.id || runsheet) {
+          throw new BusinessRuleError(
+            `Le colis est dans la tournée ${current.runsheetNumber} : retirez-le de cette tournée avant de le réaffecter.`,
+            409
+          );
+        }
+      }
     }
+
+    const location = packageLocation(record);
+    await this.prisma.$transaction(async (tx) => {
+      if (record.assignedDriverId !== driver.id) {
+        await tx.package.update({ where: { id: record.id }, data: { assignedDriverId: driver.id } });
+      }
+      if (runsheet) {
+        await runsheetsService.attachPackage(tx, runsheet, record.id, { id: user.id, fullName: user.fullName });
+        return;
+      }
+      if (status !== PackageStatus.AFFECTE_RUNSHEET && canTransition(status, PackageStatus.AFFECTE_RUNSHEET)) {
+        await this.applyStatusChange(record.id, PackageStatus.AFFECTE_RUNSHEET, {
+          actorName: user.fullName,
+          actorId: user.id,
+          role: user.role,
+          title: `Colis affecté à ${driver.user.fullName}`,
+          description: 'Affecté sans tournée',
+          locationName: location,
+          auditAction: 'ASSIGN_DRIVER',
+          data: { assignedDriverId: driver.id },
+          client: tx,
+        });
+        return;
+      }
+      // Réaffectation sans changement de statut : un événement daté, tracé.
+      await packageWorkflowService.annotate({
+        packageId: record.id,
+        actor: { id: user.id, fullName: user.fullName, role: user.role },
+        title: `Colis réaffecté à ${driver.user.fullName}`,
+        auditAction: 'ASSIGN_DRIVER',
+        location,
+        newValues: { assignedDriverId: driver.id, previousDriverId: record.assignedDriverId },
+        client: tx,
+      });
+    });
 
     // Le livreur reçoit sa nouvelle affectation.
     await notificationDispatcher.notify({
@@ -1057,21 +1178,27 @@ export class ColisService {
     });
 
     // Un colis qui rejoint une tournée est aussi une information pour celui qui
-    // suit le flux des tournées : sans cet événement, une tournée se remplit
-    // sans que le poste de commandement ne le voie passer.
+    // suit le flux des tournées.
     if (runsheet) {
-      await notificationDispatcher.notify({
-        event: NotificationEvent.RUNSHEET_ASSIGNED,
-        title: 'Colis intégré à une tournée',
-        content: `Le colis #${record.trackingNumber} a rejoint la tournée ${runsheet.runsheetNumber} de ${driver.user.fullName}.`,
-        relatedEntity: 'RUNSHEET',
-        relatedEntityId: runsheet.id,
-        runsheetId: runsheet.id,
-        userIds: [driver.userId],
-      });
+      await notificationDispatcher
+        .notify({
+          event: NotificationEvent.RUNSHEET_ASSIGNED,
+          title: 'Colis intégré à une tournée',
+          content: `Le colis #${record.trackingNumber} a rejoint la tournée ${runsheet.runsheetNumber} de ${driver.user.fullName}.`,
+          relatedEntity: 'RUNSHEET',
+          relatedEntityId: runsheet.id,
+          runsheetId: runsheet.id,
+          userIds: [driver.userId],
+        })
+        .catch(() => undefined);
     }
 
     const fresh = await this.findRecord(record.id);
+    // La transition a eu lieu dans la transaction, qui ne notifie pas : on
+    // prévient l'exploitation et l'expéditeur maintenant qu'elle est validée.
+    if ((fresh.status as PackageStatus) !== status) {
+      await this.notifyStatusChanged(record.id, fresh.status as PackageStatus, user.fullName, user.id);
+    }
     return toPackageDto(fresh);
   }
 
@@ -1140,6 +1267,11 @@ export class ColisService {
 
   /**
    * Livraison conforme : le montant est encaissé auprès du client.
+   *
+   * Tout ce qu'implique une livraison — statut, chronologie, audit, tentative,
+   * articles, caisse du livreur et encaissement COD — est écrit dans UNE
+   * transaction : soit tout est enregistré, soit rien. Les notifications
+   * partent ensuite.
    */
   async markDelivered(
     identifier: string,
@@ -1154,6 +1286,8 @@ export class ColisService {
   ): Promise<PackageDto> {
     const record = await this.findRecord(identifier);
     assertDriverOwnsPackage(record, user);
+    await this.assertTransitionPossible(record.id, PackageStatus.LIVRE);
+    const driverId = this.fieldDriverId(record, user);
 
     const collected =
       payload.collectedAmount !== undefined
@@ -1164,12 +1298,7 @@ export class ColisService {
       throw new BusinessRuleError('Le montant encaissé ne peut pas être négatif.');
     }
 
-    // Les règles de la caisse sont vérifiées AVANT de changer le statut du
-    // colis. Dans l'autre ordre, un refus de la caisse (un chèque sans sa
-    // référence, un moyen inconnu) laisserait le colis « livré » sans
-    // encaissement — et le livreur ne pourrait plus rien corriger, le colis
-    // n'étant plus livrable. C'est le genre de perte que personne ne
-    // rattrape ensuite.
+    // Les règles de la caisse sont vérifiées AVANT toute écriture.
     cashService.assertCollectable({
       method: payload.paymentMethod,
       amountExpected: new Prisma.Decimal(record.totalPrice),
@@ -1177,65 +1306,61 @@ export class ColisService {
       transactionRef: payload.transactionRef,
     });
 
-    await this.applyStatusChange(record.id, PackageStatus.LIVRE, {
-      actorName: user.fullName,
-      actorId: user.id,
-      role: user.role,
-      driverId: user.driverId,
-      title: 'Colis livré et paiement encaissé',
-      locationName: `${record.customerAddress.delegation}, ${record.customerAddress.governorate}`,
-      collectedAmount: Number(collected.toFixed(3)),
-      auditAction: 'DELIVERY_DONE',
-      data: {
-        collectedAmount: collected,
-        driverNotes: payload.driverNote ?? record.driverNotes,
-        deliveredAt: new Date(),
-        lastDeliveryAttemptAt: new Date(),
-      },
-    });
+    const now = new Date();
+    const notifyCash = await this.prisma.$transaction(async (tx) => {
+      await this.applyStatusChange(record.id, PackageStatus.LIVRE, {
+        actorName: user.fullName,
+        actorId: user.id,
+        role: user.role,
+        driverId: user.driverId,
+        title: 'Colis livré et paiement encaissé',
+        locationName: `${record.customerAddress.delegation}, ${record.customerAddress.governorate}`,
+        collectedAmount: Number(collected.toFixed(3)),
+        auditAction: 'DELIVERY_DONE',
+        data: {
+          collectedAmount: collected,
+          driverNotes: payload.driverNote ?? record.driverNotes,
+          deliveredAt: now,
+          lastDeliveryAttemptAt: now,
+        },
+        client: tx,
+      });
 
-    // La tentative de livraison et la caisse du livreur sont mises à jour.
-    await this.recordAttempt(record, user, 'REUSSIE', {
-      comment: payload.driverNote,
-      callDurationSeconds: payload.callDurationSeconds ?? 60,
-    });
+      await this.recordAttempt(tx, record, driverId, 'REUSSIE', {
+        comment: payload.driverNote,
+        callDurationSeconds: payload.callDurationSeconds ?? 60,
+      });
 
-    await this.prisma.$transaction([
-      this.prisma.packageItem.updateMany({
+      await tx.packageItem.updateMany({
         where: { packageId: record.id },
         data: { isDelivered: true, isReturned: false },
-      }),
-      this.prisma.driver.update({
-        where: { id: user.driverId! },
+      });
+      // L'argent est dans les mains du livreur affecté, même quand
+      // l'exploitation enregistre la livraison depuis le back-office.
+      await tx.driver.update({
+        where: { id: driverId },
         data: { currentBalance: { increment: collected } },
-      }),
-    ]);
+      });
 
-    // L'encaissement entre dans la caisse centrale. Il est créé ici, à
-    // l'instant où l'argent change de mains, et non recalculé plus tard :
-    // un rapport de caisse doit dire ce qui est entré, pas ce qui aurait
-    // dû entrer. Même un colis intégralement payé laisse une trace, sinon
-    // les tournées à zéro disparaissent du rapprochement.
-    await cashService.recordCollection({
-      packageId: record.id,
-      shipperId: record.shipperId,
-      runsheetId: record.currentRunsheetId,
-      driverId: user.driverId,
-      driverUserId: user.id ?? null,
-      amountExpected: new Prisma.Decimal(record.totalPrice),
-      amountCollected: collected,
-      deliveryFee: new Prisma.Decimal(record.deliveryFee),
-      method: payload.paymentMethod,
-      transactionRef: payload.transactionRef ?? null,
+      return cashService.recordCollection(
+        {
+          packageId: record.id,
+          shipperId: record.shipperId,
+          runsheetId: record.currentRunsheetId,
+          driverId,
+          driverUserId: user.id ?? null,
+          amountExpected: new Prisma.Decimal(record.totalPrice),
+          amountCollected: collected,
+          deliveryFee: new Prisma.Decimal(record.deliveryFee),
+          method: payload.paymentMethod,
+          transactionRef: payload.transactionRef ?? null,
+        },
+        tx
+      );
     });
 
-    await notificationService.notify({
-      type: 'COLIS_LIVRE',
-      title: 'Colis livré',
-      content: `${user.fullName} a livré le colis #${record.trackingNumber} (${collected.toFixed(3)} DT encaissés).`,
-      relatedEntity: 'PACKAGE',
-      relatedEntityId: record.id,
-    });
+    await this.notifyStatusChanged(record.id, PackageStatus.LIVRE, user.fullName, user.id);
+    await notifyCash();
 
     const fresh = await this.findRecord(record.id);
     return toPackageDto(fresh);
@@ -1244,12 +1369,8 @@ export class ColisService {
   /**
    * Livraison partielle : une part est livrée et payée, le reste est repris.
    *
-   * C'est la transition la plus lourde en données, et c'est volontaire. Un
-   * « partiel » sans dire ce qui a été remis, ce qui repart, et ce qui a été
-   * payé ne permet ni de clôturer le dossier ni de rapprocher les comptes :
-   * le montant restant ne serait qu'une différence calculée après coup, donc
-   * contestable. Les deux descriptions et les deux montants sont donc
-   * exigés, et leur bilan doit se refermer sur le montant dû.
+   * Les deux descriptions et les deux montants sont exigés, et leur bilan doit
+   * se refermer sur le montant dû. Toutes les écritures sont atomiques.
    */
   async markPartialDelivery(
     identifier: string,
@@ -1258,132 +1379,125 @@ export class ColisService {
   ): Promise<PackageDto> {
     const record = await this.findRecord(identifier);
     assertDriverOwnsPackage(record, user);
+    await this.assertTransitionPossible(record.id, PackageStatus.LIVRAISON_PARTIELLE);
+    const driverId = this.fieldDriverId(record, user);
 
-    if (payload.deliveredPieces <= 0 || payload.deliveredPieces >= record.pieceCount) {
+    const deliveredPieces = Number(payload.deliveredPieces);
+    if (!Number.isInteger(deliveredPieces) || deliveredPieces <= 0 || deliveredPieces >= record.pieceCount) {
       throw new BusinessRuleError(
-        `Le nombre de pièces livrées doit être compris entre 1 et ${record.pieceCount - 1}.`
+        `Le nombre de pièces livrées doit être un entier compris entre 1 et ${Math.max(1, record.pieceCount - 1)}.`
       );
     }
+    if (!Number.isFinite(Number(payload.collectedAmount))) {
+      throw new BusinessRuleError('Le montant encaissé doit être un nombre.');
+    }
 
-    const collected = round3(payload.collectedAmount);
+    const collected = round3(Number(payload.collectedAmount));
     const due = Number(record.totalPrice);
-    // Le montant repris est le reliquat du montant dû. Le client peut le
-    // déclarer ; s'il le fait à tort, le bilan ne se referme pas et la
-    // transition est refusée. Le demander au livreur ne serait qu'une façon
-    // de lui faire refaire un calcul que le système peut faire exact.
     const returned =
-      payload.returnedAmount !== undefined ? round3(payload.returnedAmount) : round3(due - collected);
+      payload.returnedAmount !== undefined ? round3(Number(payload.returnedAmount)) : round3(due - collected);
 
-    // Les deux descriptions ne sont pas garnies par défaut. Écrire « 1 pièce
-    // livrée sur 3 » ne décrit rien : c'est la pièce comptée qu'on vient de
-    // donner, pas ce que le client a reçu. Si le contenu n'est pas dit, la
-    // livraison partielle n'est pas documentée, et le service domaine refuse
-    // la transition en disant ce qui manque.
     const deliveredDescription = payload.deliveredDescription?.trim() ?? '';
     const returnedDescription = payload.returnedDescription?.trim() ?? '';
-
-    // Les quantités sont dérivées de la composition du colis, pas du client :
-    // ce qui n'est pas livré est nécessairement repris. Les écrire
-    // explicitement plutôt que de les laisser implicite, c'est ce qui permet
-    // au dépôt de comparer le PhysicalCheck au dossier sans recomputer.
-    const deliveredPieces = Number(payload.deliveredPieces);
     const returnedPieces = record.pieceCount - deliveredPieces;
+    const collectedDecimal = new Prisma.Decimal(collected.toFixed(3));
 
-    // Même règle que pour la livraison complète : la caisse est prévenue avant
-    // la transition, pour qu'un refus ne laisse pas une livraison partielle
-    // enregistrée sans l'argent qui l'a produite.
     cashService.assertCollectable({
       method: payload.paymentMethod,
       amountExpected: new Prisma.Decimal(record.totalPrice),
-      amountCollected: new Prisma.Decimal(collected.toFixed(3)),
+      amountCollected: collectedDecimal,
       transactionRef: payload.transactionRef,
     });
 
-    await this.applyStatusChange(record.id, PackageStatus.LIVRAISON_PARTIELLE, {
-      actorName: user.fullName,
-      actorId: user.id,
-      role: user.role,
-      driverId: user.driverId,
-      title: `Livraison partielle : ${deliveredPieces}/${record.pieceCount} pièces`,
-      reason: payload.reason,
-      locationName: `${record.customerAddress.delegation}, ${record.customerAddress.governorate}`,
-      deliveredContent: deliveredDescription,
-      returnedContent: returnedDescription,
-      collectedAmount: collected,
-      returnedAmount: returned,
-      auditAction: 'DELIVERY_PARTIAL',
-      data: {
+    const now = new Date();
+    const notifyCash = await this.prisma.$transaction(async (tx) => {
+      await this.applyStatusChange(record.id, PackageStatus.LIVRAISON_PARTIELLE, {
+        actorName: user.fullName,
+        actorId: user.id,
+        role: user.role,
+        driverId: user.driverId,
+        title: `Livraison partielle : ${deliveredPieces}/${record.pieceCount} pièces`,
+        reason: payload.reason,
+        locationName: `${record.customerAddress.delegation}, ${record.customerAddress.governorate}`,
+        deliveredContent: deliveredDescription,
+        returnedContent: returnedDescription,
         collectedAmount: collected,
-        driverNotes: payload.driverNote ?? payload.reason,
-        deliveredAt: new Date(),
-        lastDeliveryAttemptAt: new Date(),
-      },
+        returnedAmount: returned,
+        auditAction: 'DELIVERY_PARTIAL',
+        data: {
+          collectedAmount: collectedDecimal,
+          driverNotes: payload.driverNote ?? payload.reason,
+          deliveredAt: now,
+          lastDeliveryAttemptAt: now,
+        },
+        client: tx,
+      });
+
+      await tx.partialDelivery.upsert({
+        where: { packageId: record.id },
+        create: {
+          packageId: record.id,
+          deliveredDescription,
+          returnedDescription,
+          deliveredPieces,
+          returnedPieces,
+          originalAmount: record.totalPrice,
+          amountCollected: collected,
+          amountReturned: returned,
+          reason: payload.reason,
+          validatedByDriverId: driverId,
+        },
+        update: {
+          deliveredDescription,
+          returnedDescription,
+          deliveredPieces,
+          returnedPieces,
+          amountCollected: collected,
+          amountReturned: returned,
+          reason: payload.reason,
+          validatedByDriverId: driverId,
+          validatedAt: now,
+        },
+      });
+
+      await tx.packageItem.updateMany({
+        where: { packageId: record.id },
+        data: { isDelivered: false, isReturned: false },
+      });
+
+      await this.recordAttempt(tx, record, driverId, 'LIVRAISON_PARTIELLE', { comment: payload.reason });
+
+      // La part encaissée est dans les mains du livreur.
+      await tx.driver.update({
+        where: { id: driverId },
+        data: { currentBalance: { increment: collectedDecimal } },
+      });
+
+      return cashService.recordCollection(
+        {
+          packageId: record.id,
+          shipperId: record.shipperId,
+          runsheetId: record.currentRunsheetId,
+          driverId,
+          driverUserId: user.id ?? null,
+          amountExpected: new Prisma.Decimal(record.totalPrice),
+          amountCollected: collectedDecimal,
+          deliveryFee: new Prisma.Decimal(record.deliveryFee),
+          method: payload.paymentMethod,
+          transactionRef: payload.transactionRef ?? null,
+        },
+        tx
+      );
     });
 
-    await this.prisma.partialDelivery.upsert({
-      where: { packageId: record.id },
-      create: {
-        packageId: record.id,
-        deliveredDescription,
-        returnedDescription,
-        deliveredPieces,
-        returnedPieces,
-        originalAmount: record.totalPrice,
-        amountCollected: collected,
-        amountReturned: returned,
-        reason: payload.reason,
-        validatedByDriverId: user.driverId!,
-      },
-      update: {
-        deliveredDescription,
-        returnedDescription,
-        deliveredPieces,
-        returnedPieces,
-        amountCollected: collected,
-        amountReturned: returned,
-        reason: payload.reason,
-        validatedByDriverId: user.driverId!,
-        validatedAt: new Date(),
-      },
-    });
-
-    // Les pièces livrées sont sorties du stock, les autres reprises.
-    await this.prisma.packageItem.updateMany({
-      where: { packageId: record.id },
-      data: { isDelivered: false, isReturned: false },
-    });
-
-    await this.recordAttempt(record, user, 'LIVRAISON_PARTIELLE', {
-      comment: payload.reason,
-    });
-
-    // L'encaissement porte la part réellement livrée : c'est elle qui est
-    // due, le reste repart avec le colis et sera restitué. C'est aussi ce
-    // qui laisse la facture se refermer — 40 DT encaissés sur 58, 18 en
-    // route, et un écart que la caisse verra si les deux ne se rejoignent
-    // jamais.
-    await cashService.recordCollection({
-      packageId: record.id,
-      shipperId: record.shipperId,
-      runsheetId: record.currentRunsheetId,
-      driverId: user.driverId,
-      driverUserId: user.id ?? null,
-      amountExpected: new Prisma.Decimal(record.totalPrice),
-      amountCollected: new Prisma.Decimal(collected.toFixed(3)),
-      deliveryFee: new Prisma.Decimal(record.deliveryFee),
-      method: payload.paymentMethod,
-      transactionRef: payload.transactionRef ?? null,
-    });
-
-    // Une livraison partielle laisse le colis à moitié traité : l'expéditeur doit
-    // savoir ce qui est parti et ce qui repart avec le livreur, faute de quoi
-    // il réclamera la totalité.
+    await this.notifyStatusChanged(record.id, PackageStatus.LIVRAISON_PARTIELLE, user.fullName, user.id);
+    await notifyCash();
     await notificationDispatcher.notify({
       event: NotificationEvent.PARTIAL_DELIVERY,
       title: 'Livraison partielle',
       content:
         `Le colis #${record.trackingNumber} a été livré à ${deliveredPieces}/${record.pieceCount} ` +
-        `pièces, pour ${collected.toFixed(3)} DT encaissés sur ${Number(record.totalPrice).toFixed(3)} DT. ` +
+        `pièces, pour ${collected.toFixed(3)} DT encaissés sur ${due.toFixed(3)} DT. ` +
         `${returnedPieces} pièce(s) repart${returnedPieces > 1 ? 'ent' : ''} avec le livreur.`,
       relatedEntity: 'PACKAGE',
       relatedEntityId: record.id,
@@ -1397,6 +1511,10 @@ export class ColisService {
 
   /**
    * Échange : le client rend un article et repart avec un remplacement.
+   *
+   * Un échange a lieu au moment de la remise : le colis doit être en cours de
+   * distribution (affecté, en livraison ou reporté). Sur un colis livré,
+   * annulé ou encore au dépôt, il n'a pas de sens.
    */
   async markExchange(
     identifier: string,
@@ -1405,19 +1523,29 @@ export class ColisService {
   ): Promise<PackageDto> {
     const record = await this.findRecord(identifier);
     assertDriverOwnsPackage(record, user);
+    const driverId = this.fieldDriverId(record, user);
 
-    // L'écart financier est ici un résultat, pas une saisie facultative : un
-    // échange à valeur égale n'en a pas, un échange au rabais en a un négatif.
-    // C'est pourquoi il n'est pas exigé — mais il est toujours écrit, afin que
-    // « aucun écart » se distingue de « personne n'a rien calculé ».
-    const financialDifference = payload.financialDifference ?? 0;
+    const exchangeable: PackageStatus[] = [
+      PackageStatus.AFFECTE_RUNSHEET,
+      PackageStatus.EN_COURS_LIVRAISON,
+      PackageStatus.REPORTE,
+    ];
+    if (!exchangeable.includes(record.status as PackageStatus)) {
+      throw new BusinessRuleError(
+        `Échange impossible : le colis #${record.trackingNumber} est au statut « ${packageStatusLabel(record.status)} ». ` +
+          "Un échange se fait lors de la remise d'un colis en cours de distribution.",
+        409
+      );
+    }
+
+    const financialDifference = Number(payload.financialDifference ?? 0);
+    if (!Number.isFinite(financialDifference)) {
+      throw new BusinessRuleError("La différence financière de l'échange doit être un nombre.", 400);
+    }
     const returnedItemSummary = payload.returnedItemSummary?.trim() ?? '';
     const newBarcode = payload.newPackageBarcode?.trim() ?? '';
     const oldBarcode = payload.oldPackageBarcode?.trim() || newBarcode;
 
-    // Un échange sans article repris ni article de remplacement n'est pas un
-    // échange : sans ces deux faces, la marchandise est perdue et le client
-    // repart sans rien. Le dire vaut mieux qu'un 500 sur une saisie vide.
     const missing = [
       { value: returnedItemSummary, label: 'la description de l\'article repris' },
       { value: newBarcode, label: 'le code-barres de l\'article de remplacement' },
@@ -1430,57 +1558,56 @@ export class ColisService {
       );
     }
 
-    await this.prisma.exchangeRecord.upsert({
-      where: { packageId: record.id },
-      create: {
+    await this.prisma.$transaction(async (tx) => {
+      await tx.exchangeRecord.upsert({
+        where: { packageId: record.id },
+        create: {
+          packageId: record.id,
+          newPackageBarcode: newBarcode,
+          oldPackageBarcode: oldBarcode,
+          returnedItemSummary,
+          financialDifference,
+          driverId,
+        },
+        update: {
+          newPackageBarcode: newBarcode,
+          oldPackageBarcode: oldBarcode,
+          returnedItemSummary,
+          financialDifference,
+          driverId,
+        },
+      });
+
+      await packageWorkflowService.annotate({
         packageId: record.id,
-        newPackageBarcode: newBarcode,
-        oldPackageBarcode: oldBarcode,
-        returnedItemSummary,
-        financialDifference,
-        driverId: user.driverId ?? null,
-      },
-      update: {
-        newPackageBarcode: newBarcode,
-        oldPackageBarcode: oldBarcode,
-        returnedItemSummary,
-        financialDifference,
-        driverId: user.driverId ?? null,
-      },
-    });
+        actor: {
+          id: user.id,
+          fullName: user.fullName,
+          role: user.role,
+          driverId: user.driverId,
+        },
+        title: 'Échange marchandise',
+        auditAction: 'PACKAGE_EXCHANGE',
+        reason: `Article repris : ${returnedItemSummary}`,
+        note: payload.note,
+        deliveredContent: newBarcode,
+        returnedContent: returnedItemSummary,
+        location: `${record.customerAddress.delegation}, ${record.customerAddress.governorate}`,
+        newValues: {
+          originalPackageId: record.id,
+          oldPackageBarcode: oldBarcode,
+          newPackageBarcode: newBarcode,
+          returnedItemSummary,
+          financialDifference,
+          customerId: record.customerId,
+          customerName: record.customer.fullName,
+        },
+        client: tx,
+      });
 
-    // Un échange ne change pas le statut du colis : le colis reste en cours de
-    // livraison. Il est donc consigné par `annotate`, et non par une transition
-    // — c'est ce qui le fait figurer dans l'audit, et pas seulement dans la
-    // chronologie lue par le client.
-    await packageWorkflowService.annotate({
-      packageId: record.id,
-      actor: {
-        id: user.id,
-        fullName: user.fullName,
-        role: user.role,
-        driverId: user.driverId,
-      },
-      title: 'Échange marchandise',
-      auditAction: 'PACKAGE_EXCHANGE',
-      reason: `Article repris : ${returnedItemSummary}`,
-      note: payload.note,
-      deliveredContent: newBarcode,
-      returnedContent: returnedItemSummary,
-      location: `${record.customerAddress.delegation}, ${record.customerAddress.governorate}`,
-      newValues: {
-        originalPackageId: record.id,
-        oldPackageBarcode: oldBarcode,
-        newPackageBarcode: newBarcode,
-        returnedItemSummary,
-        financialDifference,
-        customerId: record.customerId,
-        customerName: record.customer.fullName,
-      },
-    });
-
-    await this.recordAttempt(record, user, 'REUSSIE', {
-      comment: `Échange : ${returnedItemSummary}`,
+      await this.recordAttempt(tx, record, driverId, 'REUSSIE', {
+        comment: `Échange : ${returnedItemSummary}`,
+      });
     });
 
     const fresh = await this.findRecord(record.id);
@@ -1497,59 +1624,57 @@ export class ColisService {
   ): Promise<PackageDto> {
     const record = await this.findRecord(identifier);
     assertDriverOwnsPackage(record, user);
+    await this.assertTransitionPossible(record.id, PackageStatus.REPORTE);
+    const driverId = this.fieldDriverId(record, user);
 
     const attempts = await this.prisma.deliveryAttempt.count({ where: { packageId: record.id } });
-    if (attempts >= 3) {
+    if (attempts >= MAX_DELIVERY_ATTEMPTS) {
       throw new BusinessRuleError(
         `Nombre maximal de tentatives atteint (${MAX_DELIVERY_ATTEMPTS}). Le colis doit être retourné au dépôt.`,
         409
       );
     }
 
-    const rescheduled = payload.rescheduledDate ? new Date(payload.rescheduledDate) : null;
+    const rescheduled = parseOptionalDate(payload.rescheduledDate, 'date de report');
     const customerNote = payload.customerNote?.trim() || null;
 
-    await this.applyStatusChange(record.id, PackageStatus.REPORTE, {
-      actorName: user.fullName,
-      actorId: user.id,
-      role: user.role,
-      driverId: user.driverId,
-      title: 'Livraison reportée',
-      // Le motif n'est pas décoratif : c'est lui qui distingue un client
-      // absent d'une adresse fausse, et donc ce qui se pilote par zone.
-      reason: payload.reason,
-      // La note client est distincte de la note de tournée : l'une sera
-      // relue au client, l'autre sert à ajuster la feuille de route. Les
-      // confondre ferait porter au client une observation qui n'est pas
-      // pour lui.
-      note: [payload.driverNote, customerNote].filter(Boolean).join(' — ') || undefined,
-      locationName: `${record.customerAddress.delegation}, ${record.customerAddress.governorate}`,
-      auditAction: 'DELIVERY_POSTPONED',
-      data: {
-        scheduledDeliveryDate: rescheduled ?? record.scheduledDeliveryDate,
-        driverNotes: payload.driverNote ?? payload.reason,
-        lastDeliveryAttemptAt: new Date(),
-      },
+    await this.prisma.$transaction(async (tx) => {
+      await this.applyStatusChange(record.id, PackageStatus.REPORTE, {
+        actorName: user.fullName,
+        actorId: user.id,
+        role: user.role,
+        driverId: user.driverId,
+        title: 'Livraison reportée',
+        // Le motif distingue un client absent d'une adresse fausse.
+        reason: payload.reason,
+        // La note client est distincte de la note de tournée.
+        note: [payload.driverNote, customerNote].filter(Boolean).join(' — ') || undefined,
+        locationName: `${record.customerAddress.delegation}, ${record.customerAddress.governorate}`,
+        auditAction: 'DELIVERY_POSTPONED',
+        data: {
+          scheduledDeliveryDate: rescheduled ?? record.scheduledDeliveryDate,
+          driverNotes: payload.driverNote ?? payload.reason,
+          lastDeliveryAttemptAt: new Date(),
+        },
+        client: tx,
+      });
+
+      await this.recordAttempt(tx, record, driverId, 'REPORTEE', {
+        comment: payload.driverNote?.trim() || payload.reason,
+        rescheduledFor: rescheduled,
+        customerNote,
+      });
     });
 
-    // Le commentaire de la tentative porte la note du livreur lorsqu'il en a
-    // une : le motif, lui, est déjà dans la chronologie et dans l'audit, et il
-    // ne doit pas être écrasé par une observation plus précise. Un report
-    // sans note de tournée garde le motif comme commentaire.
-    await this.recordAttempt(record, user, 'REPORTEE', {
-      comment: payload.driverNote?.trim() || payload.reason,
-      rescheduledFor: rescheduled,
-      customerNote,
-    });
-
-    // Un report change ce que l'expéditeur attend. Il est prévenu avec la
-    // nouvelle date : sans elle, la notification l'inquiète sans l'informer.
+    await this.notifyStatusChanged(record.id, PackageStatus.REPORTE, user.fullName, user.id);
+    // Un report change ce que l'expéditeur attend : il est prévenu avec la
+    // nouvelle date.
     await notificationDispatcher.notify({
       event: NotificationEvent.DELIVERY_POSTPONED,
       title: 'Livraison reportée',
       content:
         `La livraison du colis #${record.trackingNumber} est reportée` +
-        (rescheduled ? ` au ${new Date(rescheduled).toLocaleDateString('fr-TN')}` : '') +
+        (rescheduled ? ` au ${rescheduled.toLocaleDateString('fr-TN', { timeZone: 'Africa/Tunis' })}` : '') +
         `. Motif : ${payload.reason}`,
       relatedEntity: 'PACKAGE',
       relatedEntityId: record.id,
@@ -1563,12 +1688,6 @@ export class ColisService {
 
   /**
    * Signale une tentative de livraison infructueuse.
-   *
-   * C'est le geste le plus fréquent d'une tournée après un report : le
-   * destinataire ne répond pas, l'adresse est fausse, ou il refuse le
-   * montant. Le motif est normalisé (`reasonCode`) plutôt que laissé en texte
-   * libre, car c'est lui qui alimente le taux d'échec par zone, par livreur
-   * et par créneau — trois indicateurs sur lesquels on pilote la tournée.
    *
    * `definitive` sépare les deux conséquences : un défaut temporaire
    * (injoignable) ramène le colis en `REPORTE` pour une nouvelle tentative,
@@ -1615,40 +1734,41 @@ export class ColisService {
       );
     }
 
-    const rescheduled = payload.rescheduledFor ? new Date(payload.rescheduledFor) : null;
+    const rescheduled = parseOptionalDate(payload.rescheduledFor, 'date de nouvelle tentative');
     const target = definitive ? PackageStatus.ECHEC_LIVRAISON : PackageStatus.REPORTE;
     const location = `${record.customerAddress.delegation}, ${record.customerAddress.governorate}`;
-
-    // Le motif est exigé par la machine à états, mais il est ici normalisé :
-    // c'est lui qui alimente le taux d'échec par zone, par livreur et par
-    // créneau — trois indicateurs sur lesquels on pilote la tournée.
     const reason = FAILED_DELIVERY_LABELS[payload.reasonCode];
+    await this.assertTransitionPossible(record.id, target);
+    const driverId = this.fieldDriverId(record, user);
 
-    await this.applyStatusChange(record.id, target, {
-      actorName: user.fullName,
-      actorId: user.id,
-      role: user.role,
-      driverId: user.driverId,
-      title: definitive ? 'Livraison en échec' : 'Livraison non aboutie',
-      reason,
-      note: payload.comment,
-      locationName: location,
-      auditAction: 'DELIVERY_FAILED',
-      data: {
-        ...(rescheduled ? { scheduledDeliveryDate: rescheduled } : {}),
-        driverNotes: payload.comment ?? reason,
-        lastDeliveryAttemptAt: new Date(),
-      },
+    await this.prisma.$transaction(async (tx) => {
+      await this.applyStatusChange(record.id, target, {
+        actorName: user.fullName,
+        actorId: user.id,
+        role: user.role,
+        driverId: user.driverId,
+        title: definitive ? 'Livraison en échec' : 'Livraison non aboutie',
+        reason,
+        note: payload.comment,
+        locationName: location,
+        auditAction: 'DELIVERY_FAILED',
+        data: {
+          ...(rescheduled ? { scheduledDeliveryDate: rescheduled } : {}),
+          driverNotes: payload.comment ?? reason,
+          lastDeliveryAttemptAt: new Date(),
+        },
+        client: tx,
+      });
+
+      await this.recordAttempt(tx, record, driverId, payload.reasonCode, {
+        comment: payload.comment,
+        callDurationSeconds: payload.callDurationSeconds,
+        rescheduledFor: rescheduled,
+        reasonCode: payload.reasonCode,
+      });
     });
 
-    // Le motif est conservé dans le champ dédié de la tentative : le
-    // commentaire, lui, peut être libre.
-    await this.recordAttempt(record, user, payload.reasonCode, {
-      comment: payload.comment,
-      callDurationSeconds: payload.callDurationSeconds,
-      rescheduledFor: rescheduled,
-      reasonCode: payload.reasonCode,
-    });
+    await this.notifyStatusChanged(record.id, target, user.fullName, user.id);
 
     const fresh = await this.findRecord(record.id);
     return toPackageDto(fresh);
@@ -1664,117 +1784,109 @@ export class ColisService {
   ): Promise<PackageDto> {
     const record = await this.findRecord(identifier);
     assertDriverOwnsPackage(record, user);
+    await this.assertTransitionPossible(record.id, PackageStatus.RETOUR_DEPOT);
+    const driverId = this.fieldDriverId(record, user);
 
     const deposit =
       (record.currentRunsheet
         ? await this.prisma.deposit.findUnique({ where: { id: record.currentRunsheet.depositId } })
         : null) ?? (await this.prisma.deposit.findFirst({ where: { isMainHub: true } }));
 
-    // Ce que le livreur ramène, et ce qu'il en rapporte.
-    //
-    // Les valeurs par défaut ne sont pas des estimations mais des faits : un
-    // retour est en pratique total, donc la quantité est celle du colis, et
-    // l'argent qui remonte au dépôt est celui que le livreur transporte déjà
-    // — spécimen compris. Quand le livreur ne ramène qu'une partie, il doit
-    // le dire, et c'est alors sa déclaration qui fait foi. La quantité
-    // déclarée ne peut pas dépasser le colis : le dépôt ne peut pas réceptionner
-    // plus que ce qui a été expédié.
-    const returnedQuantity = payload.returnedQuantity ?? record.pieceCount;
-    if (returnedQuantity <= 0 || returnedQuantity > record.pieceCount) {
+    // Un retour est en pratique total : par défaut la quantité est celle du
+    // colis et l'argent qui remonte est celui que le livreur transporte déjà.
+    const returnedQuantity = Number(payload.returnedQuantity ?? record.pieceCount);
+    if (!Number.isInteger(returnedQuantity) || returnedQuantity <= 0 || returnedQuantity > record.pieceCount) {
       throw new BusinessRuleError(
         `La quantité reprise doit être comprise entre 1 et ${record.pieceCount} pièces.`,
         400
       );
     }
-    const amount = payload.amount ?? Number(record.collectedAmount);
-    if (amount < 0) {
-      throw new BusinessRuleError('Le montant ramené ne peut pas être négatif.', 400);
+    const amount = Number(payload.amount ?? Number(record.collectedAmount));
+    if (!Number.isFinite(amount) || amount < 0) {
+      throw new BusinessRuleError('Le montant ramené doit être un nombre positif ou nul.', 400);
     }
     const returnedItems = payload.returnedItems?.trim() ?? null;
+    const returnDepositId = deposit?.id ?? record.currentDepositId ?? (await this.defaultDeposit()).id;
 
-    await this.applyStatusChange(record.id, PackageStatus.RETOUR_DEPOT, {
-      actorName: user.fullName,
-      actorId: user.id,
-      role: user.role,
-      driverId: user.driverId,
-      title: 'Colis retourné au dépôt',
-      reason: payload.reason,
-      note: payload.driverNote,
-      locationName: deposit?.name ?? packageLocation(record),
-      returnedContent: returnedItems ?? undefined,
-      returnedAmount: amount || undefined,
-      auditAction: 'PACKAGE_RETURNED',
-      data: {
-        currentDepositId: deposit?.id ?? record.currentDepositId,
-        currentRunsheetId: null,
-        driverNotes: payload.driverNote ?? payload.reason,
-        lastDeliveryAttemptAt: new Date(),
-      },
-    });
-
-    await this.recordAttempt(record, user, 'REFUSEE', { comment: payload.reason });
-
-    // Rendre un colis après avoir pris l'argent, c'est rembourser. Un retour
-    // sur un colis jamais livré n'a rien à rembourser : l'encaissement n'existe
-    // pas encore et il n'y a rien à corriger. Cette distinction évite de créer
-    // un encaissement à zéro pour un colis que personne n'a payé.
-    const existingPayment = await this.prisma.payment.findUnique({
-      where: { packageId: record.id },
-      select: { id: true, amountCollected: true, amountRefunded: true },
-    });
-    if (existingPayment && amount > 0) {
-      await cashService.recordRefund(existingPayment.id, new Prisma.Decimal(amount.toFixed(3)), payload.reason);
-    }
-
-    const returnNumber = `RET-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
-    // `ReturnRecord` n'a pas de contrainte d'unicité sur `packageId` : ni un
-    // `findUnique` ni un `upsert` ne peuvent donc s'appuyer dessus. La clé
-    // sentinelle `__none__` utilisée auparavant n'était pas un UUID, si bien
-    // que le tout premier retour d'un colis échouait toujours.
-    const existingReturn = await this.prisma.returnRecord.findFirst({
-      where: { packageId: record.id },
-      select: { id: true },
-    });
-
-    if (existingReturn) {
-      await this.prisma.returnRecord.update({
-        where: { id: existingReturn.id },
+    await this.prisma.$transaction(async (tx) => {
+      await this.applyStatusChange(record.id, PackageStatus.RETOUR_DEPOT, {
+        actorName: user.fullName,
+        actorId: user.id,
+        role: user.role,
+        driverId: user.driverId,
+        title: 'Colis retourné au dépôt',
+        reason: payload.reason,
+        note: payload.driverNote,
+        locationName: deposit?.name ?? packageLocation(record),
+        returnedContent: returnedItems ?? undefined,
+        returnedAmount: amount || undefined,
+        auditAction: 'PACKAGE_RETURNED',
         data: {
-          reason: payload.reason,
-          returnedItems,
-          returnedQuantity,
-          amount,
-          driverId: user.driverId ?? null,
+          currentDepositId: returnDepositId,
+          currentRunsheetId: null,
+          driverNotes: payload.driverNote ?? payload.reason,
+          lastDeliveryAttemptAt: new Date(),
         },
+        client: tx,
       });
-    } else {
-      await this.prisma.returnRecord.create({
-        data: {
-          returnNumber,
-          packageId: record.id,
-          // Un retour est toujours enregistré dans un dépôt : en l'absence de
-          // dépôt courant (colis en transit), on rattache au hub principal.
-          returnDepositId:
-            deposit?.id ?? record.currentDepositId ?? (await this.defaultDeposit()).id,
-          reason: payload.reason,
-          returnedItems,
-          returnedQuantity,
-          amount,
-          driverId: user.driverId ?? null,
-        },
+
+      await this.recordAttempt(tx, record, driverId, 'REFUSEE', { comment: payload.reason });
+
+      // Rendre un colis après avoir pris l'argent, c'est rembourser. Un retour
+      // sur un colis jamais encaissé n'a rien à rembourser.
+      const existingPayment = await tx.payment.findUnique({
+        where: { packageId: record.id },
+        select: { id: true },
       });
-    }
+      if (existingPayment && amount > 0) {
+        await cashService.recordRefund(
+          existingPayment.id,
+          new Prisma.Decimal(amount.toFixed(3)),
+          payload.reason,
+          tx
+        );
+      }
+
+      // `ReturnRecord` n'a pas de contrainte d'unicité sur `packageId`.
+      const existingReturn = await tx.returnRecord.findFirst({
+        where: { packageId: record.id },
+        select: { id: true },
+      });
+      if (existingReturn) {
+        await tx.returnRecord.update({
+          where: { id: existingReturn.id },
+          data: { reason: payload.reason, returnedItems, returnedQuantity, amount, driverId },
+        });
+      } else {
+        await tx.returnRecord.create({
+          data: {
+            returnNumber: await nextReturnNumber(tx),
+            packageId: record.id,
+            returnDepositId,
+            reason: payload.reason,
+            returnedItems,
+            returnedQuantity,
+            amount,
+            driverId,
+          },
+        });
+      }
+    });
+
+    await this.notifyStatusChanged(record.id, PackageStatus.RETOUR_DEPOT, user.fullName, user.id);
 
     const fresh = await this.findRecord(record.id);
     return toPackageDto(fresh);
   }
 
   /**
-   * Écrit une tentative de livraison et incrémente le compteur du colis.
+   * Écrit une tentative de livraison et incrémente le compteur du colis,
+   * dans la transaction de l'appelant.
    */
   private async recordAttempt(
-    record: { id: string },
-    user: DriverActor,
+    tx: Prisma.TransactionClient,
+    record: { id: string; currentRunsheetId: string | null },
+    driverId: string,
     result: 'REUSSIE' | 'LIVRAISON_PARTIELLE' | 'REPORTEE' | FailedDeliveryReason,
     options: {
       comment?: string;
@@ -1785,37 +1897,30 @@ export class ColisService {
       customerNote?: string | null;
     } = {}
   ): Promise<void> {
-    if (!user.driverId) return;
+    const count = await tx.deliveryAttempt.count({ where: { packageId: record.id } });
+    const callDuration = Number(options.callDurationSeconds ?? 0);
 
-    const count = await this.prisma.deliveryAttempt.count({ where: { packageId: record.id } });
-    const runsheet = await this.prisma.runsheet.findFirst({
-      where: { packages: { some: { id: record.id } } },
-      select: { id: true },
+    await tx.deliveryAttempt.create({
+      data: {
+        packageId: record.id,
+        driverId,
+        runsheetId: record.currentRunsheetId ?? null,
+        attemptNumber: count + 1,
+        result,
+        reasonCode: options.reasonCode ?? null,
+        driverComment: options.comment?.slice(0, 500) ?? null,
+        customerNote: options.customerNote?.slice(0, 500) ?? null,
+        callDurationSeconds: Number.isFinite(callDuration) ? Math.max(0, Math.round(callDuration)) : 0,
+        rescheduledFor: options.rescheduledFor ?? null,
+      },
     });
-
-    await this.prisma.$transaction([
-      this.prisma.deliveryAttempt.create({
-        data: {
-          packageId: record.id,
-          driverId: user.driverId,
-          runsheetId: runsheet?.id ?? null,
-          attemptNumber: count + 1,
-          result,
-          reasonCode: options.reasonCode ?? null,
-          driverComment: options.comment ?? null,
-          customerNote: options.customerNote ?? null,
-          callDurationSeconds: options.callDurationSeconds ?? 0,
-          rescheduledFor: options.rescheduledFor ?? null,
-        },
-      }),
-      this.prisma.package.update({
-        where: { id: record.id },
-        data: {
-          deliveryAttemptsCount: { increment: 1 },
-          lastDeliveryAttemptAt: new Date(),
-        },
-      }),
-    ]);
+    await tx.package.update({
+      where: { id: record.id },
+      data: {
+        deliveryAttemptsCount: { increment: 1 },
+        lastDeliveryAttemptAt: new Date(),
+      },
+    });
   }
 
   /* ---------------------------------------------------------------- */
@@ -1829,6 +1934,9 @@ export class ColisService {
     identifier: string,
     user: { id?: string; fullName: string; role: RoleType }
   ): Promise<PackageDto> {
+    if (user.role !== RoleType.ADMIN && user.role !== RoleType.GESTIONNAIRE) {
+      throw new BusinessRuleError("La restitution à l'expéditeur est réservée à l'exploitation.", 403);
+    }
     const record = await this.findRecord(identifier);
 
     await this.applyStatusChange(record.id, PackageStatus.RETOURNE_EXPEDITEUR, {

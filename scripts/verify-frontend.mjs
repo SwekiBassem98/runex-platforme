@@ -9,7 +9,7 @@
 import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const CHROME = process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const WEB = 'http://localhost:3000';
 const API = 'http://localhost:4000/api/v1';
 const PORT = 9333;
@@ -248,7 +248,7 @@ await evaluate(`
 await navigate(`${WEB}/expediteur`);
 const shipperText = await domText();
 const shipperOk =
-  shipperText.includes('Portail expéditeur') || shipperText.includes('Mes Colis');
+  shipperText.includes('Portail expéditeur') || shipperText.includes('Espace Expéditeur') || /Mes colis/i.test(shipperText);
 console.log(`8. Portail expéditeur rendu pour ${shipperSession.user.fullName} : ${shipperOk ? 'oui' : 'non'}`);
 if (!shipperOk) fail++;
 

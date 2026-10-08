@@ -231,15 +231,19 @@ console.log('=== 4. Pagination : aucune ligne perdue ni répétée ===');
   const limit = 7;
   const vu = new Set();
   let repete = 0;
+  let totalInventaire = Infinity;
   for (let page = 1; page <= 4; page += 1) {
     const reponse = await api('GET', `/inventaire?limit=${limit}&page=${page}`, ADMIN.accessToken);
+    totalInventaire = Math.min(totalInventaire, reponse.body?.meta?.total ?? Infinity);
     for (const row of reponse.body.data) {
       if (vu.has(row.id)) repete += 1;
       vu.add(row.id);
     }
   }
   eq('aucune ligne répétée entre quatre pages', 0, repete);
-  eq('quatre pages complètes', limit * 4, vu.size);
+  // Sur une base fraîchement seedée, il peut y avoir moins de 28 colis :
+  // on attend alors exactement le total annoncé.
+  eq('quatre pages complètes', Math.min(limit * 4, totalInventaire), vu.size);
 
   // Le tri doit rester stable : rejouer la même page rend les mêmes lignes.
   const a = await api('GET', `/inventaire?limit=${limit}&page=2`, ADMIN.accessToken);

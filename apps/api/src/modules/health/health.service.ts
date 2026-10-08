@@ -31,13 +31,13 @@ export class HealthService {
         database: {
           status: database.status,
           latencyMs: database.latencyMs,
-          ...(database.message ? { message: database.message } : {}),
+          ...(database.message && process.env.NODE_ENV !== 'production' ? { message: database.message } : {}),
         },
         redis: {
           status: redis.status,
           latencyMs: redis.latencyMs,
           required: redisRequired,
-          ...(redis.message ? { message: redis.message } : {}),
+          ...(redis.message && process.env.NODE_ENV !== 'production' ? { message: redis.message } : {}),
         },
         // Nombre d'écrans connectés au canal temps réel. Le signaler ici
         // évite de chercher bien longtemps pourquoi « les notifications

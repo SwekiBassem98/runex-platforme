@@ -12,7 +12,41 @@ import { interDepotsService } from './inter-depots.service';
 import type { Response } from 'express';
 import type { AuthenticatedRequest } from '../../common/auth/auth.middleware';
 import { InterDepotStatus } from '@logixpress/types';
-import { badRequest, notFound } from '../../common/errors/api-error';
+import { badRequest, forbidden, notFound } from '../../common/errors/api-error';
+
+/**
+ * Périmètre des transferts :
+ *  - un livreur ne voit que les transferts qu'il transporte ;
+ *  - un magasinier ne voit que ceux qui partent de son dépôt ou y arrivent, et
+ *    n'agit que du bon côté (préparer/expédier/annuler au départ, recevoir à
+ *    l'arrivée) ;
+ *  - l'exploitation voit tout.
+ */
+type TransferView = { sourceDepositId: string; destinationDepositId: string; driverId?: string | null };
+
+function visibleTo(req: AuthenticatedRequest, t: TransferView): boolean {
+  const scope = req.dataScope ?? {};
+  if (scope.assignedDriverId) return t.driverId === scope.assignedDriverId;
+  if (scope.depositId) return t.sourceDepositId === scope.depositId || t.destinationDepositId === scope.depositId;
+  return true;
+}
+
+async function loadScoped(req: AuthenticatedRequest, side?: 'source' | 'destination') {
+  const transfer = await interDepotsService.findByNumber(req.params.id!);
+  if (!transfer || !visibleTo(req, transfer)) throw notFound('Transfert introuvable.');
+  const depot = req.dataScope?.depositId;
+  if (depot && side) {
+    const expected = side === 'source' ? transfer.sourceDepositId : transfer.destinationDepositId;
+    if (expected !== depot) {
+      throw forbidden(
+        side === 'source'
+          ? 'Seul le dépôt de départ peut effectuer cette opération.'
+          : "Seul le dépôt d'arrivée peut réceptionner ce transfert."
+      );
+    }
+  }
+  return transfer;
+}
 
 const actor = (req: AuthenticatedRequest, fallback: string) => ({
   id: req.user?.id,
@@ -27,20 +61,21 @@ export class InterDepotsController {
       destinationDepositId: req.query.destinationDepositId as string | undefined,
     });
 
+    const visibles = list.filter((t) => visibleTo(req, t));
     res.json({
       success: true,
-      data: list,
+      data: visibles,
       meta: {
-        total: list.length,
+        total: visibles.length,
         // Le parc se lit par état, pas par total : c'est le nombre de navettes
         // qui n'ont pas encore trouvé leur arrivée qui intéresse l'exploitation.
-        enCours: list.filter(
+        enCours: visibles.filter(
           (t) => t.status !== InterDepotStatus.RECU && t.status !== InterDepotStatus.ANNULE
         ).length,
         // Seules les réceptions en écart traduisent une perte physique : elles
         // remontent à part, jamais noyées dans le total.
-        anomalies: list.filter((t) => t.hasDiscrepancy).length,
-        piecesEnMouvement: list
+        anomalies: visibles.filter((t) => t.hasDiscrepancy).length,
+        piecesEnMouvement: visibles
           .filter((t) => t.status === InterDepotStatus.EN_TRANSIT)
           .reduce((sum, t) => sum + t.totalPieces, 0),
       },
@@ -48,8 +83,7 @@ export class InterDepotsController {
   }
 
   async getByNumber(req: AuthenticatedRequest, res: Response): Promise<void> {
-    const transfer = await interDepotsService.findByNumber(req.params.id!);
-    if (!transfer) throw notFound('Transfert introuvable.');
+    const transfer = await loadScoped(req);
     res.json({ success: true, data: transfer });
   }
 
@@ -65,6 +99,9 @@ export class InterDepotsController {
       dispatchNotes,
     } = req.body;
 
+    if (req.dataScope?.depositId && sourceDepositId !== req.dataScope.depositId) {
+      throw forbidden('Un transfert ne peut être créé que depuis votre propre dépôt.');
+    }
     if (!sourceDepositId || !destinationDepositId) {
       throw badRequest(
         'Les champs « Dépôt de départ » (sourceDepositId) et « Dépôt d\'arrivée » ' +
@@ -95,6 +132,7 @@ export class InterDepotsController {
 
   /** Préparation : le lot est conditionné et attend le chargement. */
   async prepare(req: AuthenticatedRequest, res: Response): Promise<void> {
+    await loadScoped(req, 'source');
     const transfer = await interDepotsService.prepare(
       req.params.id!,
       actor(req, 'Magasin')
@@ -108,6 +146,7 @@ export class InterDepotsController {
 
   /** Départ : le véhicule quitte le dépôt d'origine. */
   async dispatch(req: AuthenticatedRequest, res: Response): Promise<void> {
+    await loadScoped(req, 'source');
     const transfer = await interDepotsService.dispatch(
       req.params.id!,
       actor(req, 'Exploitation')
@@ -130,6 +169,7 @@ export class InterDepotsController {
    * refuser laisserait la perte sans trace et le transfert bloqué.
    */
   async receive(req: AuthenticatedRequest, res: Response): Promise<void> {
+    await loadScoped(req, 'destination');
     const { receivedPackages, receptionNotes } = req.body;
 
     const transfer = await interDepotsService.receive(req.params.id!, actor(req, 'Magasin'), {
@@ -148,6 +188,7 @@ export class InterDepotsController {
   }
 
   async cancel(req: AuthenticatedRequest, res: Response): Promise<void> {
+    await loadScoped(req, 'source');
     const transfer = await interDepotsService.cancel(req.params.id!, actor(req, 'Exploitation'));
     res.json({
       success: true,

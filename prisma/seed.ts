@@ -697,6 +697,14 @@ async function seedPackages(ctx: SeedContext) {
 /* ------------------------------------------------------------------ */
 
 async function main() {
+  // Le seed crée des comptes de démonstration aux mots de passe publics
+  // (Admin123!, …) : il ne doit jamais tourner sur une base de production.
+  if (process.env.NODE_ENV === 'production' && process.env.SEED_ALLOW_PRODUCTION !== 'true') {
+    throw new Error(
+      'Seed de démonstration refusé en production (comptes aux mots de passe publics). ' +
+        'Créez le premier administrateur manuellement.'
+    );
+  }
   const context = await seedReferenceData();
   await seedPackages(context);
   console.log('\nSeed termine.');

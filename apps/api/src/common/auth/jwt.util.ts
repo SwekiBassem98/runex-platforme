@@ -10,7 +10,17 @@ import type { AuthUser } from '@logixpress/types';
  */
 function readSecret(name: string, devFallback: string): string {
   const value = process.env[name];
-  if (value && value.trim().length > 0) return value;
+  if (value && value.trim().length > 0) {
+    // En production, un secret court ou recopié de .env.example permettrait
+    // de forger des jetons : l'API refuse de démarrer plutôt que de l'accepter.
+    if (process.env.NODE_ENV === 'production' && (value.trim().length < 32 || /change_me|dev_only|^dev_/i.test(value))) {
+      throw new Error(
+        `[Config] ${name} est trop faible pour la production (32 caractères aléatoires minimum, ` +
+          'jamais la valeur de .env.example).'
+      );
+    }
+    return value;
+  }
 
   if (process.env.NODE_ENV === 'production') {
     throw new Error(
@@ -53,6 +63,9 @@ const REFRESH_SECRET = readSecret(
   'dev_only_insecure_jwt_refresh_secret_do_not_use_in_production'
 );
 const ACCESS_TTL_SECONDS = parseDurationToSeconds(process.env.JWT_ACCESS_EXPIRES_IN, 15 * 60);
+if (process.env.NODE_ENV === 'production' && ACCESS_SECRET === REFRESH_SECRET) {
+  throw new Error('[Config] JWT_ACCESS_SECRET et JWT_REFRESH_SECRET doivent être différents.');
+}
 const REFRESH_TTL_SECONDS = parseDurationToSeconds(process.env.JWT_REFRESH_EXPIRES_IN, 7 * 86400);
 
 interface TokenPayload {
@@ -66,6 +79,18 @@ interface TokenPayload {
   driverId?: string;
   driverName?: string;
   depositId?: string;
+  /**
+   * Identifiant de la session (`Session.id`) à laquelle le jeton appartient.
+   *
+   * Le jeton seul ne suffit plus : chaque requête vérifie que la session existe,
+   * n'est pas révoquée et que le compte est toujours actif. C'est ce qui rend
+   * la déconnexion et la désactivation d'un compte effectives immédiatement.
+   */
+  sid?: string;
+  /** Usage du jeton : absent = accès/rafraîchissement, `pwd-reset` = réinitialisation. */
+  purpose?: string;
+  /** Empreinte du hash de mot de passe : rend un lien de réinitialisation à usage unique. */
+  pwh?: string;
   exp: number; // Expiration en secondes
   iat: number;
   /**
@@ -177,7 +202,8 @@ function verifyJwt<T = TokenPayload>(token: string, secret: string): T | null {
 
     const payload = JSON.parse(base64UrlDecode(encodedPayload)) as TokenPayload;
     const now = Math.floor(Date.now() / 1000);
-    if (payload.exp && payload.exp < now) {
+    // Un jeton sans échéance n'est jamais émis par l'API : il est refusé.
+    if (typeof payload.exp !== 'number' || payload.exp < now) {
       return null; // Expiré
     }
     return payload as unknown as T;
@@ -189,7 +215,7 @@ function verifyJwt<T = TokenPayload>(token: string, secret: string): T | null {
 /**
  * Génère une paire de tokens d'accès et de rafraîchissement
  */
-export function generateTokenPair(user: AuthUser) {
+export function generateTokenPair(user: AuthUser, sid: string) {
   const now = Math.floor(Date.now() / 1000);
   const accessExpiresInSeconds = ACCESS_TTL_SECONDS;
   const refreshExpiresInSeconds = REFRESH_TTL_SECONDS;
@@ -205,6 +231,7 @@ export function generateTokenPair(user: AuthUser) {
     driverId: user.driverId,
     driverName: user.driverName,
     depositId: user.depositId,
+    sid,
     iat: now,
     exp: now + accessExpiresInSeconds,
   };
@@ -214,6 +241,7 @@ export function generateTokenPair(user: AuthUser) {
     sub: user.id,
     email: user.email,
     role: user.role,
+    sid,
     iat: now,
     exp: now + refreshExpiresInSeconds,
   };
@@ -222,19 +250,65 @@ export function generateTokenPair(user: AuthUser) {
     accessToken: signJwt(accessPayload, ACCESS_SECRET),
     refreshToken: signJwt(refreshPayload, REFRESH_SECRET),
     expiresIn: accessExpiresInSeconds,
+    refreshExpiresAt: new Date((now + refreshExpiresInSeconds) * 1000),
   };
+}
+
+/** Condensat SHA-256 d'un jeton : seul ce condensat est stocké en base. */
+export function hashToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+/** Empreinte courte d'un hash de mot de passe (jamais le hash lui-même). */
+export function passwordFingerprint(passwordHash: string): string {
+  return crypto.createHash('sha256').update(passwordHash).digest('hex').slice(0, 24);
+}
+
+const RESET_TTL_SECONDS = 15 * 60;
+const RESET_SECRET_SUFFIX = ':pwd-reset';
+
+/**
+ * Jeton de réinitialisation de mot de passe, sans état serveur.
+ *
+ * Il porte l'empreinte du hash de mot de passe courant : dès que le mot de
+ * passe change, l'empreinte ne correspond plus et le lien devient inutilisable.
+ * C'est ce qui le rend à usage unique sans table dédiée.
+ */
+export function signPasswordResetToken(userId: string, passwordHash: string): string {
+  const now = Math.floor(Date.now() / 1000);
+  return signJwt(
+    {
+      jti: crypto.randomUUID(),
+      sub: userId,
+      purpose: 'pwd-reset',
+      pwh: passwordFingerprint(passwordHash),
+      iat: now,
+      exp: now + RESET_TTL_SECONDS,
+    },
+    ACCESS_SECRET + RESET_SECRET_SUFFIX
+  );
+}
+
+export function verifyPasswordResetToken(token: string): { sub: string; pwh: string } | null {
+  const payload = verifyJwt<TokenPayload>(token, ACCESS_SECRET + RESET_SECRET_SUFFIX);
+  if (!payload || payload.purpose !== 'pwd-reset' || !payload.sub || !payload.pwh) return null;
+  return { sub: payload.sub, pwh: payload.pwh };
 }
 
 /**
  * Vérifie un token d'accès
  */
 export function verifyAccessToken(token: string): TokenPayload | null {
-  return verifyJwt<TokenPayload>(token, ACCESS_SECRET);
+  const payload = verifyJwt<TokenPayload>(token, ACCESS_SECRET);
+  if (!payload || payload.purpose || !payload.sid || !payload.sub) return null;
+  return payload;
 }
 
 /**
  * Vérifie un token de rafraîchissement
  */
 export function verifyRefreshToken(token: string): TokenPayload | null {
-  return verifyJwt<TokenPayload>(token, REFRESH_SECRET);
+  const payload = verifyJwt<TokenPayload>(token, REFRESH_SECRET);
+  if (!payload || payload.purpose || !payload.sid || !payload.sub) return null;
+  return payload;
 }

@@ -2,8 +2,9 @@ import { colisService } from './colis.service';
 import { auditService } from '../../common/audit/audit.service';
 import { receptionService } from '../depot/reception.service';
 import type { Response } from 'express';
-import type { AuthenticatedRequest } from '../../common/auth/auth.middleware';
+import { resolveOperatingDeposit, type AuthenticatedRequest } from '../../common/auth/auth.middleware';
 import { respondError } from '../../common/errors/respond-error';
+import { PermissionCode, RoleType } from '@logixpress/types';
 import {
   requireString,
   optionalNumber,
@@ -77,9 +78,23 @@ export class ColisController {
       optionalNumber(req.body, 'totalPrice', 'Montant à encaisser');
       optionalPositiveInt(req.body, 'pieceCount', 'Nombre de pièces');
 
+      // Un expéditeur crée toujours pour son propre compte (le corps est
+      // ignoré). L'exploitation (ADMIN, GESTIONNAIRE) saisit pour le compte
+      // d'un expéditeur désigné explicitement : sans cela, l'écran « Nouveau
+      // colis » du back-office échouait systématiquement.
+      const staff = req.user?.role === RoleType.ADMIN || req.user?.role === RoleType.GESTIONNAIRE;
+      const onBehalf = staff && typeof req.body?.shipperId === 'string' ? req.body.shipperId.trim() : '';
+      if (staff && !req.user?.shipperId && !onBehalf) {
+        res.status(400).json({ success: false, message: "Choisissez l'expéditeur pour le compte duquel le colis est créé." });
+        return;
+      }
+      if (onBehalf && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(onBehalf)) {
+        res.status(400).json({ success: false, message: 'Identifiant expéditeur invalide.' });
+        return;
+      }
       const pkg = await colisService.create(req.body, {
-        shipperId: req.user?.shipperId,
-        shipperName: req.user?.shipperName,
+        shipperId: onBehalf || req.user?.shipperId,
+        shipperName: onBehalf ? undefined : req.user?.shipperName,
         fullName: req.user?.fullName,
       });
       res.status(201).json({
@@ -172,7 +187,7 @@ export class ColisController {
         code,
         // Ni identifiant codé en dur ni repli silencieux sur un dépôt qui
         // n'existe pas : à défaut, le dépôt de l'opérateur, puis le hub.
-        depositId: req.body?.depositId ?? req.user?.depositId ?? null,
+        depositId: await resolveOperatingDeposit(req, req.body?.depositId),
         actor: {
           id: req.user.id,
           fullName: req.user.fullName,
@@ -418,7 +433,19 @@ export class ColisController {
       // Les entrées sont déjà formatées — libellé d'action, nom de l'auteur,
       // signaux d'anomalie — : le contrôleur n'a plus qu'à les rendre.
       const entries = await auditService.listForEntity('PACKAGE', pkg.id);
-      res.json({ success: true, data: entries });
+      // L'adresse IP et le navigateur des opérateurs sont des données
+      // d'exploitation : seuls les profils habilités au journal d'audit les voient.
+      const canSeeNetwork = req.user?.permissions.includes(PermissionCode.AUDIT_READ) || req.user?.role === RoleType.ADMIN;
+      const data = canSeeNetwork
+        ? entries
+        : entries.map((entry) => {
+            const { userIp: _ip, userAgent: _ua, ...rest } = entry as typeof entry & {
+              userIp?: unknown;
+              userAgent?: unknown;
+            };
+            return rest;
+          });
+      res.json({ success: true, data });
     } catch (err: unknown) {
       respondError(res, err, "Journal d'audit inaccessible.");
     }

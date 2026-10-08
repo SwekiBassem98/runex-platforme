@@ -17,7 +17,7 @@
 import { spawn, execFileSync } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const CHROME = process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const WEB = process.env.WEB ?? 'http://localhost:3000';
 const API = process.env.API ?? 'http://localhost:4000/api/v1';
 const PORT = 9336;

@@ -17,7 +17,7 @@ import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { execFileSync } from 'node:child_process';
 
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const CHROME = process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const WEB = 'http://localhost:3000';
 const API = 'http://localhost:4000/api/v1';
 const PORT = 9336;
@@ -218,8 +218,10 @@ console.log('=== 2. Une notification neuve apparaît sans rechargement ===');
 {
   // L'administrateur a un onglet ouvert sur l'écran. Un autre poste produit un
   // événement : la ligne doit apparaître toute seule.
-  const agent = await login('agent.magasin@logixpress.tn', 'Agent123!');
-  await api('POST', `/colis/${createdId}/assign`, ADMIN.accessToken, {
+  // L'auteur d'un événement n'est jamais notifié de sa propre action : c'est
+  // donc un autre compte d'exploitation qui affecte le colis.
+  const autrePoste = await login('gestionnaire@logixpress.tn', 'Gest123!');
+  await api('POST', `/colis/${createdId}/assign`, autrePoste.accessToken, {
     driverId: db(`select id from "Driver" where "isActive" = true and "deletedAt" is null order by "driverCode" limit 1`),
   });
   await sleep(2500);
@@ -228,7 +230,7 @@ console.log('=== 2. Une notification neuve apparaît sans rechargement ===');
     const t = document.body.innerText;
     const assignTitle = ${JSON.stringify('Colis affecté')};
     return {
-      present: t.includes(assignTitle) || t.includes('affect'),
+      present: t.includes(assignTitle) || /affect/i.test(t),
       firstBlock: t.slice(0, 300),
     };
   })()`);
@@ -356,7 +358,7 @@ console.log('=== 5. La cloche de la barre supérieure ===');
   await sleep(3000);
 
   const opened = await evaluate(`(() => {
-    const btn = document.querySelector('button[title="Notifications"]');
+    const btn = document.querySelector('button[title="Notifications"], button[aria-haspopup][aria-label^="Notifications"]');
     if (!btn) return false;
     btn.click();
     return true;
