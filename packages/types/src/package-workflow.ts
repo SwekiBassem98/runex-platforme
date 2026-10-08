@@ -87,8 +87,11 @@ export const PACKAGE_STATUS_TRANSITIONS: Readonly<Record<PackageStatus, readonly
   ],
 
   // --- Dépôt et acheminement ---
+  // Le chargement scanné d'un inter-dépôt fait partir le colis : il quitte le
+  // stock du dépôt au scan (pas d'étape de lot intermédiaire).
   [PackageStatus.RECU_DEPOT]: [
     PackageStatus.EN_LOT_INTER_DEPOT,
+    PackageStatus.EN_TRANSIT_INTER_DEPOT,
     PackageStatus.AFFECTE_RUNSHEET,
     PackageStatus.ANNULE,
   ],
@@ -100,11 +103,21 @@ export const PACKAGE_STATUS_TRANSITIONS: Readonly<Record<PackageStatus, readonly
     PackageStatus.EN_TRANSIT_INTER_DEPOT,
     PackageStatus.RECU_DEPOT,
   ],
+  // Arrivée : à l'agence qui livre (RECU_DEPOT_DESTINATION), à un dépôt de
+  // passage (RECU_DEPOT), ou, pour un retour, à l'agence de l'expéditeur
+  // (RETOUR_DEPOT). Les mêmes sorties servent au retrait d'un colis du
+  // bordereau, qui le remet dans son état d'avant chargement.
   [PackageStatus.EN_TRANSIT_INTER_DEPOT]: [
     PackageStatus.RECU_DEPOT_DESTINATION,
     PackageStatus.RECU_DEPOT,
+    PackageStatus.RETOUR_DEPOT,
   ],
-  [PackageStatus.RECU_DEPOT_DESTINATION]: [PackageStatus.AFFECTE_RUNSHEET],
+  // Un colis arrivé dans une agence peut encore repartir vers une autre
+  // (passage par le hub de tri).
+  [PackageStatus.RECU_DEPOT_DESTINATION]: [
+    PackageStatus.AFFECTE_RUNSHEET,
+    PackageStatus.EN_TRANSIT_INTER_DEPOT,
+  ],
 
   // --- Dernier kilomètre ---
   [PackageStatus.AFFECTE_RUNSHEET]: [
@@ -150,6 +163,8 @@ export const PACKAGE_STATUS_TRANSITIONS: Readonly<Record<PackageStatus, readonly
     PackageStatus.RECU_DEPOT,
     PackageStatus.EN_RUNSHEET_RETOUR,
     PackageStatus.RETOURNE_EXPEDITEUR,
+    // Retour rendu à l'agence de l'expéditeur par inter-dépôt retours.
+    PackageStatus.EN_TRANSIT_INTER_DEPOT,
   ],
   [PackageStatus.EN_RUNSHEET_RETOUR]: [PackageStatus.RETOURNE_EXPEDITEUR],
 

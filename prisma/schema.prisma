@@ -101,8 +101,16 @@ enum PickupStatus {
   ANNULE
 }
 
+/// Nature d'un inter-dépôt : livraison (colis vers leur agence de destination)
+/// ou retour (colis rendus vers l'agence de leur expéditeur).
+enum InterDepotType {
+  LIVRAISON
+  RETOUR
+}
+
 enum InterDepotStatus {
-  /// Ouvert, charge constituée, colis encore au dépôt d'origine.
+  /// « En attente » : bordereau ouvert, colis chargés et en route, aucune pièce
+  /// encore acceptée à l'arrivée.
   CRE
   /// Lot conditionné et prêt à charger.
   PREPARE
@@ -112,6 +120,9 @@ enum InterDepotStatus {
   RECU
   /// Transfert abandonné : les colis retournent au dépôt d'origine.
   ANNULE
+  /// Acceptation commencée à l'arrivée, des pièces manquent encore : le
+  /// bordereau reste ouvert jusqu'à la dernière pièce.
+  RECU_PARTIEL
 }
 
 /// État opérationnel d'un dépôt.
@@ -776,6 +787,7 @@ model Package {
   returns          ReturnRecord[]
   statusHistory    PackageTimeline[]
   payment          Payment?
+  interDepotItems  InterDepotItem[]
 
   @@index([trackingNumber])
   @@index([barcode])
@@ -1045,6 +1057,12 @@ model InterDepotTransfer {
   /// Somme des pièces des colis du lot : la quantité réellement transportée.
   totalPieces          Int              @default(0)
   status               InterDepotStatus @default(CRE)
+  type                 InterDepotType   @default(LIVRAISON)
+  /// Immatriculation du véhicule, reprise du livreur à la saisie (modifiable).
+  vehiclePlate         String?          @db.VarChar(30)
+  /// Date et heure de départ indiquées sur le bordereau.
+  departureAt          DateTime?        @db.Timestamptz(6)
+  createdByUserId      String?          @db.Uuid
   notes                String?          @db.VarChar(500)
   dispatchNotes        String?          @db.VarChar(255)
   receptionNotes       String?          @db.VarChar(255)
@@ -1060,11 +1078,52 @@ model InterDepotTransfer {
   transporterDriver  Driver? @relation(fields: [transporterDriverId], references: [id], onDelete: SetNull)
 
   packages Package[]
+  items    InterDepotItem[]
 
   @@index([transferNumber])
+  @@index([type, status])
   @@index([sourceDepositId])
   @@index([destinationDepositId])
   @@index([status])
+}
+
+/// Ligne d'un bordereau inter-dépôt : un colis chargé, et l'avancement de son
+/// acceptation pièce par pièce à l'arrivée. La ligne survit au détachement du
+/// colis : c'est elle qui permet de réimprimer un bordereau déjà reçu.
+model InterDepotItem {
+  id                String        @id @default(uuid()) @db.Uuid
+  transferId        String        @db.Uuid
+  packageId         String        @db.Uuid
+  pieceCount        Int           @default(1)
+  /// Statut du colis avant chargement : c'est lui qui est rétabli si le colis
+  /// est retiré du bordereau ou si le bordereau est annulé.
+  previousStatus    PackageStatus
+  previousDepositId String?       @db.Uuid
+  addedAt           DateTime      @default(now()) @db.Timestamptz(6)
+  addedByUserId     String?       @db.Uuid
+  receivedPieces    Int           @default(0)
+  receivedAt        DateTime?     @db.Timestamptz(6)
+  receivedByUserId  String?       @db.Uuid
+
+  transfer InterDepotTransfer    @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  package  Package               @relation(fields: [packageId], references: [id], onDelete: Restrict)
+  pieces   InterDepotPieceScan[]
+
+  @@unique([transferId, packageId])
+  @@index([packageId])
+}
+
+/// Pièce acceptée à l'arrivée (une ligne par étiquette scannée).
+model InterDepotPieceScan {
+  id              String   @id @default(uuid()) @db.Uuid
+  itemId          String   @db.Uuid
+  pieceNumber     Int
+  scannedAt       DateTime @default(now()) @db.Timestamptz(6)
+  scannedByUserId String?  @db.Uuid
+
+  item InterDepotItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@unique([itemId, pieceNumber])
 }
 
 // ==============================================================================

@@ -27,6 +27,7 @@ import {
   Search,
   ShieldCheck,
   Truck,
+  Undo2,
   Users,
   Wallet,
 } from 'lucide-react';
@@ -53,6 +54,7 @@ const NAV_ROUTES: Record<string, string> = {
   paiements: '/paiements',
   finance: '/finance',
   'inter-depots': '/inter-depots',
+  'inter-depots-retours': '/inter-depots/retours',
   inventaire: '/inventaire',
   rapports: '/rapports',
   audit: '/audit',
@@ -155,8 +157,13 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       : []),
     {
       id: 'inter-depots',
-      label: 'Transferts inter-dépôts',
+      label: 'Inter dépôt livraison',
       icon: <ArrowRightLeft className="w-4 h-4" />,
+    },
+    {
+      id: 'inter-depots-retours',
+      label: 'Inter dépôt retours et échanges',
+      icon: <Undo2 className="w-4 h-4" />,
     },
     ...(peutConsulterRapports
       ? [

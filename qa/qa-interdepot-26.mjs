@@ -1,16 +1,13 @@
 #!/usr/bin/env node
 /**
- * QA 26 — transferts inter-dépôts de bout en bout, contre l'API réelle.
+ * QA — Inter-dépôts « au scan » (livraison et retours), contre l'API réelle.
  *
- * Remplace scripts/verify-interdepot.sh, écrit avant que le conducteur du
- * transfert (transporterDriverId) ne devienne obligatoire et que le cycle ne
- * passe à CRE → PREPARE → EN_TRANSIT → RECU / ANNULE.
+ * Flux attendu (repris de la plateforme utilisée par les agences) :
+ *   bordereau (agence, livreur → immatriculation, date) → scan des colis
+ *   (Ajouter / Retirer, contrôle de destination) → acceptation à l'arrivée,
+ *   pièce par pièce, bordereau ouvert tant qu'une pièce manque.
  *
- *   node qa/qa-interdepot-26.mjs            (API sur http://127.0.0.1:4000)
- *   QA_BASE_URL=https://… node qa/qa-interdepot-26.mjs
- *
- * N'utilise que l'API (aucun accès direct à la base) ; s'exécute sur une base
- * de démonstration fraîchement seedée.
+ *   node qa/qa-interdepot-26.mjs     (base fraîchement seedée, API sur :4000)
  */
 const BASE = (process.env.QA_BASE_URL ?? 'http://127.0.0.1:4000/api/v1').replace(/\/+$/, '');
 let pass = 0;
@@ -27,131 +24,218 @@ async function api(token, method, path, body) {
   const r = await fetch(`${BASE}${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   let json = null;
   try { json = await r.json(); } catch { /* vide */ }
-  return { status: r.status, json, data: json?.data };
+  return { status: r.status, json, data: json?.data, msg: json?.message ?? '' };
 }
 async function login(email, password) {
   const r = await api(null, 'POST', '/auth/login', { email, password });
   if (r.status !== 200) throw new Error(`login ${email} → ${r.status}`);
   return r.data.accessToken;
 }
+const show = (r) => `HTTP ${r.status} ${r.msg}`.slice(0, 220);
 
 const admin = await login('admin@logixpress.tn', 'Admin123!');
 const agent = await login('agent.magasin@logixpress.tn', 'Agent123!');
 const exp = await login('expediteur@bluestar.tn', 'Exp123!');
 const livreur = await login('livreur.hamza@logixpress.tn', 'Liv123!');
 
-const depots = (await api(admin, 'GET', '/depots')).data;
-const HUB = depots.find((d) => d.isMainHub);
-const OTHER = depots.find((d) => !d.isMainHub && d.status === 'ACTIF');
-const THIRD = depots.find((d) => !d.isMainHub && d.status === 'ACTIF' && d.id !== OTHER.id);
-const drivers = (await api(admin, 'GET', '/drivers?limit=50')).data;
-const DRIVER = drivers.find((d) => d.isActive && d.driverCode === 'LIV-SOU-002') ?? drivers.find((d) => d.isActive);
-const HAMZA = drivers.find((d) => d.driverCode === 'LIV-BEN-001');
+console.log('=== 0. Référentiels du formulaire ===');
+const opts = await api(agent, 'GET', '/inter-depots/form-options');
+ok(opts.status === 200, 'form-options → 200', show(opts));
+const deposits = opts.data.deposits;
+const HUB = deposits.find((d) => d.isMainHub);
+const SFAX = deposits.find((d) => /sfax/i.test(d.name));
+const SOUSSE = deposits.find((d) => /sousse/i.test(d.name));
+const TUNIS = deposits.find((d) => /tunis/i.test(d.name) && !d.isMainHub);
+ok(HUB && SFAX && SOUSSE && TUNIS, 'agences hub / Sfax / Sousse / Tunis disponibles');
+ok(opts.data.operatingDepositId === HUB.id, "l'agent opère depuis son dépôt (hub)");
+const DRIVER = opts.data.drivers.find((d) => d.licensePlate) ?? opts.data.drivers[0];
+ok(!!DRIVER && /-/.test(DRIVER.label), 'livreurs listés avec leur agence', DRIVER?.label);
+const HAMZA_ID = (await api(admin, 'GET', '/drivers?limit=50')).data.find((d) => d.driverCode === 'LIV-BEN-001').id;
 
 let seq = 0;
-async function readyPackage(price = 25) {
+async function newPackage(token, extra = {}) {
   seq++;
-  const c = await api(exp, 'POST', '/colis', {
-    customerName: `Transit QA ${seq}`, customerPhone: `9922${String(Date.now()).slice(-4)}`,
-    address: `Rue du transit ${seq}`, governorate: 'Sousse', city: 'Sousse', totalPrice: price,
+  const r = await api(token, 'POST', '/colis', {
+    customerName: `Client ID ${seq}`, customerPhone: `9877${String(1000 + seq)}`, address: `Rue ${seq}`, totalPrice: 20 + seq, ...extra,
   });
-  if (c.status !== 201) throw new Error(`création colis → ${c.status} ${JSON.stringify(c.json)}`);
-  const s = await api(admin, 'POST', '/warehouse/scan-accept', { barcode: c.data.trackingNumber, depositId: HUB.id });
-  if (s.status !== 200 && s.status !== 201) throw new Error(`scan-accept → ${s.status} ${JSON.stringify(s.json)}`);
-  return c.data;
+  if (r.status !== 201) throw new Error(`création colis → ${show(r)}`);
+  return r.data;
+}
+async function receiveAtHub(p) {
+  const r = await api(admin, 'POST', '/warehouse/scan-accept', { barcode: p.trackingNumber, depositId: HUB.id });
+  if (r.status !== 200 && r.status !== 201) throw new Error(`scan-accept → ${show(r)}`);
 }
 const colis = async (id) => (await api(admin, 'GET', `/colis/${id}`)).data;
+const pkgRow = async (id) => (await api(admin, 'GET', `/colis/${id}`)).data;
 
-console.log(`Hub ${HUB.name} → ${OTHER.name}, conducteur ${DRIVER.driverCode}`);
-const p1 = await readyPackage(20);
-const p2 = await readyPackage(40);
-ok((await colis(p1.id)).currentDepositId === HUB.id, 'colis 1 réceptionné au hub');
+console.log('\n=== 1. Routage des colis ===');
+const P2 = await newPackage(exp, { governorate: 'Sfax', delegation: 'Sfax', pieceCount: 2 });
+const P1 = await newPackage(exp, { governorate: 'Sfax', delegation: 'Sfax' });
+const PSO = await newPackage(exp, { governorate: 'Sousse', delegation: 'Sousse' });
+const PCREE = await newPackage(exp, { governorate: 'Sfax', delegation: 'Sfax' });
+ok(P2.destinationDepositId === SFAX.id || (await colis(P2.id)).destinationDepositId === SFAX.id, 'colis pour Sfax routé vers Agence Sfax');
+for (const p of [P2, P1, PSO]) await receiveAtHub(p);
+ok((await colis(P2.id)).currentDepositId === HUB.id, 'colis réceptionnés au hub');
 
-console.log('\n=== 1. Garde-fous à la création ===');
-const base = { sourceDepositId: HUB.id, destinationDepositId: OTHER.id, transporterDriverId: DRIVER.id };
-ok((await api(admin, 'POST', '/inter-depots', { ...base, destinationDepositId: HUB.id, packageIds: [p1.id] })).status === 400, 'source = destination → 400');
-ok((await api(admin, 'POST', '/inter-depots', { ...base, packageIds: [] })).status === 400, 'aucun colis → 400');
-ok((await api(admin, 'POST', '/inter-depots', { ...base, transporterDriverId: undefined, packageIds: [p1.id] })).status === 400, 'sans conducteur → 400');
-ok((await api(admin, 'POST', '/inter-depots', { ...base, packageIds: ['pas-un-uuid'] })).status === 400, 'identifiant de colis invalide → 400');
-ok((await api(admin, 'POST', '/inter-depots', { ...base, packageIds: [p1.id, p1.id] })).status === 400, 'colis répété → 400');
-ok((await api(admin, 'POST', '/inter-depots', { ...base, sourceDepositId: OTHER.id, destinationDepositId: HUB.id, packageIds: [p1.id] })).status === 409, 'colis absent du dépôt source → 409');
-ok((await api(admin, 'POST', '/inter-depots', { ...base, scheduledDate: '08/10/2026', packageIds: [p1.id] })).status === 400, 'date mal formée → 400');
-ok((await api(exp, 'POST', '/inter-depots', { ...base, packageIds: [p1.id] })).status === 403, 'expéditeur ne peut pas créer → 403');
-ok((await api(livreur, 'POST', '/inter-depots', { ...base, packageIds: [p1.id] })).status === 403, 'livreur ne peut pas créer → 403');
-ok((await api(agent, 'POST', '/inter-depots', { ...base, sourceDepositId: OTHER.id, destinationDepositId: THIRD.id, packageIds: [p1.id] })).status === 403, 'agent : source hors de son dépôt → 403');
+console.log('\n=== 2. Ouverture du bordereau (en-tête) ===');
+const baseHdr = { type: 'LIVRAISON', destinationDepositId: SFAX.id, transporterDriverId: DRIVER.id };
+ok((await api(agent, 'POST', '/inter-depots', { ...baseHdr, destinationDepositId: undefined })).status === 400, 'sans agence → 400');
+ok((await api(agent, 'POST', '/inter-depots', { ...baseHdr, destinationDepositId: HUB.id })).status === 400, 'vers son propre dépôt → 400');
+ok((await api(agent, 'POST', '/inter-depots', { ...baseHdr, transporterDriverId: undefined })).status === 400, 'sans livreur → 400');
+ok((await api(agent, 'POST', '/inter-depots', { ...baseHdr, packageIds: [P1.id] })).status === 400, 'colis joints à la création → 400 (le scan est obligatoire)');
+ok((await api(agent, 'POST', '/inter-depots', { ...baseHdr, type: 'AUTRE' })).status === 400, 'type inconnu → 400');
+ok((await api(agent, 'POST', '/inter-depots', { ...baseHdr, departureAt: 'pas une date' })).status === 400, 'date invalide → 400');
+ok((await api(agent, 'POST', '/inter-depots', { ...baseHdr, vehiclePlate: '<script>' })).status === 400, 'immatriculation invalide → 400');
+ok((await api(exp, 'POST', '/inter-depots', baseHdr)).status === 403, 'expéditeur → 403');
+ok((await api(livreur, 'POST', '/inter-depots', baseHdr)).status === 403, 'livreur → 403');
+ok((await api(agent, 'POST', '/inter-depots', { ...baseHdr, sourceDepositId: SOUSSE.id })).status === 403, 'agent : départ hors de son dépôt → 403');
+const created = await api(agent, 'POST', '/inter-depots', baseHdr);
+ok(created.status === 201, 'bordereau enregistré → 201', show(created));
+const T = created.data;
+ok(/^ID-D-\d{8}-\d{4}$/.test(T.transferNumber), 'numéro ID-D-AAAAMMJJ-NNNN', T.transferNumber);
+ok(T.status === 'CRE' && T.statusLabel === 'En attente', 'état « En attente »');
+ok(T.vehiclePlate === (DRIVER.licensePlate ?? null), "immatriculation reprise du livreur", `${T.vehiclePlate} vs ${DRIVER.licensePlate}`);
+ok(T.direction === 'ENVOI' && T.sourceDepositId === HUB.id, 'parti du dépôt de l’agent, sens Envoi');
+const patched = await api(agent, 'PATCH', `/inter-depots/${T.transferNumber}`, { vehiclePlate: '1234 tun 567' });
+ok(patched.status === 200 && patched.data.vehiclePlate === '1234 TUN 567', 'immatriculation modifiable tant que « En attente »', show(patched));
 
-console.log('\n=== 2. Création par l’agent du dépôt source ===');
-const created = await api(agent, 'POST', '/inter-depots', { ...base, packageIds: [p1.id, p2.id], sealNumber: 'PLOMB-QA-1' });
-ok(created.status === 201, 'création → 201', `HTTP ${created.status} ${JSON.stringify(created.json)?.slice(0, 200)}`);
-const TN = created.data?.transferNumber;
-ok(created.data?.status === 'CRE', 'statut CRE');
-ok(created.data?.totalPackages === 2, '2 colis dans le lot');
-let c1 = await colis(p1.id);
-ok(c1.status === 'EN_LOT_INTER_DEPOT', 'colis en lot inter-dépôt');
-ok((await api(admin, 'POST', '/inter-depots', { ...base, packageIds: [p1.id] })).status === 409, 'colis déjà dans un lot → 409');
+console.log('\n=== 3. Colis proposés pour cette destination ===');
+const cand = await api(agent, 'GET', `/inter-depots/${T.transferNumber}/candidates`);
+ok(cand.status === 200, 'candidats → 200', show(cand));
+const candIds = (cand.data ?? []).map((c) => c.id);
+ok(candIds.includes(P2.id) && candIds.includes(P1.id), 'colis pour Sfax proposés');
+ok(!candIds.includes(PSO.id), 'colis pour Sousse non proposé');
 
-console.log('\n=== 3. Visibilité ===');
-ok((await api(livreur, 'GET', `/inter-depots/${TN}`)).status === 404 || HAMZA?.id === DRIVER.id, 'livreur non transporteur ne voit pas le transfert');
-ok((await api(exp, 'GET', `/inter-depots/${TN}`)).status === 403, 'expéditeur → 403');
-const list = await api(agent, 'GET', '/inter-depots');
-ok(list.status === 200 && list.data.some((t) => t.transferNumber === TN), 'agent voit le transfert de son dépôt');
+console.log('\n=== 4. Chargement au scan ===');
+const scan = (t, code, mode = 'add', tok = agent) => api(tok, 'POST', `/inter-depots/${t}/scan`, { code, mode });
+let r = await scan(T.transferNumber, PSO.barcode);
+ok(r.status === 409 && /destiné à l'agence Agence Sousse/.test(r.msg), 'colis pour Sousse refusé dans un bordereau Sfax', show(r));
+r = await scan(T.transferNumber, '999999999999');
+ok(r.status === 404, 'code inconnu → 404', show(r));
+r = await scan(T.transferNumber, "x' OR 1=1 --");
+ok(r.status === 400, 'code illisible → 400', show(r));
+r = await scan(T.transferNumber, PCREE.barcode);
+ok(r.status === 409 && /réceptionné/.test(r.msg), 'colis pas encore réceptionné au dépôt → 409', show(r));
+r = await scan(T.transferNumber, P2.barcode);
+ok(r.status === 200 && r.data.totalPackages === 1 && r.data.totalPieces === 2, 'colis 2 pièces ajouté (1 colis / 2 pièces)', show(r));
+let c2 = await colis(P2.id);
+ok(c2.status === 'EN_TRANSIT_INTER_DEPOT' && c2.currentDepositId == null, 'le colis quitte le stock du hub (en route)');
+r = await scan(T.transferNumber, P2.barcode);
+ok(r.status === 409 && /déjà dans ce bordereau/.test(r.msg), 'double scan → 409', show(r));
+r = await scan(T.transferNumber, P1.trackingNumber);
+ok(r.status === 200 && r.data.totalPackages === 2, 'ajout par numéro de suivi', show(r));
+r = await scan(T.transferNumber, P1.barcode, 'remove');
+ok(r.status === 200 && r.data.totalPackages === 1, 'interrupteur « Retirer » : colis retiré', show(r));
+const c1 = await colis(P1.id);
+ok(c1.status === 'RECU_DEPOT' && c1.currentDepositId === HUB.id, 'colis retiré remis en stock au hub');
+r = await scan(T.transferNumber, P1.barcode, 'remove');
+ok(r.status === 409, 'retirer un colis absent du bordereau → 409', show(r));
+const T2 = (await api(agent, 'POST', '/inter-depots', baseHdr)).data;
+r = await scan(T2.transferNumber, P2.barcode);
+ok(r.status === 409 && /déjà chargé/.test(r.msg), 'colis déjà dans un autre bordereau → 409', show(r));
+r = await scan(T.transferNumber, P1.barcode);
+ok(r.status === 200, 'colis rajouté');
+const [s1, s2] = await Promise.all([scan(T2.transferNumber, PSO.barcode), scan(T2.transferNumber, PSO.barcode)]);
+ok(s1.status === 409 && s2.status === 409, 'scans simultanés refusés de façon identique (garde destination)');
 
-console.log('\n=== 4. Préparation et départ ===');
-const prep = await api(agent, 'POST', `/inter-depots/${TN}/prepare`, {});
-ok(prep.status === 200 && prep.data.status === 'PREPARE', 'préparation → PREPARE', `HTTP ${prep.status}`);
-ok((await api(admin, 'POST', `/inter-depots/${TN}/receive`, { receivedPackages: 2 })).status === 409, 'réception avant départ → 409');
-const disp = await api(agent, 'POST', `/inter-depots/${TN}/dispatch`, {});
-ok(disp.status === 200 && disp.data.status === 'EN_TRANSIT', 'départ → EN_TRANSIT', `HTTP ${disp.status}`);
-c1 = await colis(p1.id);
-ok(c1.status === 'EN_TRANSIT_INTER_DEPOT', 'colis en transit');
-ok(c1.currentDepositId == null, 'colis sorti du stock du dépôt source');
-ok((await api(agent, 'POST', `/inter-depots/${TN}/cancel`, {})).status === 409, 'annulation pendant le transit → 409');
-ok((await api(agent, 'POST', `/inter-depots/${TN}/dispatch`, {})).status === 409, 'second départ → 409');
-ok((await api(agent, 'POST', `/inter-depots/${TN}/receive`, { receivedPackages: 2 })).status === 403, 'le dépôt source ne peut pas réceptionner → 403');
+console.log('\n=== 5. Visibilité ===');
+ok((await api(exp, 'GET', `/inter-depots/${T.transferNumber}`)).status === 403, 'expéditeur → 403');
+ok((await api(livreur, 'GET', `/inter-depots/${T.transferNumber}`)).status === 404 || DRIVER.driverCode === 'LIV-BEN-001', 'livreur non transporteur ne voit pas le bordereau');
 
-const inv = await api(admin, 'GET', `/inventaire/exceptions?search=${p1.trackingNumber}`);
-ok(inv.status === 200 && !(inv.data ?? []).some((r) => r.id === p1.id), 'colis en transit non signalé comme incohérent');
+console.log('\n=== 6. Acceptation à Sfax, pièce par pièce ===');
+const accept = (code, type = 'LIVRAISON', tok = admin, depositId = SFAX.id) =>
+  api(tok, 'POST', '/inter-depots/acceptance/scan', { code, type, depositId });
+const board = await api(admin, 'GET', `/inter-depots/acceptance?type=LIVRAISON&depositId=${SFAX.id}`);
+ok(board.status === 200 && board.data.expectedCount === 2, 'Sfax attend 2 colis', show(board));
+r = await accept(`${P2.barcode}-1`, 'LIVRAISON', agent, undefined);
+ok(r.status === 409 && /voyage vers Agence Sfax/.test(r.msg), "le hub ne peut pas accepter ce qui va à Sfax", show(r));
+r = await accept(P2.barcode);
+ok(r.status === 409 && /scannez l'étiquette de chaque pièce/.test(r.msg), 'colis multi-pièces : étiquette de pièce exigée', show(r));
+r = await accept(`${P2.barcode}-3`);
+ok(r.status === 400, 'pièce inexistante (3/2) → 400', show(r));
+r = await accept(`${P2.barcode}-1`, 'RETOUR');
+ok(r.status === 409 && /Acceptation inter dépôt/.test(r.msg), 'mauvais écran (retours) → 409', show(r));
+r = await accept(`${P2.barcode}-1`);
+ok(r.status === 200 && r.data.receivedPieces === 1 && !r.data.packageComplete, 'pièce 1/2 reçue — colis partiellement reçu', show(r));
+ok(r.data.transferStatus === 'RECU_PARTIEL', 'bordereau « Partiellement reçu »');
+r = await accept(`${P2.barcode}-1`);
+ok(r.status === 409 && /déjà reçue/.test(r.msg), 'même pièce rescannée → 409', show(r));
+ok((await scan(T.transferNumber, PCREE.barcode)).status === 409, 'plus aucun ajout une fois l’acceptation commencée');
+ok((await api(agent, 'POST', `/inter-depots/${T.transferNumber}/cancel`)).status === 409, 'annulation impossible après acceptation');
+ok((await api(agent, 'PATCH', `/inter-depots/${T.transferNumber}`, { vehiclePlate: '1 TUN 1' })).status === 409, 'en-tête figé après acceptation');
+let b2 = await api(admin, 'GET', `/inter-depots/acceptance?type=LIVRAISON&depositId=${SFAX.id}`);
+ok(b2.data.partialCount === 1, 'compteur « partiellement reçus » = 1', JSON.stringify({ r: b2.data.receivedCount, p: b2.data.partialCount }));
+r = await accept(P1.barcode);
+ok(r.status === 200 && r.data.packageComplete, 'colis 1 pièce reçu par son code', show(r));
+const [a1, a2] = await Promise.all([accept(`${P2.barcode}-2`), accept(`${P2.barcode}-2`)]);
+const codes = [a1.status, a2.status].sort();
+ok(codes[0] === 200 && codes[1] === 409, 'scans simultanés de la même pièce : un seul compte', `codes ${codes}`);
+const fin = (a1.status === 200 ? a1 : a2).data;
+ok(fin.transferStatus === 'RECU', 'dernière pièce → bordereau « Reçu »');
+c2 = await colis(P2.id);
+ok(c2.status === 'RECU_DEPOT_DESTINATION' && c2.currentDepositId === SFAX.id, 'colis arrivé à l’agence qui livre');
+b2 = await api(admin, 'GET', `/inter-depots/acceptance?type=LIVRAISON&depositId=${SFAX.id}`);
+ok(b2.data.receivedCount >= 2 && b2.data.expectedCount === 0, 'compteurs à jour : 2 reçus, plus rien attendu');
+const detail = await api(admin, 'GET', `/inter-depots/${T.transferNumber}`);
+ok(detail.data.items.every((i) => i.receptionState === 'RECU') && detail.data.receivedPieces === 3, 'bordereau : 2 colis / 3 pièces reçus');
 
-console.log('\n=== 5. Réception ===');
-ok((await api(admin, 'POST', `/inter-depots/${TN}/receive`, { receivedPackages: 3 })).status === 400, 'reçus > expédiés → 400');
-ok((await api(admin, 'POST', `/inter-depots/${TN}/receive`, { receivedPackages: -1 })).status === 400, 'reçus négatifs → 400');
-const [r1, r2] = await Promise.all([
-  api(admin, 'POST', `/inter-depots/${TN}/receive`, { receivedPackages: 2 }),
-  api(admin, 'POST', `/inter-depots/${TN}/receive`, { receivedPackages: 2 }),
-]);
-const codes = [r1.status, r2.status].sort();
-ok(codes[0] === 200 && codes[1] === 409, 'réceptions simultanées : une seule réussit', `codes ${codes}`);
-const recv = r1.status === 200 ? r1 : r2;
-ok(recv.data?.status === 'RECU', 'statut RECU');
-c1 = await colis(p1.id);
-ok(c1.currentDepositId === OTHER.id, 'colis arrivé au dépôt de destination');
-ok(c1.status === 'RECU_DEPOT_DESTINATION', 'statut colis reçu au dépôt de destination');
-ok((await api(admin, 'POST', `/inter-depots/${TN}/receive`, { receivedPackages: 2 })).status === 409, 'seconde réception → 409');
-ok((await api(admin, 'POST', `/inter-depots/${TN}/cancel`, {})).status === 409, 'annulation après réception → 409');
-const detail = await api(admin, 'GET', `/inter-depots/${TN}`);
-ok(detail.status === 200 && Array.isArray(detail.data.timeline ?? detail.data.steps ?? []), 'détail du transfert lisible');
+console.log('\n=== 7. Listes et compteurs ===');
+const listHub = await api(admin, 'GET', `/inter-depots?type=LIVRAISON&depositId=${HUB.id}`);
+ok(listHub.status === 200 && listHub.json.meta.stats.sentReceived >= 1, 'hub : « envoyés reçus » ≥ 1', JSON.stringify(listHub.json?.meta?.stats));
+ok(listHub.data.find((t) => t.transferNumber === T.transferNumber)?.direction === 'ENVOI', 'type Envoi côté hub');
+const listSfax = await api(admin, 'GET', `/inter-depots?type=LIVRAISON&depositId=${SFAX.id}`);
+ok(listSfax.json.meta.stats.received >= 1 && listSfax.data.find((t) => t.transferNumber === T.transferNumber)?.direction === 'RECEPTION', 'Sfax : reçu, type Réception');
+ok((await api(admin, 'GET', '/inter-depots?start=2026-13-01')).status === 400, 'date de filtre invalide → 400');
+const agentList = await api(agent, 'GET', '/inter-depots');
+ok(agentList.status === 200 && agentList.data.every((t) => t.sourceDepositId === HUB.id || t.destinationDepositId === HUB.id), 'agent : uniquement les bordereaux de son dépôt');
 
-console.log('\n=== 6. Réception avec écart ===');
-const p3 = await readyPackage(50);
-const t2 = await api(admin, 'POST', '/inter-depots', { ...base, packageIds: [p3.id] });
-ok(t2.status === 201, 'second transfert créé');
-await api(admin, 'POST', `/inter-depots/${t2.data.transferNumber}/dispatch`, {});
-const anomalie = await api(admin, 'POST', `/inter-depots/${t2.data.transferNumber}/receive`, { receivedPackages: 0, receptionNotes: 'Colis manquant' });
-ok(anomalie.status === 200, 'réception avec écart enregistrée');
-ok(anomalie.data?.hasDiscrepancy === true, 'écart signalé');
+console.log('\n=== 8. Annulation ===');
+const PX = await newPackage(exp, { governorate: 'Tunis', delegation: 'Tunis' });
+await receiveAtHub(PX);
+const T3 = (await api(agent, 'POST', '/inter-depots', { ...baseHdr, destinationDepositId: TUNIS.id })).data;
+ok((await scan(T3.transferNumber, PX.barcode)).status === 200, 'colis pour Tunis chargé');
+r = await api(agent, 'POST', `/inter-depots/${T3.transferNumber}/cancel`);
+ok(r.status === 200 && r.data.status === 'ANNULE', 'bordereau annulé', show(r));
+const cx = await colis(PX.id);
+ok(cx.status === 'RECU_DEPOT' && cx.currentDepositId === HUB.id, 'colis remis en stock au hub');
+ok((await api(agent, 'POST', `/inter-depots/${T3.transferNumber}/cancel`)).status === 409, 'double annulation → 409');
 
-console.log('\n=== 7. Annulation avant départ ===');
-const p4 = await readyPackage(30);
-const t3 = await api(admin, 'POST', '/inter-depots', { ...base, packageIds: [p4.id] });
-const cancel = await api(agent, 'POST', `/inter-depots/${t3.data.transferNumber}/cancel`, {});
-ok(cancel.status === 200 && cancel.data.status === 'ANNULE', 'annulation → ANNULE', `HTTP ${cancel.status}`);
-const c4 = await colis(p4.id);
-ok(c4.status === 'RECU_DEPOT' && c4.currentDepositId === HUB.id, 'colis revenu au dépôt d’origine');
-ok((await api(admin, 'POST', '/inter-depots', { ...base, packageIds: [p4.id] })).status === 201, 'colis à nouveau transférable');
+console.log('\n=== 9. Inter-dépôt retours et échanges ===');
+const ts = (await api(admin, 'GET', '/shippers?status=actif&limit=50')).data.find((s) => s.code === 'EXP-TECHSTORE');
+const PR = (await api(admin, 'POST', '/colis', { customerName: 'Retour Client', customerPhone: '98123000', address: 'Rue R', governorate: 'Ben Arous', totalPrice: 30, shipperId: ts.id })).data;
+ok((await colis(PR.id)).originDepositId === SOUSSE.id, "colis TechStore rattaché à l'agence de l'expéditeur (Sousse)");
+await receiveAtHub(PR);
+await api(admin, 'POST', `/colis/${PR.id}/assign`, { driverId: HAMZA_ID });
+r = await api(livreur, 'POST', `/colis/${PR.id}/return`, { reason: 'Refus client', returnedContent: 'Colis complet' });
+const cr = await colis(PR.id);
+ok(cr.status === 'RETOUR_DEPOT', 'colis en retour au dépôt', `${show(r)} / ${cr.status}`);
+if (cr.currentDepositId !== HUB.id) console.log('   (dépôt courant du retour :', cr.currentDepositId, ')');
+const TR = await api(agent, 'POST', '/inter-depots', { type: 'RETOUR', destinationDepositId: SOUSSE.id, transporterDriverId: DRIVER.id });
+ok(TR.status === 201 && /^ID-R-/.test(TR.data.transferNumber), 'bordereau retours ID-R- créé', show(TR));
+const TRS = (await api(agent, 'POST', '/inter-depots', { type: 'RETOUR', destinationDepositId: SFAX.id, transporterDriverId: DRIVER.id })).data;
+r = await scan(TRS.transferNumber, PR.barcode);
+ok(r.status === 409 && /appartient à l'agence Agence Sousse/.test(r.msg), 'retour Sousse refusé dans un bordereau retours vers Sfax', show(r));
+r = await scan(TR.data.transferNumber, PX.barcode);
+ok(r.status === 409 && /n'est pas un retour/.test(r.msg), 'colis de livraison refusé en inter-dépôt retours', show(r));
+const rc = await api(agent, 'GET', `/inter-depots/${TR.data.transferNumber}/candidates`);
+ok((rc.data ?? []).some((c) => c.id === PR.id), 'retour proposé pour l’agence de son expéditeur');
+r = await scan(TR.data.transferNumber, PR.barcode);
+ok(r.status === 200, 'retour chargé', show(r));
+r = await scan(T2.transferNumber, PX.barcode);
+r = await accept(PR.barcode, 'LIVRAISON', admin, SOUSSE.id);
+ok(r.status === 409, 'retour accepté dans le mauvais écran → 409', show(r));
+r = await accept(PR.barcode, 'RETOUR', admin, SOUSSE.id);
+ok(r.status === 200 && r.data.transferStatus === 'RECU', 'retour accepté à Sousse, bordereau reçu', show(r));
+const crr = await colis(PR.id);
+ok(crr.status === 'RETOUR_DEPOT' && crr.currentDepositId === SOUSSE.id, "retour en stock à l'agence de l'expéditeur");
 
-console.log('\n=== 8. Identifiants hostiles ===');
-ok((await api(admin, 'GET', '/inter-depots/%00')).status === 400 || (await api(admin, 'GET', '/inter-depots/xyz')).status === 404, 'identifiant inconnu → 404');
-ok((await api(admin, 'POST', '/inter-depots/TRF-INCONNU/dispatch', {})).status === 404, 'transition sur transfert inconnu → 404');
+console.log('\n=== 10. Ancien cycle et identifiants hostiles ===');
+for (const step of ['prepare', 'dispatch', 'receive']) {
+  ok((await api(agent, 'POST', `/inter-depots/${T2.transferNumber}/${step}`, {})).status === 410, `/${step} → 410 (remplacé par le scan)`);
+}
+ok((await api(admin, 'GET', '/inter-depots/ID-INCONNU')).status === 404, 'bordereau inconnu → 404');
+ok((await api(admin, 'POST', '/inter-depots/ID-INCONNU/scan', { code: P1.barcode })).status === 404, 'scan sur bordereau inconnu → 404');
+ok((await api(admin, 'POST', '/inter-depots/acceptance/scan', { code: '' })).status === 400, 'acceptation sans code → 400');
 
 console.log(`\nRESULT: ${pass} passed, ${failures.length} failed`);
 if (failures.length) { console.log('\nFailures:'); for (const f of failures) console.log(` - ${f}`); process.exit(1); }

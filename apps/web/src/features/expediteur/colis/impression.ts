@@ -19,6 +19,7 @@
 
 import type { PackageDto } from '@logixpress/types';
 import { code128Svg } from './code128';
+import { pieceBarcode } from '@logixpress/types';
 
 const MAX_IMPRESSION_COLIS = 500;
 const PAGE_SIZE_IMPRESSION = 100;
@@ -134,6 +135,31 @@ function footerHtml(ctx: ContexteImpression, total: number, affiche: number): st
   </div>`;
 }
 
+/**
+ * Étiquettes de pièces : une par pièce, code `<code colis>-<n°>`. C'est
+ * l'étiquette scannée à l'acceptation inter-dépôt ; un colis n'est reçu
+ * que lorsque toutes ses pièces le sont.
+ */
+function etiquettesPiecesHtml(colis: PackageDto): string {
+  const n = Math.max(1, Number(colis.pieceCount ?? 1));
+  if (n < 2) return '';
+  const labels = Array.from({ length: n }, (_, i) => {
+    const code = pieceBarcode(colis.barcode, i + 1);
+    return `
+    <div class="barcode-box" style="break-inside:avoid; page-break-inside:avoid;">
+      <div class="barcode-label">Pièce ${i + 1} / ${n} — ${esc(colis.customerName ?? '')}</div>
+      <div class="barcode-value" dir="ltr">${esc(code)}</div>
+      <div class="barcode-sub" dir="ltr">${esc(colis.trackingNumber)} · ${esc(colis.governorate ?? '')}${colis.destinationDepositName ? ` · ${esc(colis.destinationDepositName)}` : ''}</div>
+      <div style="margin-top:6px; display:flex; justify-content:center;">${code128Svg(code, { height: 46, moduleWidth: 1.5 })}</div>
+    </div>`;
+  }).join('');
+  return `
+<div style="page-break-before:always; break-before:page;">
+  <div style="font-weight:700; font-size:12px; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.5px; color:#334155;">Étiquettes de pièces (${n}) — à coller une par pièce</div>
+  ${labels}
+</div>`;
+}
+
 export function genererHtmlColisUnique(colis: PackageDto, ctx: ContexteImpression): string {
   const dir = ctx.dir;
   const statutLabel = ctx.traduireStatut ? ctx.traduireStatut(colis.status) : colis.status;
@@ -201,6 +227,8 @@ ${colis.trackingTimeline && colis.trackingTimeline.length ? `
   </div>
 </div>` : ''}
 
+${etiquettesPiecesHtml(colis)}
+
 ${footerHtml(ctx, 1, 1)}
 <script>window.onload=()=>{ setTimeout(()=>window.print(), 300); };</script>
 </body>
@@ -260,6 +288,10 @@ export function genererHtmlColisListe(
         <span>${esc(ctx.formatDate(c.createdAt))}</span>
       </div>
       <div style="margin-top:8px; display:flex; justify-content:center;">${code128Svg(c.barcode, { height: 36, moduleWidth: 1.2 })}</div>
+      ${Number(c.pieceCount ?? 1) > 1 ? Array.from({ length: Number(c.pieceCount) }, (_, i) => `
+      <div style="margin-top:6px; text-align:center; font-size:9px; color:#475569;" dir="ltr">Pièce ${i + 1}/${esc(String(c.pieceCount))} · ${esc(pieceBarcode(c.barcode, i + 1))}
+        <div style="display:flex; justify-content:center;">${code128Svg(pieceBarcode(c.barcode, i + 1), { height: 28, moduleWidth: 1.1 })}</div>
+      </div>`).join('') : ''}
     </div>
   `).join('');
 

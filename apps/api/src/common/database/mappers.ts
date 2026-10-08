@@ -24,6 +24,8 @@ export const PACKAGE_INCLUDE = {
   shipper: true,
   assignedDriver: { include: { user: true } },
   currentDeposit: true,
+  originDeposit: { select: { id: true, name: true } },
+  destinationDeposit: { select: { id: true, name: true } },
   interDepotTransfer: { select: { transferNumber: true } },
   currentRunsheet: true,
   // Les trois pièces à conviction d'une livraison : sans elles, le frontend
@@ -130,6 +132,11 @@ export function toPackageDto(record: PackageWithRelations): PackageDto {
         : 'En transit',
     currentDepositId: record.currentDepositId ?? undefined,
     currentDepositName: record.currentDeposit?.name,
+    originDepositId: record.originDepositId,
+    originDepositName: record.originDeposit?.name,
+    destinationDepositId: record.destinationDepositId,
+    destinationDepositName: record.destinationDeposit?.name,
+    transferNumber: record.interDepotTransfer?.transferNumber,
     notes: record.shipperNotes ?? undefined,
     deliveredPieces:
       record.status === SharedStatus.LIVRE ? record.pieceCount : undefined,

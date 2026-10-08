@@ -330,27 +330,131 @@ import type {
   Rapport,
 } from '@logixpress/types';
 
-/**
- * Transfert inter-dépôts tel que renvoyé par `GET /inter-depots`.
- *
- * Ce contrat n'existe pas encore dans `@logixpress/types` : il est déclaré ici
- * d'après la charge utile réellement servie par l'API. Il faudra le remonter
- * dans le package partagé lorsque les types de domaine seront centralisés.
- */
+/** Type d'inter-dépôt. */
+export type InterDepotType = 'LIVRAISON' | 'RETOUR';
+
+/** Ligne d'un bordereau inter-dépôt (un colis et ses pièces). */
+export interface InterDepotItemDto {
+  packageId: string;
+  trackingNumber: string;
+  barcode: string;
+  shipperName: string;
+  customerName: string;
+  destination: string;
+  pieceCount: number;
+  receivedPieces: number;
+  receivedPieceNumbers: number[];
+  receptionState: 'EN_ROUTE' | 'PARTIEL' | 'RECU';
+  packageStatus: string;
+  packageStatusLabel: string;
+  addedAt: string;
+  receivedAt: string | null;
+}
+
+/** Bordereau inter-dépôt tel que servi par `GET /inter-depots[/:id]`. */
 export interface InterDepotDto {
   id: string;
   transferNumber: string;
+  type: InterDepotType;
+  typeLabel: string;
   sourceDeposit: string;
+  sourceDepositId: string;
   destinationDeposit: string;
-  contactPhone: string;
-  status: string;
+  destinationDepositId: string;
+  driverId: string | null;
+  driverName: string | null;
+  driverPhone: string | null;
+  vehiclePlate: string | null;
+  departureAt: string | null;
+  status: 'CRE' | 'RECU_PARTIEL' | 'RECU' | 'ANNULE' | 'PREPARE' | 'EN_TRANSIT';
+  statusLabel: string;
+  direction: 'ENVOI' | 'RECEPTION' | null;
   totalPackages: number;
-  timeline: {
-    step: string;
-    agency: string;
-    description: string;
-    timestamp: string;
+  totalPieces: number;
+  receivedPackages: number;
+  receivedPieces: number;
+  partialPackages: number;
+  editable: boolean;
+  notes: string | null;
+  items: InterDepotItemDto[];
+  createdAt: string;
+  receivedAt: string | null;
+  cancelledAt: string | null;
+}
+
+export interface InterDepotStats {
+  total: number;
+  sentPending: number;
+  sentReceived: number;
+  toReceive: number;
+  received: number;
+}
+
+export interface InterDepotFormOptions {
+  deposits: { id: string; name: string; code: string; isMainHub: boolean; governorate: string }[];
+  drivers: {
+    id: string;
+    driverCode: string;
+    fullName: string;
+    phone: string;
+    licensePlate: string | null;
+    depositId: string | null;
+    depositName: string | null;
+    label: string;
   }[];
+  operatingDepositId: string | null;
+}
+
+export interface InterDepotCandidate {
+  id: string;
+  trackingNumber: string;
+  barcode: string;
+  pieceCount: number;
+  sizeCategory: string;
+  status: string;
+  shipperName: string;
+  customerName: string;
+  destination: string;
+}
+
+export interface AcceptanceBoard {
+  depositId: string;
+  type: InterDepotType;
+  receivedCount: number;
+  partialCount: number;
+  expectedCount: number;
+  expected: (InterDepotItemDto & { transferNumber: string; sourceDeposit: string })[];
+  accepted: {
+    trackingNumber: string;
+    barcode: string;
+    shipperName: string;
+    pieceCount: number;
+    receivedPieces: number;
+    sizeCategory: string;
+    state: 'RECU' | 'PARTIEL';
+    transferNumber: string;
+    lastScanAt: string | null;
+  }[];
+  openTransfers: {
+    transferNumber: string;
+    sourceDeposit: string;
+    totalPackages: number;
+    totalPieces: number;
+    receivedPieces: number;
+    status: string;
+    statusLabel: string;
+  }[];
+}
+
+export interface AcceptanceResult {
+  message: string;
+  trackingNumber: string;
+  pieceNumber: number;
+  pieceCount: number;
+  receivedPieces: number;
+  packageComplete: boolean;
+  transferNumber: string;
+  transferStatus: string;
 }
 
 /**
@@ -819,6 +923,10 @@ export const ramassagesApi = {
   create: (payload: unknown) => request<PickupAppointmentDto>('/ramassages', { method: 'POST', body: payload }),
   confirm: (id: string) =>
     request<PickupAppointmentDto>(`/ramassages/${encodeURIComponent(id)}/confirm`, { method: 'PATCH' }),
+  complete: (id: string) =>
+    request<PickupAppointmentDto>(`/ramassages/${encodeURIComponent(id)}/complete`, { method: 'PATCH' }),
+  cancel: (id: string) =>
+    request<PickupAppointmentDto>(`/ramassages/${encodeURIComponent(id)}/cancel`, { method: 'PATCH' }),
 };
 
 export const paymentsApi = {
@@ -861,6 +969,28 @@ export const cashApi = {
 export const interDepotsApi = {
   list: (params?: Record<string, QueryValue>) =>
     request<InterDepotDto[]>('/inter-depots', { query: params }),
+  get: (id: string) => requestData<InterDepotDto>(`/inter-depots/${encodeURIComponent(id)}`),
+  formOptions: () => requestData<InterDepotFormOptions>('/inter-depots/form-options'),
+  create: (payload: {
+    type: InterDepotType;
+    sourceDepositId?: string;
+    destinationDepositId: string;
+    transporterDriverId: string;
+    vehiclePlate?: string;
+    departureAt?: string;
+  }) => requestData<InterDepotDto>('/inter-depots', { method: 'POST', body: payload }),
+  update: (id: string, payload: { transporterDriverId?: string; vehiclePlate?: string; departureAt?: string }) =>
+    requestData<InterDepotDto>(`/inter-depots/${encodeURIComponent(id)}`, { method: 'PATCH', body: payload }),
+  candidates: (id: string) =>
+    requestData<InterDepotCandidate[]>(`/inter-depots/${encodeURIComponent(id)}/candidates`),
+  scan: (id: string, code: string, mode: 'add' | 'remove') =>
+    request<InterDepotDto>(`/inter-depots/${encodeURIComponent(id)}/scan`, { method: 'POST', body: { code, mode } }),
+  cancel: (id: string) =>
+    request<InterDepotDto>(`/inter-depots/${encodeURIComponent(id)}/cancel`, { method: 'POST', body: {} }),
+  acceptance: (type: InterDepotType, depositId?: string) =>
+    requestData<AcceptanceBoard>('/inter-depots/acceptance', { query: { type, depositId } }),
+  acceptScan: (code: string, type: InterDepotType, depositId?: string) =>
+    request<AcceptanceResult>('/inter-depots/acceptance/scan', { method: 'POST', body: { code, type, depositId } }),
 };
 
 export const dashboardApi = {
