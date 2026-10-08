@@ -13,6 +13,7 @@
  * d'un paramètre de requête.
  */
 
+import { packageCodeWhere, parsePackageCode } from '../../common/scan/package-code';
 import { getPrisma } from '../../common/database/prisma-context';
 import { auditService } from '../../common/audit/audit.service';
 import { notificationService } from '../../common/notifications/notification.service';
@@ -83,6 +84,35 @@ function isExploitation(role: RoleType): boolean {
  * titulaire était ensuite verrouillé sur un rendez-vous déjà terminé. Le rôle
  * de bureau, lui, intervient sur l'ensemble des rendez-vous.
  */
+/**
+ * Ramène des codes scannés ou des UUID aux identifiants de colis.
+ * Un code mal formé ou inconnu est refusé au rattachement (le livreur doit le
+ * savoir) et ignoré au détachement (rien à défaire).
+ */
+async function resolvePackageIds(values: unknown[], strict: boolean): Promise<string[]> {
+  if (!Array.isArray(values)) throw badRequest('Liste de colis invalide.');
+  if (values.length > 500) throw badRequest('Au plus 500 colis par envoi.');
+  const ids = new Set<string>();
+  for (const value of values) {
+    const code = parsePackageCode(value);
+    if (code.kind === 'uuid') {
+      ids.add(code.raw);
+      continue;
+    }
+    if (code.kind === 'malformed') {
+      if (strict) throw badRequest(`Code de colis illisible : ${String(value).slice(0, 60)}.`);
+      continue;
+    }
+    const pkg = await getPrisma().package.findFirst({
+      where: { deletedAt: null, ...packageCodeWhere(code.raw) },
+      select: { id: true },
+    });
+    if (pkg) ids.add(pkg.id);
+    else if (strict) throw notFound(`Colis ${code.raw} introuvable.`);
+  }
+  return [...ids];
+}
+
 function assertDriverOwnsPickup(
   pickup: { assignedDriverId: string | null },
   actor: PickupActor
@@ -448,12 +478,11 @@ export class RamassagesService {
       );
     }
 
-    const attach = (payload.attach ?? []).filter((id) => asUuid(id));
-    const detach = (payload.detach ?? []).filter((id) => asUuid(id));
-
-    for (const rawId of payload.attach ?? []) {
-      if (!asUuid(rawId)) throw badRequest(`Identifiant de colis invalide : ${rawId}.`);
-    }
+    // Le livreur scanne le bon de livraison chez l'expéditeur : on accepte
+    // l'identifiant interne comme n'importe quel code du colis (code-barres,
+    // numéro de suivi, étiquette de pièce).
+    const attach = await resolvePackageIds(payload.attach ?? [], true);
+    const detach = await resolvePackageIds(payload.detach ?? [], false);
 
     if (attach.length > 0) {
       const candidates = await prisma.package.findMany({

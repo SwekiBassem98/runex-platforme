@@ -42,6 +42,7 @@ import {
   HelpCircle,
   ArrowLeft,
   DollarSign,
+  Printer,
 } from 'lucide-react';
 
 import {
@@ -93,7 +94,8 @@ import {
   type DeliveryAttempt,
   type AuditModificationLog,
 } from '@logixpress/types';
-import { createApiFetch, runsheetsApi, searchApi, shippersApi } from '@/lib/api';
+import { colisApi, createApiFetch, runsheetsApi, searchApi, shippersApi } from '@/lib/api';
+import { imprimerBonsLivraison } from '@/features/colis/bonLivraison';
 
 // Les requêtes de ce module passent par le client API commun : aucune URL
 // d'API n'est écrite en dur ici.
@@ -270,6 +272,7 @@ export function ColisManagementModule({ currentUser, token }: ColisManagementMod
     packageType: PackageType.NORMAL,
     contentSummary: '',
     allowOpen: true,
+    isFragile: false,
     notes: '',
     // Saisie par l'exploitation : expéditeur pour le compte duquel le colis
     // est créé. Ignoré par l'API pour un compte expéditeur.
@@ -1078,6 +1081,19 @@ export function ColisManagementModule({ currentUser, token }: ColisManagementMod
                       />
                     </FormField>
                   </div>
+
+                  <div className="sm:col-span-2 flex flex-wrap gap-6">
+                    <Checkbox
+                      label="Autorisation d'ouverture du colis"
+                      checked={newColisForm.allowOpen}
+                      onChange={(v) => setNewColisForm({ ...newColisForm, allowOpen: v })}
+                    />
+                    <Checkbox
+                      label="Colis fragile"
+                      checked={newColisForm.isFragile}
+                      onChange={(v) => setNewColisForm({ ...newColisForm, isFragile: v })}
+                    />
+                  </div>
                 </div>
 
                 <div className="flex justify-between items-center pt-4 border-t">
@@ -1326,6 +1342,22 @@ export function ColisManagementModule({ currentUser, token }: ColisManagementMod
                 </button>
               )}
 
+              {/* Bon de livraison : l'étiquette collée sur chaque pièce */}
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    imprimerBonsLivraison([await colisApi.bonLivraison(colis.id)]);
+                  } catch (err) {
+                    addToast({ type: 'error', title: 'Impression impossible', message: err instanceof Error ? err.message : undefined });
+                  }
+                }}
+                className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+              >
+                <Printer className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>Bon de livraison</span>
+              </button>
+
               {/* 7. Modifier */}
               <button
                 onClick={() => {
@@ -1483,6 +1515,10 @@ export function ColisManagementModule({ currentUser, token }: ColisManagementMod
                   <Badge variant={colis.allowOpen ? 'success' : 'default'}>
                     {colis.allowOpen ? 'Ouverture Autorisée' : 'Ouverture Interdite'}
                   </Badge>
+                </div>
+                <div>
+                  <span className="text-slate-500 block text-[11px]">Fragile :</span>
+                  <Badge variant={colis.isFragile ? 'warning' : 'default'}>{colis.isFragile ? 'Fragile' : 'Non'}</Badge>
                 </div>
               </div>
             </Card>
@@ -2320,6 +2356,18 @@ export function ColisManagementModule({ currentUser, token }: ColisManagementMod
                     onChange={(e) => setActionPayload({ ...actionPayload, notes: e.target.value })}
                   />
                 </FormField>
+              </div>
+              <div className="col-span-2 flex flex-wrap gap-6">
+                <Checkbox
+                  label="Autorisation d'ouverture du colis"
+                  checked={Boolean(actionPayload.allowOpen)}
+                  onChange={(v) => setActionPayload({ ...actionPayload, allowOpen: v })}
+                />
+                <Checkbox
+                  label="Colis fragile"
+                  checked={Boolean(actionPayload.isFragile)}
+                  onChange={(v) => setActionPayload({ ...actionPayload, isFragile: v })}
+                />
               </div>
             </div>
           </div>

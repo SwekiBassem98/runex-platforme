@@ -459,6 +459,7 @@ export const openApiSpecification = {
                   contentSummary: { type: 'string' },
                   totalPrice: { type: 'number', minimum: 0, description: 'Montant à encaisser en TND.' },
                   allowOpen: { type: 'boolean' },
+                  isFragile: { type: 'boolean' },
                   notes: { type: 'string' },
                 },
               },
@@ -818,6 +819,44 @@ export const openApiSpecification = {
           '401': UNAUTHORIZED,
           '403': FORBIDDEN,
         },
+      },
+    },
+
+    '/scan/{code}': {
+      get: {
+        tags: ['Colis'],
+        summary: 'Scan d\'un colis (application livreur)',
+        description:
+          'Code-barres, numéro de suivi, étiquette de pièce (`<code-barres>-<n°>`, QR du bon de livraison) ou lien. ' +
+          'Renvoie le colis, la relation (DELIVERY, PICKUP, SHIPPER, DEPOT, BACK_OFFICE), la pièce lue et les actions possibles ' +
+          '(méthode, chemin, corps). Refus : `{ success:false, code, message }` avec code INVALID_CODE (400), ' +
+          'UNKNOWN_CODE (404), PIECE_NOT_FOUND (409), NOT_ASSIGNED / OUT_OF_SCOPE (403).',
+        parameters: [{ name: 'code', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': ok('Colis scanné', { type: 'object' }),
+          '400': failure('INVALID_CODE'),
+          '401': UNAUTHORIZED,
+          '403': failure('NOT_ASSIGNED / OUT_OF_SCOPE'),
+          '404': failure('UNKNOWN_CODE'),
+          '409': failure('PIECE_NOT_FOUND'),
+        },
+      },
+    },
+    '/scan': {
+      post: {
+        tags: ['Colis'],
+        summary: 'Scan d\'un colis (corps JSON)',
+        description: 'Identique à `GET /scan/{code}`, pour un contenu de QR qui ne tient pas dans un chemin.',
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', properties: { code: { type: 'string' } }, required: ['code'] } } } },
+        responses: { '200': ok('Colis scanné', { type: 'object' }), '400': failure('INVALID_CODE'), '401': UNAUTHORIZED, '403': failure('NOT_ASSIGNED'), '404': failure('UNKNOWN_CODE') },
+      },
+    },
+    '/colis/{identifier}/bon-livraison': {
+      get: {
+        tags: ['Colis'],
+        summary: 'Bon de livraison d\'un colis',
+        parameters: [{ name: 'identifier', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': ok('Bon de livraison', { type: 'object' }), '401': UNAUTHORIZED, '404': failure('Colis introuvable') },
       },
     },
 

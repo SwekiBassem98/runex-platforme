@@ -52,6 +52,7 @@ interface EtatFormulaire {
   packageType: PackageType;
   contentSummary: string;
   allowOpen: boolean;
+  isFragile: boolean;
   notes: string;
 }
 
@@ -67,6 +68,7 @@ const VIDE: EtatFormulaire = {
   packageType: PackageType.NORMAL,
   contentSummary: '',
   allowOpen: false,
+  isFragile: false,
   notes: '',
 };
 
@@ -107,6 +109,7 @@ export function FormulaireColis() {
         packageType: form.packageType,
         contentSummary: form.contentSummary.trim(),
         allowOpen: form.allowOpen,
+        isFragile: form.isFragile,
         notes: form.notes.trim() || undefined,
       });
 
@@ -320,6 +323,11 @@ export function FormulaireColis() {
             label={t('colis.formulaire.ouvrirAutorise')}
             checked={form.allowOpen}
             onChange={(v) => modifier('allowOpen', v)}
+          />
+          <Checkbox
+            label={t('colis.formulaire.fragile')}
+            checked={form.isFragile}
+            onChange={(v) => modifier('isFragile', v)}
           />
 
           <FormField

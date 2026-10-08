@@ -383,6 +383,7 @@ export const FIELD_LABELS: Readonly<Record<string, string>> = {
   sizeCategory: 'Catégorie de taille',
   packageType: 'Type de colis',
   allowOpen: 'Autorisation d\'ouverture',
+  isFragile: 'Fragile',
 };
 
 /** Libellé français d'un statut de colis. */
