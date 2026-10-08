@@ -1,27 +1,19 @@
 /**
- * Contrôleur des transferts inter-dépôts.
+ * Contrôleur des inter-dépôts (livraison et retours).
  *
- * Chaque route correspond à un moment de vérité du mouvement : constitution
- * du lot, préparation, départ, réception, annulation. Le contrôleur traduit
- * la requête en appel de service et n décide rien : les règles de transition,
- * les contrôles de dépôt et les refus de colis appartiennent au service, seul
- * à même de les appliquer de façon cohérente quel que soit le client.
+ * Périmètre :
+ *  - un livreur ne voit que les bordereaux qu'il transporte ;
+ *  - un agent de dépôt ne voit que ceux qui partent de son dépôt ou y arrivent,
+ *    charge depuis son dépôt uniquement et n'accepte que ce qui arrive chez lui ;
+ *  - l'exploitation voit tout et choisit le dépôt d'où elle opère.
  */
 
-import { interDepotsService } from './inter-depots.service';
+import { interDepotsService, type InterDepotActor } from './inter-depots.service';
 import type { Response } from 'express';
 import type { AuthenticatedRequest } from '../../common/auth/auth.middleware';
-import { InterDepotStatus } from '@logixpress/types';
-import { badRequest, forbidden, notFound } from '../../common/errors/api-error';
+import { InterDepotType, RoleType } from '@logixpress/types';
+import { ApiError, badRequest, forbidden, notFound } from '../../common/errors/api-error';
 
-/**
- * Périmètre des transferts :
- *  - un livreur ne voit que les transferts qu'il transporte ;
- *  - un magasinier ne voit que ceux qui partent de son dépôt ou y arrivent, et
- *    n'agit que du bon côté (préparer/expédier/annuler au départ, recevoir à
- *    l'arrivée) ;
- *  - l'exploitation voit tout.
- */
 type TransferView = { sourceDepositId: string; destinationDepositId: string; driverId?: string | null };
 
 function visibleTo(req: AuthenticatedRequest, t: TransferView): boolean {
@@ -31,53 +23,74 @@ function visibleTo(req: AuthenticatedRequest, t: TransferView): boolean {
   return true;
 }
 
+function actorOf(req: AuthenticatedRequest): InterDepotActor {
+  return {
+    id: req.user?.id,
+    fullName: req.user?.fullName || 'Exploitation',
+    role: (req.user?.role ?? RoleType.ADMIN) as RoleType,
+    depositId: req.user?.depositId ?? null,
+  };
+}
+
+/** Bordereau visible, et — pour un agent — du bon côté. */
 async function loadScoped(req: AuthenticatedRequest, side?: 'source' | 'destination') {
-  const transfer = await interDepotsService.findByNumber(req.params.id!);
-  if (!transfer || !visibleTo(req, transfer)) throw notFound('Transfert introuvable.');
+  const viewer = req.dataScope?.depositId ?? req.user?.depositId ?? null;
+  const transfer = await interDepotsService.findByNumber(req.params.id!, viewer);
+  if (!transfer || !visibleTo(req, transfer)) throw notFound('Inter-dépôt introuvable.');
   const depot = req.dataScope?.depositId;
   if (depot && side) {
     const expected = side === 'source' ? transfer.sourceDepositId : transfer.destinationDepositId;
     if (expected !== depot) {
       throw forbidden(
         side === 'source'
-          ? 'Seul le dépôt de départ peut effectuer cette opération.'
-          : "Seul le dépôt d'arrivée peut réceptionner ce transfert."
+          ? "Seul le dépôt de départ peut modifier ce bordereau."
+          : "Seul le dépôt d'arrivée peut accepter ce bordereau."
       );
     }
   }
   return transfer;
 }
 
-const actor = (req: AuthenticatedRequest, fallback: string) => ({
-  id: req.user?.id,
-  fullName: req.user?.fullName || fallback,
-});
+function typeParam(value: unknown): InterDepotType | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  const t = String(value).toUpperCase();
+  if (!Object.values(InterDepotType).includes(t as InterDepotType)) throw badRequest(`Type d'inter-dépôt inconnu : ${value}.`);
+  return t as InterDepotType;
+}
 
 export class InterDepotsController {
   async getAll(req: AuthenticatedRequest, res: Response): Promise<void> {
-    const list = await interDepotsService.findAll({
+    const scope = req.dataScope ?? {};
+    // Vue « agence » : celle de l'agent ; l'exploitation peut en choisir une
+    // (?depositId=) ou voir l'ensemble (?depositId=ALL).
+    let viewer: string | null = null;
+    if (scope.depositId) viewer = scope.depositId;
+    else if (!scope.assignedDriverId && req.query.depositId !== 'ALL') {
+      viewer = await interDepotsService.operatingDepositId(actorOf(req), req.query.depositId as string | undefined);
+    }
+    const { rows, stats } = await interDepotsService.list({
+      type: typeParam(req.query.type),
       status: req.query.status as string | undefined,
+      start: req.query.start as string | undefined,
+      end: req.query.end as string | undefined,
+      viewerDepositId: viewer,
       sourceDepositId: req.query.sourceDepositId as string | undefined,
       destinationDepositId: req.query.destinationDepositId as string | undefined,
+      driverId: scope.assignedDriverId ?? null,
     });
-
-    const visibles = list.filter((t) => visibleTo(req, t));
+    const visibles = rows.filter((t) => visibleTo(req, t));
     res.json({
       success: true,
       data: visibles,
       meta: {
         total: visibles.length,
-        // Le parc se lit par état, pas par total : c'est le nombre de navettes
-        // qui n'ont pas encore trouvé leur arrivée qui intéresse l'exploitation.
-        enCours: visibles.filter(
-          (t) => t.status !== InterDepotStatus.RECU && t.status !== InterDepotStatus.ANNULE
-        ).length,
-        // Seules les réceptions en écart traduisent une perte physique : elles
-        // remontent à part, jamais noyées dans le total.
-        anomalies: visibles.filter((t) => t.hasDiscrepancy).length,
+        viewerDepositId: viewer,
+        stats,
+        enCours: visibles.filter((t) => t.status === 'CRE' || t.status === 'RECU_PARTIEL').length,
+        anomalies: visibles.filter((t) => t.status === 'RECU_PARTIEL').length,
         piecesEnMouvement: visibles
-          .filter((t) => t.status === InterDepotStatus.EN_TRANSIT)
-          .reduce((sum, t) => sum + t.totalPieces, 0),
+          .filter((t) => t.status === 'CRE' || t.status === 'RECU_PARTIEL')
+          .reduce((sum, t) => sum + (t.totalPieces - t.receivedPieces), 0),
       },
     });
   }
@@ -87,114 +100,74 @@ export class InterDepotsController {
     res.json({ success: true, data: transfer });
   }
 
+  async formOptions(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const options = await interDepotsService.formOptions();
+    const operating =
+      req.user?.role === RoleType.AGENT_DEPOT || req.user?.role === RoleType.ADMIN || req.user?.role === RoleType.GESTIONNAIRE
+        ? await interDepotsService.operatingDepositId(actorOf(req), req.query.depositId as string | undefined).catch(() => null)
+        : null;
+    res.json({ success: true, data: { ...options, operatingDepositId: operating } });
+  }
+
+  async candidates(req: AuthenticatedRequest, res: Response): Promise<void> {
+    await loadScoped(req, 'source');
+    const rows = await interDepotsService.candidates(req.params.id!);
+    res.json({ success: true, data: rows, meta: { total: rows.length } });
+  }
+
   async create(req: AuthenticatedRequest, res: Response): Promise<void> {
-    const {
-      sourceDepositId,
-      destinationDepositId,
-      transporterDriverId,
-      scheduledDate,
-      sealNumber,
-      packageIds,
-      notes,
-      dispatchNotes,
-    } = req.body;
-
-    if (req.dataScope?.depositId && sourceDepositId !== req.dataScope.depositId) {
-      throw forbidden('Un transfert ne peut être créé que depuis votre propre dépôt.');
+    const actor = actorOf(req);
+    if (req.dataScope?.depositId && req.body?.sourceDepositId && req.body.sourceDepositId !== req.dataScope.depositId) {
+      throw forbidden('Un inter-dépôt ne peut partir que de votre propre dépôt.');
     }
-    if (!sourceDepositId || !destinationDepositId) {
-      throw badRequest(
-        'Les champs « Dépôt de départ » (sourceDepositId) et « Dépôt d\'arrivée » ' +
-          '(destinationDepositId) sont obligatoires.'
-      );
-    }
-
-    const transfer = await interDepotsService.create({
-      sourceDepositId,
-      destinationDepositId,
-      transporterDriverId,
-      scheduledDate,
-      sealNumber,
-      packageIds: Array.isArray(packageIds) ? packageIds : undefined,
-      notes,
-      dispatchNotes,
-    });
-
+    const transfer = await interDepotsService.create(actor, req.body ?? {});
     res.status(201).json({
       success: true,
       data: transfer,
-      message:
-        `Transfert ${transfer.transferNumber} créé : ` +
-        `${transfer.sourceDeposit} → ${transfer.destinationDeposit}, ` +
-        `${transfer.totalPackages} colis (${transfer.totalPieces} pièces).`,
+      message: `Inter-dépôt ${transfer.transferNumber} enregistré : ${transfer.sourceDeposit} → ${transfer.destinationDeposit}. Scannez les colis.`,
     });
   }
 
-  /** Préparation : le lot est conditionné et attend le chargement. */
-  async prepare(req: AuthenticatedRequest, res: Response): Promise<void> {
+  async update(req: AuthenticatedRequest, res: Response): Promise<void> {
     await loadScoped(req, 'source');
-    const transfer = await interDepotsService.prepare(
-      req.params.id!,
-      actor(req, 'Magasin')
-    );
-    res.json({
-      success: true,
-      data: transfer,
-      message: `Transfert ${transfer.transferNumber} préparé.`,
-    });
+    const transfer = await interDepotsService.updateHeader(req.params.id!, actorOf(req), req.body ?? {});
+    res.json({ success: true, data: transfer, message: 'Bordereau mis à jour.' });
   }
 
-  /** Départ : le véhicule quitte le dépôt d'origine. */
-  async dispatch(req: AuthenticatedRequest, res: Response): Promise<void> {
+  async scan(req: AuthenticatedRequest, res: Response): Promise<void> {
     await loadScoped(req, 'source');
-    const transfer = await interDepotsService.dispatch(
-      req.params.id!,
-      actor(req, 'Exploitation')
-    );
-    res.json({
-      success: true,
-      data: transfer,
-      message:
-        `${transfer.totalPackages} colis expédiés vers ` +
-        `${transfer.destinationDeposit} (${transfer.totalPieces} pièces).`,
-    });
+    const result = await interDepotsService.scan(req.params.id!, actorOf(req), req.body ?? {});
+    res.json({ success: true, data: result.transfer, message: result.message, meta: { mode: result.mode, trackingNumber: result.trackingNumber } });
   }
 
-  /**
-   * Réception au dépôt d'arrivée.
-   *
-   * L'opérateur déclare ce qu'il a compté, jamais ce que la réception vaut :
-   * l'écart avec l'expédié est calculé par le service. Un comptage partiel est
-   * donc enregistré — avec la trace de ce qui manque — et non refusé : le
-   * refuser laisserait la perte sans trace et le transfert bloqué.
-   */
-  async receive(req: AuthenticatedRequest, res: Response): Promise<void> {
-    await loadScoped(req, 'destination');
-    const { receivedPackages, receptionNotes } = req.body;
+  async acceptanceBoard(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const depositId = await interDepotsService.operatingDepositId(actorOf(req), req.query.depositId as string | undefined);
+    const board = await interDepotsService.acceptanceBoard(depositId, typeParam(req.query.type) ?? InterDepotType.LIVRAISON);
+    res.json({ success: true, data: board });
+  }
 
-    const transfer = await interDepotsService.receive(req.params.id!, actor(req, 'Magasin'), {
-      receivedPackages,
-      receptionNotes,
-    });
-
-    res.json({
-      success: true,
-      data: transfer,
-      message: transfer.hasDiscrepancy
-        ? `Réception enregistrée en écart : ${transfer.discrepancy} colis manquants ` +
-          `(${transfer.receivedPackages} reçus sur ${transfer.totalPackages}).`
-        : `${transfer.receivedPackages} colis réceptionnés à ${transfer.destinationDeposit}.`,
-    });
+  async acceptScan(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const depositId = await interDepotsService.operatingDepositId(actorOf(req), req.body?.depositId);
+    const result = await interDepotsService.acceptScan(actorOf(req), depositId, req.body ?? {});
+    res.json({ success: true, data: result, message: result.message });
   }
 
   async cancel(req: AuthenticatedRequest, res: Response): Promise<void> {
     await loadScoped(req, 'source');
-    const transfer = await interDepotsService.cancel(req.params.id!, actor(req, 'Exploitation'));
+    const transfer = await interDepotsService.cancel(req.params.id!, actorOf(req));
     res.json({
       success: true,
       data: transfer,
-      message: `Transfert ${transfer.transferNumber} annulé : les colis redeviennent disponibles à ${transfer.sourceDeposit}.`,
+      message: `Inter-dépôt ${transfer.transferNumber} annulé : les colis sont remis en stock à ${transfer.sourceDeposit}.`,
     });
+  }
+
+  /** Ancien cycle (préparer / expédier / réception au comptage) : remplacé par le scan. */
+  async legacy(_req: AuthenticatedRequest, _res: Response): Promise<void> {
+    throw new ApiError(
+      "Étape supprimée : les colis partent au scan de chargement et l'arrivée se fait par « Acceptation inter dépôt » (scan de chaque pièce).",
+      410
+    );
   }
 }
 

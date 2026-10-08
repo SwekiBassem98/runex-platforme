@@ -187,21 +187,49 @@ export enum PickupStatus {
 }
 
 export enum InterDepotStatus {
+  /** « En attente » : bordereau ouvert, rien n'est encore accepté à l'arrivée. */
   CRE = 'CRE',
+  /** Ancien cycle (lot préparé) — conservé pour l'historique. */
   PREPARE = 'PREPARE',
+  /** Ancien cycle (expédition explicite) — conservé pour l'historique. */
   EN_TRANSIT = 'EN_TRANSIT',
+  /** Acceptation commencée, des pièces manquent encore. */
+  RECU_PARTIEL = 'RECU_PARTIEL',
   RECU = 'RECU',
   ANNULE = 'ANNULE',
 }
 
 /** Libellé français d'un statut de transfert inter-dépôts. */
 export const INTER_DEPOT_STATUS_LABELS: Readonly<Record<InterDepotStatus, string>> = {
-  CRE: 'Créé',
+  CRE: 'En attente',
   PREPARE: 'Préparé',
   EN_TRANSIT: 'En transit',
+  RECU_PARTIEL: 'Partiellement reçu',
   RECU: 'Reçu',
   ANNULE: 'Annulé',
 };
+
+/** Nature d'un inter-dépôt. */
+export enum InterDepotType {
+  /** Colis acheminés vers l'agence qui les livre. */
+  LIVRAISON = 'LIVRAISON',
+  /** Retours et échanges rendus à l'agence de leur expéditeur. */
+  RETOUR = 'RETOUR',
+}
+
+export const INTER_DEPOT_TYPE_LABELS: Readonly<Record<InterDepotType, string>> = {
+  LIVRAISON: 'Inter-dépôt livraison',
+  RETOUR: 'Inter-dépôt retours et échanges',
+};
+
+/**
+ * Code-barres d'une pièce : code du colis, tiret, numéro de pièce
+ * (ex. `261008900004-2`). Une étiquette par pièce est imprimée ; c'est elle
+ * qui est scannée à l'acceptation inter-dépôt.
+ */
+export function pieceBarcode(packageBarcode: string, pieceNumber: number): string {
+  return `${packageBarcode}-${pieceNumber}`;
+}
 
 /**
  * Cycle de vie d'un transfert inter-dépôts.
@@ -213,18 +241,20 @@ export const INTER_DEPOT_STATUS_LABELS: Readonly<Record<InterDepotStatus, string
 export const INTER_DEPOT_TRANSITIONS: Readonly<
   Record<InterDepotStatus, readonly InterDepotStatus[]>
 > = {
-  CRE: [InterDepotStatus.PREPARE, InterDepotStatus.EN_TRANSIT, InterDepotStatus.ANNULE],
-  PREPARE: [InterDepotStatus.EN_TRANSIT, InterDepotStatus.ANNULE],
-  EN_TRANSIT: [InterDepotStatus.RECU, InterDepotStatus.ANNULE],
+  CRE: [InterDepotStatus.RECU_PARTIEL, InterDepotStatus.RECU, InterDepotStatus.ANNULE],
+  PREPARE: [InterDepotStatus.RECU_PARTIEL, InterDepotStatus.RECU, InterDepotStatus.ANNULE],
+  EN_TRANSIT: [InterDepotStatus.RECU_PARTIEL, InterDepotStatus.RECU, InterDepotStatus.ANNULE],
+  RECU_PARTIEL: [InterDepotStatus.RECU],
   RECU: [],
   ANNULE: [],
 };
 
-/** Statuts de transfert à ne plus considerer comme « en cours ». */
+/** Statuts de transfert encore ouverts (pas entièrement reçus ni annulés). */
 export const INTER_DEPOT_OPEN_STATUSES: readonly InterDepotStatus[] = [
   InterDepotStatus.CRE,
   InterDepotStatus.PREPARE,
   InterDepotStatus.EN_TRANSIT,
+  InterDepotStatus.RECU_PARTIEL,
 ];
 
 /** Un statut de transfert est-il terminal ? */
@@ -426,6 +456,14 @@ export interface PackageDto {
   /** Absents pour un colis en cours de transfert inter-dépôts. */
   currentDepositId?: string;
   currentDepositName?: string;
+  /** Agence de l'expéditeur (destination des retours). */
+  originDepositId?: string;
+  originDepositName?: string;
+  /** Agence qui livre le destinataire. */
+  destinationDepositId?: string;
+  destinationDepositName?: string;
+  /** Bordereau inter-dépôt dans lequel le colis voyage. */
+  transferNumber?: string;
   notes?: string;
   paymentStatus?: 'NON_REGLE' | 'EN_BORDEREAU' | 'PAYE';
   isCancelled?: boolean;

@@ -10,7 +10,7 @@
  */
 import type { Prisma } from '@prisma/client';
 
-export type NumberSeries = 'payment' | 'runsheet' | 'return' | 'customer';
+export type NumberSeries = 'payment' | 'runsheet' | 'return' | 'customer' | 'transfer';
 
 async function lock(tx: Prisma.TransactionClient, series: NumberSeries, prefix: string): Promise<void> {
   const key = `runex:number:${series}:${prefix}`;
@@ -45,6 +45,25 @@ export async function nextRunsheetNumber(tx: Prisma.TransactionClient, stamp: st
     select: { runsheetNumber: true },
   });
   return `${prefix}${String(nextFrom(last?.runsheetNumber, prefix)).padStart(4, '0')}`;
+}
+
+/**
+ * `ID-D-20261008-0001` (livraison) / `ID-R-20261008-0001` (retours) —
+ * séquence quotidienne par type, jour de Tunis.
+ */
+export async function nextTransferNumber(
+  tx: Prisma.TransactionClient,
+  kind: 'D' | 'R',
+  stamp: string
+): Promise<string> {
+  const prefix = `ID-${kind}-${stamp}-`;
+  await lock(tx, 'transfer', prefix);
+  const last = await tx.interDepotTransfer.findFirst({
+    where: { transferNumber: { startsWith: prefix } },
+    orderBy: { transferNumber: 'desc' },
+    select: { transferNumber: true },
+  });
+  return `${prefix}${String(nextFrom(last?.transferNumber, prefix)).padStart(4, '0')}`;
 }
 
 /** `RET-2026-000123` — séquence annuelle des retours. */

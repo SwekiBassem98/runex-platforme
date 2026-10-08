@@ -83,12 +83,12 @@ export class DashboardService {
       prisma.deposit.count({ where: { isActive: true, ...depositScopeWhere } }),
       prisma.interDepotTransfer.count({
         where: {
-          status: { in: ['CRE', 'PREPARE', 'EN_TRANSIT'] as never },
+          status: { in: ['CRE', 'PREPARE', 'EN_TRANSIT', 'RECU_PARTIEL'] as never },
           ...transferScopeWhere,
         },
       }),
       prisma.interDepotTransfer.aggregate({
-        where: { status: { in: ['CRE', 'PREPARE', 'EN_TRANSIT'] as never }, ...transferScopeWhere },
+        where: { status: { in: ['CRE', 'PREPARE', 'EN_TRANSIT', 'RECU_PARTIEL'] as never }, ...transferScopeWhere },
         _sum: { totalPackages: true },
       }),
       this.recentTimeline(depositId),
