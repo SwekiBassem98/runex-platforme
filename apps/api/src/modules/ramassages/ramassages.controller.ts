@@ -28,6 +28,8 @@ export class RamassagesController {
     const list = await ramassagesService.findAll(actorOf(req), {
       status: req.query.status as string | undefined,
       date: req.query.date as string | undefined,
+      start: req.query.start as string | undefined,
+      end: req.query.end as string | undefined,
     });
 
     res.json({
@@ -38,6 +40,9 @@ export class RamassagesController {
         toConfirm: list.filter((p) => p.status === 'A_CONFIRMER').length,
         pending: list.filter((p) => p.status === 'EN_ATTENTE').length,
         done: list.filter((p) => p.status === 'EFFECTUE').length,
+        // Vue agence : en attente (tout ce qui n'est ni fait ni annulé).
+        waiting: list.filter((p) => p.status !== 'EFFECTUE' && p.status !== 'ANNULE').length,
+        cancelled: list.filter((p) => p.status === 'ANNULE').length,
       },
     });
   }
@@ -77,7 +82,9 @@ export class RamassagesController {
     res.status(201).json({
       success: true,
       data: created,
-      message: `Rendez-vous ${created.referenceNumber} enregistré, en attente de confirmation.`,
+      message: created.status === 'ASSIGNE'
+        ? `Ramassage ${created.referenceNumber} organisé et affecté à ${created.assignedDriverName ?? 'un livreur'}.`
+        : `Rendez-vous ${created.referenceNumber} enregistré, en attente de confirmation.`,
     });
   }
 

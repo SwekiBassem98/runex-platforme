@@ -125,9 +125,18 @@ export class RamassagesService {
    */
   async findAll(
     actor: PickupActor,
-    filters?: { status?: string; date?: string }
+    filters?: { status?: string; date?: string; start?: string; end?: string }
   ): Promise<PickupAppointmentDto[]> {
     const prisma = getPrisma();
+    const range =
+      filters?.start || filters?.end
+        ? {
+            scheduledDate: {
+              ...(filters.start ? { gte: this.parseScheduledDate(filters.start) } : {}),
+              ...(filters.end ? { lte: this.parseScheduledDate(filters.end) } : {}),
+            },
+          }
+        : {};
     const records = await prisma.pickupAppointment.findMany({
       where: {
         ...this.scopeFor(actor),
@@ -136,7 +145,7 @@ export class RamassagesService {
             ? { status: filters.status as never }
             : { id: NO_MATCH_ID }
           : {}),
-        ...(filters?.date ? { scheduledDate: this.parseScheduledDate(filters.date) } : {}),
+        ...(filters?.date ? { scheduledDate: this.parseScheduledDate(filters.date) } : range),
       },
       include: PICKUP_INCLUDE,
       orderBy: [{ scheduledDate: 'desc' }, { timeSlotStartHour: 'asc' }],
@@ -208,10 +217,12 @@ export class RamassagesService {
       timeSlotStartHour: number;
       timeSlotEndHour: number;
       pickupAddress?: string;
-      contactPerson: string;
-      contactPhone: string;
+      contactPerson?: string;
+      contactPhone?: string;
       packageEstimate?: number;
       notes?: string;
+      /** « Organiser un ramassage » par l'agence : livreur désigné d'emblée. */
+      assignedDriverId?: string;
     }
   ): Promise<PickupAppointmentDto> {
     const prisma = getPrisma();
@@ -233,9 +244,20 @@ export class RamassagesService {
 
     const shipper = await prisma.shipper.findUnique({
       where: { id: payload.shipperId },
-      select: { address: true },
+      select: { address: true, companyName: true, brandName: true, phone: true, isActive: true },
     });
     if (!shipper) throw notFound('Expéditeur introuvable.');
+    if (shipper.isActive === false) throw conflict('Ce compte expéditeur est désactivé.');
+
+    // L'agence qui organise le ramassage désigne le livreur tout de suite : le
+    // rendez-vous est alors confirmé et affecté, « en attente » d'exécution.
+    const organisedBy = actor.role !== RoleType.EXPEDITEUR && payload.assignedDriverId;
+    const driver = organisedBy ? await this.assertAssignableDriver(payload.assignedDriverId) : null;
+    const contactPerson = String(payload.contactPerson ?? '').trim() || shipper.brandName || shipper.companyName;
+    const contactPhone = String(payload.contactPhone ?? '').trim() || shipper.phone;
+    if (contactPerson.length > 100 || contactPhone.length > 30) {
+      throw badRequest('Contact du ramassage trop long.');
+    }
 
     const overlap = await prisma.pickupAppointment.findFirst({
       where: {
@@ -262,12 +284,13 @@ export class RamassagesService {
         scheduledDate,
         timeSlotStartHour: payload.timeSlotStartHour,
         timeSlotEndHour: payload.timeSlotEndHour,
-        pickupAddress: payload.pickupAddress ?? shipper.address,
-        contactPerson: payload.contactPerson,
-        contactPhone: payload.contactPhone,
+        pickupAddress: String(payload.pickupAddress ?? '').trim().slice(0, 255) || shipper.address,
+        contactPerson,
+        contactPhone,
         packageEstimate: this.sanitizeEstimate(payload.packageEstimate),
-        status: 'A_CONFIRMER',
-        notes: payload.notes ?? null,
+        status: driver ? 'ASSIGNE' : 'A_CONFIRMER',
+        ...(driver ? { assignedDriverId: driver.id, confirmedAt: new Date() } : {}),
+        notes: payload.notes ? String(payload.notes).slice(0, 500) : null,
       },
       include: PICKUP_INCLUDE,
     });
@@ -282,6 +305,13 @@ export class RamassagesService {
         .slice(0, 10)}.`,
       newValues: { referenceNumber: created.referenceNumber, packageEstimate: created.packageEstimate },
     });
+
+    if (driver) {
+      // Organisé par l'agence : le livreur et l'expéditeur sont prévenus comme
+      // pour une affectation, l'exploitation n'a pas de demande à traiter.
+      await this.notifyTransition(created, 'ASSIGNE', actor).catch(() => undefined);
+      return toDto(created);
+    }
 
     await notificationService.notify({
       type: NotificationType.RAMASSAGE_DEMANDE,
@@ -322,7 +352,10 @@ export class RamassagesService {
     assertDriverOwnsPickup(record, actor);
     assertShipperOwnsPickup(record, actor);
 
-    const allowed = ALLOWED_TRANSITIONS[record.status] ?? [];
+    const allowed = [...(ALLOWED_TRANSITIONS[record.status] ?? [])];
+    // « Effectuer » depuis la liste de l'agence : l'exploitation constate un
+    // ramassage fait par le livreur désigné, sans passer par l'appli mobile.
+    if (record.status === 'ASSIGNE' && EXPLOITATION_ROLES.includes(actor.role)) allowed.push('EFFECTUE');
     if (!allowed.includes(to)) {
       throw conflict(
         `Transition impossible : ${record.status} → ${to}. ` +
