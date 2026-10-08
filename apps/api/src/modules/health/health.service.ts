@@ -25,7 +25,7 @@ export class HealthService {
     return {
       status: isHealthy ? 'ok' : 'degraded',
       timestamp: new Date().toISOString(),
-      uptime: process.uptime(),
+      ...(process.env.NODE_ENV !== 'production' ? { uptime: process.uptime() } : {}),
       services: {
         api: { status: 'up' },
         database: {
@@ -44,7 +44,8 @@ export class HealthService {
         // n'arrivent pas » alors qu'aucune socket n'est ouverte.
         realtime: {
           status: realtimeReady() ? 'up' : 'down',
-          sockets: connectedSockets(),
+          // Le nombre de connexions reste une information d'exploitation.
+          ...(process.env.NODE_ENV !== 'production' ? { sockets: connectedSockets() } : {}),
         },
       },
       version: '1.0.0',

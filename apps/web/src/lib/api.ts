@@ -129,7 +129,7 @@ export function setUnauthorizedHandler(handler: (() => void) | null): void {
  * déclenchant cinq appels en parallèle épuiserait le refresh token (il est à
  * usage unique, sa rotation invalide l'ancien).
  */
-async function refreshTokens(): Promise<boolean> {
+export async function refreshTokens(): Promise<boolean> {
   if (refreshPromise) return refreshPromise;
 
   const refreshToken = tokenStorage.getRefreshToken();
@@ -144,8 +144,13 @@ async function refreshTokens(): Promise<boolean> {
       });
 
       if (!response.ok) {
-        tokenStorage.clear();
-        onUnauthorized?.();
+        // Seul un refus du jeton (400/401/403) ferme la session. Une API
+        // momentanément indisponible (502/503 au réveil de l'hébergeur, 429)
+        // ne doit pas déconnecter l'utilisateur : la requête suivante réessaiera.
+        if ([400, 401, 403].includes(response.status)) {
+          tokenStorage.clear();
+          onUnauthorized?.();
+        }
         return false;
       }
 

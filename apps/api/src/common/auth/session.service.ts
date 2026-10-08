@@ -26,6 +26,19 @@ export type SessionCheck =
   | { ok: true }
   | { ok: false; reason: 'session' | 'account' | 'driver' | 'shipper' };
 
+/**
+ * Dernière rotation de chaque session (mémoire de l'instance). Sert à
+ * distinguer deux onglets qui rafraîchissent au même instant (légitime) d'un
+ * ancien jeton rejoué longtemps après (vol probable).
+ */
+const lastRotation = new Map<string, number>();
+
+/** Millisecondes écoulées depuis la dernière rotation connue, ou null. */
+export function msSinceRotation(sid: string): number | null {
+  const t = lastRotation.get(sid);
+  return t === undefined ? null : Date.now() - t;
+}
+
 export class SessionService {
   private get prisma() {
     return getPrisma();
@@ -77,6 +90,7 @@ export class SessionService {
       },
       data: { refreshTokenHash: hashToken(newRefreshToken), expiresAt },
     });
+    if (result.count === 1) lastRotation.set(sid, Date.now());
     return result.count === 1;
   }
 

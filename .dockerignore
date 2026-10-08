@@ -1,0 +1,11 @@
+# Contexte de build Docker : ni secrets, ni dépendances locales, ni artefacts.
+**/.env
+**/.env.*
+!**/.env.example
+**/node_modules
+**/dist
+**/.next
+**/coverage
+.git
+qa/screenshots
+*.log

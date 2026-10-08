@@ -31,7 +31,7 @@ import React, {
 } from 'react';
 import { io, type Socket } from 'socket.io-client';
 import { SOCKET_EVENTS, type NotificationDto } from '@logixpress/types';
-import { API_BASE_URL, tokenStorage } from './api';
+import { API_BASE_URL, refreshTokens, tokenStorage } from './api';
 import { notificationsApi } from './notification-api';
 
 /** Nombre de notifications conservées pour l'aperçu de la barre supérieure. */
@@ -43,11 +43,21 @@ const KEPT_SIZE = 60;
  * Adresse du serveur temps réel.
  *
  * Les notifications voyagent hors du préfixe `/api/v1` : la socket est
- * attachée à la racine du serveur. On retire donc le préfixe plutôt que de
- * dupliquer l'adresse dans une variable d'environnement.
+ * attachée à la racine du serveur de l'API. `NEXT_PUBLIC_SOCKET_URL` la fixe
+ * explicitement ; sinon elle se déduit de `NEXT_PUBLIC_API_URL` en retirant
+ * le préfixe. Une API relative (`/api/v1`, mode relais) ne peut pas porter
+ * de websocket — les réécritures de Next ne les relaient pas : la socket
+ * vise alors l'origine de la page, ce qui ne fonctionne qu'en développement.
  */
 function socketUrl(): string {
+  const explicit = process.env.NEXT_PUBLIC_SOCKET_URL?.trim();
+  if (explicit) return explicit.replace(/\/+$/, '');
   return API_BASE_URL.replace(/\/api\/v\d+\/?$/, '').replace(/\/$/, '');
+}
+
+/** Refus d'authentification de la passerelle (jeton expiré ou révoqué). */
+function isAuthRefusal(error: unknown): boolean {
+  return (error as { data?: { code?: string } } | null)?.data?.code === '4401';
 }
 
 interface NotificationState {
@@ -101,7 +111,9 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     void load();
 
     const socket = io(socketUrl(), {
-      auth: { token },
+      // Fonction, pas objet : relue à chaque (re)connexion, elle transmet le
+      // jeton courant — celui de l'ouverture expire au bout de 15 minutes.
+      auth: (cb) => cb({ token: tokenStorage.getAccessToken() ?? '' }),
       transports: ['websocket'],
       // Reprise automatique : une coupure réseau ne doit pas laisser
       // l'utilisateur avec un centre de notifications mort jusqu'au
@@ -114,6 +126,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 
     socket.on('connect', () => {
       if (!active) return;
+      authRetries = 0;
       setIsConnected(true);
       // Après une coupure, le serveur a pu écrire des notifications pendant
       // que le client était absent : on redemande le compteur et on demande
@@ -127,8 +140,28 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         .catch(() => undefined);
     });
 
-    socket.on('disconnect', () => {
-      if (active) setIsConnected(false);
+    // Le serveur ferme la socket à l'échéance du jeton (« io server
+    // disconnect »), et socket.io ne se reconnecte pas seul dans ce cas ; un
+    // refus 4401 ne déclenche pas non plus de nouvelle tentative. Dans les
+    // deux cas : rotation des jetons, puis reconnexion — avec un plafond pour
+    // ne pas boucler sur une session réellement révoquée.
+    let authRetries = 0;
+    const reconnectWithFreshToken = () => {
+      if (!active || authRetries >= 3) return;
+      authRetries += 1;
+      void refreshTokens().then((ok) => {
+        if (active && ok && !socket.connected) socket.connect();
+      });
+    };
+
+    socket.on('disconnect', (reason) => {
+      if (!active) return;
+      setIsConnected(false);
+      if (reason === 'io server disconnect') reconnectWithFreshToken();
+    });
+
+    socket.on('connect_error', (err) => {
+      if (isAuthRefusal(err)) reconnectWithFreshToken();
     });
 
     socket.on(SOCKET_EVENTS.NOTIFICATION_NEW, (payload: NotificationDto) => {

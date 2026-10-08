@@ -700,7 +700,7 @@ async function main() {
   if (process.env.NODE_ENV === 'production' && process.env.SEED_ALLOW_PRODUCTION !== 'true') {
     throw new Error(
       'Seed de démonstration refusé en production (comptes aux mots de passe publics). ' +
-        'Créez le premier administrateur manuellement.'
+        'Utilisez « npm run db:bootstrap » (docs/DEPLOIEMENT-PRODUCTION.md).'
     );
   }
   const context = await seedReferenceData();

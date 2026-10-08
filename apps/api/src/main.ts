@@ -11,6 +11,7 @@ import { errorHandler } from './common/http/async-handler';
 import { securityHeaders } from './common/http/rate-limit';
 import { rejectNullBytes } from './common/http/input-guard';
 import { prismaService } from './database/prisma.service';
+import { sessionService } from './common/auth/session.service';
 import { redisService } from './redis/redis.service';
 import { inAppChannel, registerChannel, socketChannel } from './modules/notifications/channels';
 import { pushChannel } from './modules/notifications/push.channel';
@@ -76,7 +77,13 @@ function createApp() {
   // d'audit s'y trompe et devient inutilisable pour remonter à une machine.
   // `TRUST_PROXY` est donc une décision de déploiement, explicite : la prudence
   // d'Express par défaut est justement de ne croire personne.
-  const trustProxy = process.env.TRUST_PROXY === 'true';
+  //
+  // En production, l'API est toujours derrière la passerelle de l'hébergeur
+  // (Koyeb, Render…) : 1 relais est supposé sauf `TRUST_PROXY=false` explicite.
+  // Vérifier le réglage avec GET /api/v1/health/network (compte admin).
+  const trustProxy =
+    process.env.TRUST_PROXY === 'true' ||
+    (process.env.NODE_ENV === 'production' && process.env.TRUST_PROXY !== 'false');
   if (trustProxy) {
     // Nombre de proxys de confiance devant l'API (1 par défaut). `true`
     // ferait confiance à n'importe quel X-Forwarded-For envoyé par le client,
@@ -126,11 +133,20 @@ async function bootstrap() {
     );
   }
 
-  const port = Number(process.env.API_PORT ?? APP_CONFIG.ports.api);
+  // `PORT` est la variable imposée par les hébergeurs (Koyeb, Render, Railway…).
+  const port = Number(process.env.PORT ?? process.env.API_PORT ?? APP_CONFIG.ports.api);
   const host = process.env.API_HOST ?? '0.0.0.0';
 
   const allowedOrigins = resolveAllowedOrigins();
-  if (!allowedOrigins.includes('http://localhost:3000')) {
+  if (process.env.NODE_ENV === 'production') {
+    const insecure = allowedOrigins.filter((o) => !o.startsWith('https://'));
+    if (allowedOrigins.length === 0 || insecure.length > 0) {
+      console.warn(
+        `[RUNEX API] CORS_ORIGIN doit lister l'origine HTTPS du frontend (ex. https://runex.vercel.app). ` +
+          `Valeurs non HTTPS : [${insecure.join(', ') || 'vide'}].`
+      );
+    }
+  } else if (!allowedOrigins.includes('http://localhost:3000')) {
     console.warn(
       `[RUNEX API] CORS_ORIGIN [${allowedOrigins.join(', ') || 'vide'}] n'inclut pas ` +
         'http://localhost:3000 : le frontend Next.js en développement sera bloqué par CORS.'
@@ -138,9 +154,11 @@ async function bootstrap() {
   }
 
   const server = createApp().listen(port, host, () => {
-    console.log(`[RUNEX API] En écoute sur http://localhost:${port}`);
-    console.log(`[RUNEX API] Health Check : http://localhost:${port}/api/v1/health`);
-    console.log(`[RUNEX API] Swagger Docs  : http://localhost:${port}/api/v1/docs`);
+    console.log(`[RUNEX API] En écoute sur ${host}:${port}`);
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`[RUNEX API] Health Check : http://localhost:${port}/api/v1/health`);
+      console.log(`[RUNEX API] Swagger Docs  : http://localhost:${port}/api/v1/docs`);
+    }
   });
 
   // Derrière un relais (Next.js, nginx, load balancer), le relais réutilise ses
@@ -166,16 +184,32 @@ async function bootstrap() {
     `[RUNEX API] Canaux de notification : in_app, socket, push${pushStatus.enabled ? '' : ' (désactivé: ' + (pushStatus.error ?? 'non configuré') + ')'}` 
   );
 
-  const shutdown = (signal: string) => {
-    console.log(`[RUNEX API] ${signal} reçu, arrêt en cours...`);
-    server.close(async () => {
-      await Promise.allSettled([
-        closeRealtime(),
-        prismaService.disconnect(),
-        redisService.disconnect(),
-      ]);
-      process.exit(0);
+  // Ménage des sessions expirées : au démarrage puis chaque jour.
+  const purge = () =>
+    void sessionService.purgeStale().catch((error: unknown) => {
+      console.warn('[RUNEX API] Ménage des sessions impossible :', String(error));
     });
+  if (databaseReady) purge();
+  setInterval(purge, 24 * 3600 * 1000).unref();
+
+  // Arrêt propre (redéploiement) : les websockets ouverts empêcheraient
+  // `server.close` de rendre la main ; ils sont fermés d'abord, puis les
+  // connexions keep-alive. Au-delà de 10 s, l'arrêt est forcé.
+  let stopping = false;
+  const shutdown = (signal: string) => {
+    if (stopping) return;
+    stopping = true;
+    console.log(`[RUNEX API] ${signal} reçu, arrêt en cours...`);
+    setTimeout(() => process.exit(0), 10_000).unref();
+    void closeRealtime()
+      .catch(() => undefined)
+      .finally(() => {
+        server.close(async () => {
+          await Promise.allSettled([prismaService.disconnect(), redisService.disconnect()]);
+          process.exit(0);
+        });
+        server.closeIdleConnections();
+      });
   };
 
   process.on('SIGINT', () => shutdown('SIGINT'));

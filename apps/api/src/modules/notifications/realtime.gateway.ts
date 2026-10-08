@@ -39,11 +39,9 @@ let io: Server | null = null;
  * déconnecter une connexion non autorisée déjà établie.
  */
 async function authenticate(socket: Socket): Promise<boolean> {
-  const token =
-    (socket.handshake.auth?.token as string | undefined) ??
-    // Accepté pour compatibilité avec l'application mobile existante ;
-    // préférer `auth.token` (une URL se retrouve dans les journaux).
-    (socket.handshake.query?.token as string | undefined);
+  // Uniquement `auth.token` : un jeton passé dans l'URL (`?token=`) finirait
+  // dans les journaux d'accès de l'hébergeur et des relais.
+  const token = socket.handshake.auth?.token as string | undefined;
   if (!token || typeof token !== 'string') return false;
   const payload = verifyAccessToken(token);
   if (!payload?.sub || !payload.sid) return false;

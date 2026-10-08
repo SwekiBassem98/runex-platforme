@@ -61,7 +61,9 @@
     "qa:bon-livraison": "node qa/qa-bon-livraison-27.mjs",
     "qa:scan": "node qa/qa-scan-mobile-27.mjs",
     "qa:sounds": "node qa/qa-sounds-28.mjs",
-    "qa:responsive-phones": "node qa/qa-responsive-phones-28.mjs"
+    "qa:responsive-phones": "node qa/qa-responsive-phones-28.mjs",
+    "db:bootstrap": "tsx prisma/bootstrap.ts",
+    "db:app-role": "psql \"$DATABASE_URL\" -v app_password=\"$APP_PASSWORD\" -f scripts/neon-app-role.sql"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",

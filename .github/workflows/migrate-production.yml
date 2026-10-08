@@ -1,0 +1,53 @@
+# Applique les migrations Prisma à la base de production (Neon).
+#
+# Déclenchement : à chaque push sur main qui touche prisma/, ou à la main
+# (onglet Actions → « Migrations production » → Run workflow).
+#
+# Secret requis (Settings → Secrets and variables → Actions) :
+#   PRODUCTION_DIRECT_DATABASE_URL  URL DIRECTE Neon (hôte sans « -pooler »),
+#                                   rôle propriétaire (neondb_owner), sslmode=require.
+# L'API, elle, utilise une autre URL : pooler + rôle runex_app (voir docs/DEPLOIEMENT-PRODUCTION.md).
+name: Migrations production
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'prisma/schema.prisma'
+      - 'prisma/migrations/**'
+
+concurrency:
+  group: migrate-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Vérifier le secret
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DIRECT_DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::Secret PRODUCTION_DIRECT_DATABASE_URL absent."; exit 1
+          fi
+          case "$DATABASE_URL" in *-pooler*) echo "::error::Utiliser l'URL DIRECTE (sans -pooler) pour migrer."; exit 1;; esac
+      - name: Version de la CLI Prisma (celle du dépôt)
+        run: echo "PRISMA_VERSION=$(node -p "require('./package-lock.json').packages['node_modules/prisma'].version")" >> "$GITHUB_ENV"
+      - name: État avant
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DIRECT_DATABASE_URL }}
+        run: npx --yes prisma@$PRISMA_VERSION migrate status || true
+      - name: Appliquer les migrations
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DIRECT_DATABASE_URL }}
+        run: npx --yes prisma@$PRISMA_VERSION migrate deploy

@@ -109,6 +109,30 @@ export function createApiRouter(): Router {
 
   // Health check
   router.get('/health', asyncHandler((req, res) => healthController.check(req, res)));
+  // Vivacité sans base de données : pour les sondes de l'hébergeur (Koyeb,
+  // Render…). Une sonde toutes les quelques secondes qui interroge PostgreSQL
+  // empêcherait la base serverless (Neon) de se mettre en veille.
+  router.get('/health/live', (_req, res) => {
+    res.set('Cache-Control', 'no-store').json({ status: 'ok' });
+  });
+  // Diagnostic de déploiement (administrateur) : l'adresse vue par l'API,
+  // pour vérifier le réglage TRUST_PROXY_HOPS derrière l'hébergeur.
+  router.get(
+    '/health/network',
+    authenticateToken,
+    requireRoles(RoleType.ADMIN),
+    (req, res) => {
+      res.set('Cache-Control', 'no-store').json({
+        success: true,
+        data: {
+          ip: req.ip,
+          ips: req.ips,
+          forwardedFor: req.headers['x-forwarded-for'] ?? null,
+          trustProxy: req.app.get('trust proxy') ?? false,
+        },
+      });
+    }
+  );
 
   // Swagger OpenAPI Documentation
   // Documentation OpenAPI : ouverte en développement, fermée en production

@@ -15,26 +15,21 @@ import { clientIp, clientUserAgent, runWithAuditContext } from './audit-context'
  * @param res        Réponse, inemployée : la signature est celle d'un
  *                   middleware.
  * @param next       Suite de la chaîne, exécutée *dans* le contexte.
- * @param trustProxy L'application est-elle derrière un proxy de confiance ?
- *                   Vient de la configuration, jamais de l'en-tête seul :
- *                   croire `X-Forwarded-For` sans déploiement protégé rend
- *                   l'adresse falsifiable par n'importe quel client.
+ * @param _trustProxy Conservé pour compatibilité : l'adresse vient de
+ *                   `req.ip`, qui applique déjà le réglage `trust proxy`.
  */
-/** `X-Forwarded-For` peut arriver en liste ; le client d'origine est le premier. */
-function forwardedFor(entete: string | string[] | undefined): string | null {
-  const brut = Array.isArray(entete) ? entete[0] : entete;
-  return brut ?? null;
-}
-
 export function auditContextMiddleware(
   req: Request,
   res: Response,
   next: NextFunction,
-  trustProxy = false
+  _trustProxy = false
 ): void {
   const entetes = req.headers;
   const context = {
-    ip: clientIp(req.ip, trustProxy ? forwardedFor(entetes['x-forwarded-for']) : null),
+    // `req.ip` applique le nombre de relais de confiance (TRUST_PROXY_HOPS) :
+    // la première adresse de X-Forwarded-For, elle, est écrite par le client
+    // et falsifiable.
+    ip: clientIp(req.ip, null),
     userAgent: clientUserAgent(entetes['user-agent']),
     // Un identifiant de requête permet de relier plusieurs lignes d'audit
     // nées d'un même aller-retour : une réception, par exemple, écrit à la

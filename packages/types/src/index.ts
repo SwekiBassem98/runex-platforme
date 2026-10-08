@@ -889,7 +889,8 @@ export interface PaymentVoucherDto {
 export interface HealthCheckResponse {
   status: 'ok' | 'degraded' | 'error';
   timestamp: string;
-  uptime: number;
+  /** Absent en production (information de reconnaissance). */
+  uptime?: number;
   services: {
     api: { status: 'up' };
     database: {
@@ -908,7 +909,7 @@ export interface HealthCheckResponse {
     /** Canal temps réel des notifications, et nombre d'écrans connectés. */
     realtime: {
       status: 'up' | 'down';
-      sockets: number;
+      sockets?: number;
     };
   };
   version: string;

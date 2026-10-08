@@ -35,7 +35,11 @@ function verifyPaymentCode(input: string, stored: string | null): boolean {
     .toString('hex');
   // Comparaison à temps constant : la durée de la comparaison ne doit pas
   // révéler le nombre de caractères corrects.
-  return crypto.timingSafeEqual(Buffer.from(candidate, 'hex'), Buffer.from(hash, 'hex'));
+  const expected = Buffer.from(hash, 'hex');
+  const actual = Buffer.from(candidate, 'hex');
+  // Condensat stocké d'une autre longueur : refus, pas une 500.
+  if (expected.length !== actual.length) return false;
+  return crypto.timingSafeEqual(actual, expected);
 }
 
 export class PaymentsService {
