@@ -16,7 +16,9 @@ function isNonEmptyString(value: unknown): value is string {
 
 export class AuthController {
   async login(req: Request, res: Response): Promise<void> {
-    const { email, password } = req.body ?? {};
+    // `identifier` (appli livreur : email, code livreur ou téléphone) ou `email`.
+    const { password } = req.body ?? {};
+    const email = isNonEmptyString(req.body?.identifier) ? req.body.identifier : req.body?.email;
     if (!isNonEmptyString(email) || !isNonEmptyString(password)) {
       res.status(400).json({
         success: false,

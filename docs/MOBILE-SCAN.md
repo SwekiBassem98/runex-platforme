@@ -85,9 +85,21 @@ Le code lu sur le bon (y compris `…-2`) vaut identifiant partout :
 - `PATCH /ramassages/{ref}/packages` `{ "attach": ["<code scanné>"] }` (UUID toujours accepté) ;
 - tournée : ajout / retrait d'un colis ; réception dépôt ; acceptation inter-dépôt.
 
-## 5. Parcours type
+## 5. Connexion et profil du livreur
 
-1. Connexion `POST /auth/login` → `accessToken`, `refreshToken` ; `GET /auth/me` → `driverId`.
+- `POST /auth/login { identifier, password }` — `identifier` : email, **téléphone**
+  (`50123456`, `+216 50 123 456`), **code livreur** (`LIV-BEN-001`) ou **matricule
+  du véhicule** (`214 TUN 4512`, espaces et casse ignorés). `{ email, password }`
+  reste accepté. Un téléphone ou un matricule partagé par plusieurs comptes ne
+  connecte personne. Les échecs sont limités par identifiant et adresse IP.
+- Jeton d'accès 15 min ; `POST /auth/refresh { refreshToken }` le renouvelle
+  (le jeton de rafraîchissement change à chaque fois : garder le nouveau).
+- `GET /drivers/me` (livreur) : code livreur, véhicule, matricule, agence, caisse.
+- `GET /ramassages/driver/active` : ramassages à faire, plus ceux effectués aujourd'hui.
+
+## 6. Parcours type
+
+1. Connexion `POST /auth/login` → `accessToken`, `refreshToken` ; `GET /drivers/me`.
 2. Tournée du jour : `GET /runsheets/driver/active` ; ramassages : `GET /ramassages/driver/active`.
 3. Scan → `POST /scan` → afficher `package` (+ `piece`, `relation`) et un bouton par `actions[]`.
 4. Bouton → appel `method` + `path` (+ `body`) → rescanner ou rafraîchir.
