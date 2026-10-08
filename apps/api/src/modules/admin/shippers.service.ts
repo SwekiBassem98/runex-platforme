@@ -20,6 +20,7 @@
 
 import { Prisma } from '@prisma/client';
 import { getPrisma } from '../../common/database/prisma-context';
+import { sessionService } from '../../common/auth/session.service';
 import { auditService } from '../../common/audit/audit.service';
 import { badRequest, conflict, notFound, asUuid } from '../../common/errors/api-error';
 import { usersService, type ActorRef, type RoleSchema } from './users.service';
@@ -310,6 +311,7 @@ export class ShippersService {
       data: { isActive },
       select: SHIPPER_SELECT,
     });
+    if (!isActive) await sessionService.revokeAllForShipper(uuid);
 
     await auditService.record({
       entityType: 'SHIPPER',
@@ -356,6 +358,7 @@ export class ShippersService {
       create: { shipperId: sUuid, userId: uUuid },
       update: { shipperId: sUuid },
     });
+    await sessionService.revokeAllForUser(uUuid);
 
     await auditService.record({
       entityType: 'SHIPPER',
@@ -386,6 +389,7 @@ export class ShippersService {
     if (lien.shipperId !== sUuid) throw notFound("Ce compte n'est pas rattaché à cet expéditeur.");
 
     await prisma.shipperUser.delete({ where: { userId: uUuid } });
+    await sessionService.revokeAllForUser(uUuid);
 
     await auditService.record({
       entityType: 'SHIPPER',

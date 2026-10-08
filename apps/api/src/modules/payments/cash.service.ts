@@ -43,6 +43,7 @@ import {
 } from '@logixpress/types';
 import { getPrisma } from '../../common/database/prisma-context';
 import { BusinessRuleError } from '../../common/errors/api-error';
+import { nextPaymentNumber } from '../../common/database/numbering';
 import { notificationDispatcher } from '../notifications/notification.dispatcher';
 import { auditService } from '../../common/audit/audit.service';
 
@@ -98,10 +99,6 @@ export function toDecimal(value: unknown, label: string): Prisma.Decimal {
   }
 }
 
-/** Numéro d'encaissement lisible et unique dans l'année. */
-function nextPaymentNumber(existing: number): string {
-  return `PAY-${new Date().getFullYear()}-${String(existing).padStart(6, '0')}`;
-}
 
 export class CashService {
   private get prisma() {
@@ -186,12 +183,21 @@ export class CashService {
     transactionRef?: string | null;
     collectedAt?: Date;
     notes?: string | null;
-  }): Promise<void> {
+  }, tx?: Prisma.TransactionClient): Promise<() => Promise<void>> {
     // Les mêmes règles que `assertCollectable`, appliquées ici pour qu'un
     // appel direct à la caisse reste protégé aussi.
     const method = this.assertCollectable(input) as PrismaPaymentMethod;
 
-    const existing = await this.prisma.payment.findUnique({
+    // Sans transaction fournie, l'encaissement ouvre la sienne : le numéro
+    // d'encaissement est calculé sous verrou dans cette transaction.
+    if (!tx) {
+      const notify = await this.prisma.$transaction((inner) => this.recordCollection(input, inner));
+      await notify();
+      return async () => undefined;
+    }
+    const client = tx;
+
+    const existing = await client.payment.findUnique({
       where: { packageId: input.packageId },
       select: { id: true, status: true },
     });
@@ -219,24 +225,22 @@ export class CashService {
     };
 
     if (existing) {
-      await this.prisma.payment.update({ where: { id: existing.id }, data });
+      await client.payment.update({ where: { id: existing.id }, data });
       // Une reprise — une livraison partielle suivie d'une reprise, par
       // exemple — réécrit l'encodage sans rouvrir l'alerte : la caisse a déjà
       // reçu la ligne, et la notifier de nouveau l'obligerait à recompter.
-      return;
+      return async () => undefined;
     }
 
-    const count = await this.prisma.payment.count({
-      where: { paymentNumber: { startsWith: `PAY-${new Date().getFullYear()}-` } },
-    });
-    const created = await this.prisma.payment.create({
-      data: { paymentNumber: nextPaymentNumber(count + 1), packageId: input.packageId, ...data },
+    const created = await client.payment.create({
+      data: { paymentNumber: await nextPaymentNumber(client), packageId: input.packageId, ...data },
       select: { id: true, paymentNumber: true },
     });
 
     // L'argent a changé de mains : la caisse doit l'apprendre pour le
-    // valider. C'est le seul moment où cette attente commence.
-    await notificationDispatcher.notify({
+    // valider. La notification est envoyée APRÈS la validation de la
+    // transaction par l'appelant (fonction retournée).
+    return () => notificationDispatcher.notify({
       event: NotificationEvent.PAYMENT_RECEIVED,
       title: 'Encaissement à valider',
       content:
@@ -249,7 +253,7 @@ export class CashService {
       paymentId: created.id,
       packageId: input.packageId,
       actorUserId: input.driverUserId ?? null,
-    });
+    }).then(() => undefined);
   }
 
   /**
@@ -259,11 +263,17 @@ export class CashService {
    * absence d'encaissement, et le rapport de caisse doit pouvoir dire
    * « 40 pris, 5 rendus » plutôt que « 35 pris ».
    */
-  async recordRefund(paymentId: string, amount: Prisma.Decimal, reason: string): Promise<void> {
+  async recordRefund(
+    paymentId: string,
+    amount: Prisma.Decimal,
+    reason: string,
+    tx?: Prisma.TransactionClient
+  ): Promise<void> {
+    const client = tx ?? this.prisma;
     if (amount.lessThanOrEqualTo(0)) {
       throw new BusinessRuleError('Le montant remboursé doit être positif.', 400);
     }
-    const payment = await this.prisma.payment.findUnique({
+    const payment = await client.payment.findUnique({
       where: { id: paymentId },
       select: { id: true, status: true, amountCollected: true, amountRefunded: true },
     });
@@ -284,7 +294,7 @@ export class CashService {
       );
     }
 
-    await this.prisma.payment.update({
+    await client.payment.update({
       where: { id: paymentId },
       data: { amountRefunded: total, status: PrismaPaymentStatus.REMBOURSE, discrepancyReason: reason },
     });

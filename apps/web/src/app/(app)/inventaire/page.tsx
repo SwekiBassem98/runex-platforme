@@ -307,45 +307,17 @@ export default function InventairePage() {
     setDetailHistory(null);
     setDetailLoading(true);
     try {
+      // Le détail d'exception porte déjà la chronologie complète du colis
+      // (triée), lue par l'API avec le périmètre de l'utilisateur.
       const res = await inventoryExceptionsApi.detail(row.id);
-      const d = res as unknown as { detail?: { statusHistory?: unknown[]; deliveryAttempts?: unknown[] }; exception?: unknown };
-      // try to fetch timeline via /colis/:id if available
-      // fallback to exception detail's history
-      if (d?.detail && Array.isArray((d.detail as { statusHistory?: unknown[] }).statusHistory)) {
-        setDetailHistory((d.detail as { statusHistory: typeof detailHistory }).statusHistory as typeof detailHistory);
-      } else {
-        // fallback: fetch via /colis
-        const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
-        // Use direct fetch to /api/v1/colis/:id
-        const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:4000/api/v1';
-        const headers: Record<string, string> = {};
-        if (token) headers.Authorization = `Bearer ${token}`;
-        // Instead call inventory detail already contains statusHistory if available
-        // If not, show fallback
-        setDetailHistory([]);
-      }
+      const d = res as unknown as { detail?: { statusHistory?: unknown[] } };
+      const history = d?.detail?.statusHistory;
+      setDetailHistory(Array.isArray(history) ? (history as typeof detailHistory) : []);
     } catch {
       setDetailHistory([]);
-    } finally { setDetailLoading(false); }
-    // Also try to load full colis timeline via API if not yet
-    try {
-      const r = await fetch(`/api/v1/colis/${row.id}`, { headers: { Authorization: `Bearer ${localStorage.getItem('token') ?? ''}` } });
-      if (r.ok) {
-        const j = await r.json();
-        const pkg = j?.data;
-        if (pkg?.statusHistory || pkg?.trackingTimeline) {
-          const hist = pkg.trackingTimeline ?? pkg.statusHistory ?? [];
-          setDetailHistory(hist.map((h: { status: string; title: string; description?: string; locationName?: string; location?: string; operatorName?: string; actor?: string; createdAt?: string; timestamp?: string }) => ({
-            status: h.status,
-            title: h.title ?? h.status,
-            description: h.description ?? null,
-            locationName: h.locationName ?? h.location ?? null,
-            operatorName: h.operatorName ?? h.actor ?? '—',
-            createdAt: h.createdAt ?? h.timestamp ?? new Date().toISOString(),
-          })));
-        }
-      }
-    } catch { /* ignore */ }
+    } finally {
+      setDetailLoading(false);
+    }
   };
 
   const selecteur = (

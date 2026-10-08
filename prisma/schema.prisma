@@ -499,6 +499,7 @@ model Deposit {
   @@index([companyId])
   @@index([isMainHub])
   @@index([governorate])
+  @@index([managerId])
 }
 
 model DeliveryZone {
@@ -787,6 +788,10 @@ model Package {
   @@index([paymentVoucherId])
   @@index([pickupAppointmentId])
   @@index([createdAt])
+  // Déclarés ici pour que `prisma migrate dev` ne les supprime plus comme dérive
+  // (voir migration 20261010000000_restore_indexes).
+  @@index([receivedByUserId])
+  @@index([status, currentDepositId])
 }
 
 model PackageItem {
@@ -828,9 +833,12 @@ model PackageTimeline {
 
   package Package @relation(fields: [packageId], references: [id], onDelete: Cascade)
 
+  // Unicité de la clé d'idempotence par colis. PostgreSQL autorise plusieurs
+  // NULL dans un index unique : les événements sans clé ne sont pas concernés,
+  // exactement comme l'ancien index partiel (WHERE "idempotencyKey" IS NOT NULL).
+  @@unique([packageId, idempotencyKey])
   @@index([packageId])
   @@index([createdAt])
-  @@index([packageId, idempotencyKey])
 }
 
 // ==============================================================================
@@ -1223,4 +1231,6 @@ model AuditLog {
   @@index([action])
   @@index([userId])
   @@index([timestamp])
+  @@index([entityType, entityId, timestamp(sort: Desc)])
+  @@index([userId, timestamp(sort: Desc)])
 }

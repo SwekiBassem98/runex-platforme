@@ -1,6 +1,9 @@
 import { identifyAuditActor } from '../audit/audit-context';
 import type { Request, Response, NextFunction } from 'express';
 import { verifyAccessToken } from './jwt.util';
+import { sessionService } from './session.service';
+import { getPrisma } from '../database/prisma-context';
+import { isUuid } from '../errors/api-error';
 import { getPermissionsForRole } from './permissions.map';
 import { RoleType, PermissionCode } from '@logixpress/types';
 
@@ -17,6 +20,8 @@ export interface AuthenticatedRequest extends Request {
     driverId?: string;
     driverName?: string;
     depositId?: string;
+    /** Session (`Session.id`) du jeton présenté. */
+    sessionId?: string;
   };
   dataScope?: {
     shipperId?: string;
@@ -26,9 +31,18 @@ export interface AuthenticatedRequest extends Request {
 }
 
 /**
- * Middleware d'authentification par JWT Bearer Token
+ * Middleware d'authentification par JWT Bearer Token.
+ *
+ * Le jeton seul ne suffit pas : la session qu'il désigne (`sid`) doit être
+ * ouverte, et le compte (ainsi que la fiche livreur ou l'expéditeur rattaché)
+ * toujours actif. Une déconnexion ou une désactivation prend donc effet à la
+ * requête suivante, sans attendre l'expiration du jeton d'accès.
  */
-export function authenticateToken(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
+export async function authenticateToken(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
 
@@ -41,7 +55,7 @@ export function authenticateToken(req: AuthenticatedRequest, res: Response, next
   }
 
   const payload = verifyAccessToken(token);
-  if (!payload) {
+  if (!payload || !payload.sid) {
     res.status(401).json({
       success: false,
       message: 'Session expirée ou jeton invalide. Veuillez vous reconnecter.',
@@ -49,8 +63,30 @@ export function authenticateToken(req: AuthenticatedRequest, res: Response, next
     return;
   }
 
+  let check;
+  try {
+    check = await sessionService.check(payload.sid, payload.sub);
+  } catch (error) {
+    next(error);
+    return;
+  }
+  if (!check.ok) {
+    res.status(401).json({
+      success: false,
+      message:
+        check.reason === 'session'
+          ? 'Session expirée ou fermée. Veuillez vous reconnecter.'
+          : 'Votre compte est désactivé. Veuillez contacter l\'administrateur.',
+    });
+    return;
+  }
+
   const role = payload.role as RoleType;
   const permissions = getPermissionsForRole(role);
+  if (permissions.length === 0) {
+    res.status(403).json({ success: false, message: 'Rôle inconnu : accès refusé.' });
+    return;
+  }
 
   req.user = {
     id: payload.sub,
@@ -63,6 +99,7 @@ export function authenticateToken(req: AuthenticatedRequest, res: Response, next
     driverId: payload.driverId,
     driverName: payload.driverName,
     depositId: payload.depositId,
+    sessionId: payload.sid,
   };
 
   // Le journal d'audit doit nommer l'auteur. L'identité est ouverte à ce
@@ -72,12 +109,11 @@ export function authenticateToken(req: AuthenticatedRequest, res: Response, next
 
   // Périmètre d'isolation des données (Data Scoping)
   //
-  // Un expéditeur n'existe que par rapport à une entreprise : sans `shipperId`,
-  // il n'a rien à quoi se comparer. La réponse est donc un refus, jamais une
-  // requête sans filtre. Les autres filtres de la chaîne `where` sont écrits
-  // comme `if (scope?.shipperId)`, et un périmètre absent s'y lirait comme
-  // « pas de contrainte » — c'est-à-dire « tout le parc ». Le refus est posé ici,
-  // une seule fois, plutôt que dans chaque service.
+  // Un rôle « cantonné » (expéditeur, livreur, magasinier) n'existe que par
+  // rapport à son entreprise, sa fiche chauffeur ou son dépôt. Sans cet
+  // identifiant il n'a rien à quoi se comparer : la réponse est un refus,
+  // jamais une requête sans filtre. Les services écrivent leurs filtres
+  // `if (scope?.x)`, où un périmètre absent se lirait « tout le parc ».
   if (role === RoleType.EXPEDITEUR) {
     if (!payload.shipperId) {
       res.status(403).json({
@@ -89,11 +125,26 @@ export function authenticateToken(req: AuthenticatedRequest, res: Response, next
     }
     req.dataScope = { shipperId: payload.shipperId };
   } else if (role === RoleType.LIVREUR) {
+    if (!payload.driverId) {
+      res.status(403).json({
+        success: false,
+        message:
+          "Votre compte livreur n'est rattaché à aucune fiche chauffeur. Contactez l'administrateur RUNEX.",
+      });
+      return;
+    }
     req.dataScope = { assignedDriverId: payload.driverId };
   } else if (role === RoleType.AGENT_DEPOT) {
+    if (!payload.depositId) {
+      res.status(403).json({
+        success: false,
+        message: "Aucun dépôt n'est rattaché à votre compte. Contactez l'administrateur RUNEX.",
+      });
+      return;
+    }
     req.dataScope = { depositId: payload.depositId };
   } else {
-    req.dataScope = {}; // Accès global pour ADMIN et GESTIONNAIRE
+    req.dataScope = {}; // Accès global pour ADMIN, GESTIONNAIRE et FINANCE
   }
 
   next();
@@ -112,7 +163,7 @@ export function requireRoles(...allowedRoles: RoleType[]) {
     if (!allowedRoles.includes(req.user.role)) {
       res.status(403).json({
         success: false,
-        message: `Accès refusé. Rôle requis : [${allowedRoles.join(', ')}]. Votre rôle : ${req.user.role}`,
+        message: 'Accès refusé : votre profil ne permet pas cette action.',
       });
       return;
     }
@@ -182,4 +233,33 @@ export function requireAnyPermission(...acceptedPermissions: PermissionCode[]) {
 
     next();
   };
+}
+
+/**
+ * Dépôt effectif d'une opération de magasin.
+ *
+ * Un magasinier (périmètre `depositId`) opère dans SON dépôt : un autre dépôt
+ * existant demandé dans le corps ou l'URL est refusé (403). Une valeur mal
+ * formée ou inconnue est transmise telle quelle au service, qui répond 400
+ * « dépôt invalide » comme pour tout autre profil. Les profils globaux peuvent
+ * choisir le dépôt, à défaut celui de leur compte.
+ */
+export async function resolveOperatingDeposit(
+  req: AuthenticatedRequest,
+  requested: unknown
+): Promise<string | null> {
+  const wanted = typeof requested === 'string' && requested.trim() ? requested.trim() : null;
+  const scoped = req.dataScope?.depositId;
+  if (scoped) {
+    if (wanted && wanted !== scoped && isUuid(wanted)) {
+      const exists = await getPrisma().deposit.findUnique({ where: { id: wanted }, select: { id: true } });
+      if (exists) {
+        const err = new Error('Vous ne pouvez opérer que dans votre propre dépôt.') as Error & { status: number };
+        err.status = 403;
+        throw err;
+      }
+    }
+    return wanted ?? scoped;
+  }
+  return wanted ?? req.user?.depositId ?? null;
 }

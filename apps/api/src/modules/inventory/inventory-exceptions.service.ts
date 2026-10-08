@@ -48,7 +48,7 @@ export const DEFAULT_NON_ENVOYE_HOURS = 48;
 export const DEFAULT_RETOUR_STUCK_HOURS = 48;
 
 /** Plafond de scan : on n'évalue jamais plus de N colis d'un coup. */
-const MAX_SCAN = 2000;
+const MAX_SCAN = 5000;
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 100;
 const IMPOSSIBLE_ID = '00000000-0000-0000-0000-000000000000';
@@ -192,7 +192,7 @@ const ROW_SELECT = {
   currentDeposit: { select: { id: true, name: true } },
   currentRunsheet: { select: { id: true, runsheetNumber: true, status: true, driverId: true } },
   interDepotTransfer: { select: { id: true, transferNumber: true, status: true } },
-  statusHistory: { select: { status: true, title: true, createdAt: true } },
+  statusHistory: { select: { status: true, title: true, createdAt: true }, orderBy: { createdAt: 'asc' } },
   payment: { select: { status: true } },
 } as const;
 
@@ -612,6 +612,34 @@ function describeFilters(params: InventoryExceptionParams): Record<string, strin
 }
 
 export class InventoryExceptionsService {
+  /**
+   * Colis à évaluer.
+   *
+   * Un colis terminé (livré, restitué, annulé) n'est suspect que s'il n'a
+   * aucune trace : les colis en cours sont lus en priorité, LES PLUS ANCIENS
+   * D'ABORD — ce sont eux que l'inventaire doit faire remonter. L'ancienne
+   * lecture prenait les 2 000 plus récents, si bien qu'au-delà de ce volume les
+   * colis réellement bloqués depuis longtemps disparaissaient de la liste.
+   */
+  private async scanCandidates(baseWhere: Record<string, unknown>) {
+    const prisma = getPrisma();
+    const terminal = TERMINAL_PACKAGE_STATUSES as unknown as string[];
+    const [actifs, sansTrace] = await Promise.all([
+      prisma.package.findMany({
+        where: { AND: [baseWhere, { status: { notIn: terminal as never } }] },
+        select: ROW_SELECT,
+        orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
+        take: MAX_SCAN,
+      }),
+      prisma.package.findMany({
+        where: { AND: [baseWhere, { status: { in: terminal as never } }, { statusHistory: { none: {} } }] },
+        select: ROW_SELECT,
+        take: 500,
+      }),
+    ]);
+    return [...actifs, ...sansTrace];
+  }
+
   async list(params: InventoryExceptionParams = {}): Promise<InventoryExceptionListResult> {
     const prisma = getPrisma();
     const th = thresholdsFrom(params);
@@ -623,12 +651,7 @@ export class InventoryExceptionsService {
     // sur un plafond `MAX_SCAN`. Évite le scan complet en mémoire quand
     // l'inventaire comptera des dizaines de milliers de lignes : le socle
     // (dépôt, recherche, statut) réduit déjà fortement le candidat.
-    const candidates = await prisma.package.findMany({
-      where: baseWhere,
-      select: ROW_SELECT,
-      orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
-      take: MAX_SCAN,
-    });
+    const candidates = await this.scanCandidates(baseWhere);
 
     const evaluated: { row: RawRow; eval: ReturnType<typeof evaluatePackage> }[] = [];
     for (const c of candidates) {
@@ -694,11 +717,7 @@ export class InventoryExceptionsService {
     // exceptions, pour que le filtre reste utile même sans exception.
     const baseWhere = buildBaseWhere({ ...params, category: undefined, severity: undefined, status: undefined, search: undefined });
     // Pour les catégories/sevérités, il faut évaluer
-    const candidates = await prisma.package.findMany({
-      where: baseWhere,
-      select: ROW_SELECT,
-      take: MAX_SCAN,
-    });
+    const candidates = await this.scanCandidates(baseWhere);
     const evaluated = candidates
       .map((c) => evaluatePackage(c as unknown as RawRow, now, th))
       .filter(Boolean) as { category: InventoryExceptionCategory; severity: InventoryExceptionSeverity }[];

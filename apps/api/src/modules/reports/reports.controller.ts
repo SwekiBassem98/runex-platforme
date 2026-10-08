@@ -23,6 +23,17 @@ import type { DomaineRapport, FiltresRapport } from './reports.types';
 /** Les domaines exposés. Une route qui en invente un autre ne rend rien. */
 const DOMAINES: DomaineRapport[] = ['colis', 'expediteurs', 'livreurs', 'finance', 'depots'];
 
+/**
+ * Domaines ouverts à un expéditeur. Les rapports « livreurs » (soldes de
+ * caisse, tournées) et « dépôts » (stock et flux de tout le réseau) décrivent
+ * l'exploitation de RUNEX, pas l'activité d'un expéditeur.
+ */
+const DOMAINES_EXPEDITEUR: DomaineRapport[] = ['colis', 'expediteurs', 'finance'];
+
+function domainesAutorises(req: AuthenticatedRequest): DomaineRapport[] {
+  return req.dataScope?.shipperId ? DOMAINES_EXPEDITEUR : DOMAINES;
+}
+
 /** Les deux bornes de période, et rien d'autre : le reste est du bruit. */
 function filtres(req: Request): FiltresRapport {
   const q = req.query as Record<string, string | undefined>;
@@ -34,6 +45,12 @@ class ReportsController {
   private domaine(req: Request): DomaineRapport | null {
     const demande = String(req.params.domaine ?? '');
     return DOMAINES.find((d) => d === demande) ?? null;
+  }
+
+  private refuserSiInterdit(req: AuthenticatedRequest, domaine: DomaineRapport, res: Response): boolean {
+    if (domainesAutorises(req).includes(domaine)) return false;
+    res.status(403).json({ success: false, message: "Ce rapport n'est pas accessible à votre profil." });
+    return true;
   }
 
   /**
@@ -76,6 +93,7 @@ class ReportsController {
     }
     const domaine = this.domaine(req);
     if (this.refuserSi(domaine, res)) return;
+    if (this.refuserSiInterdit(req, domaine!, res)) return;
     const bornes = filtres(req);
     if (this.refuserSiPeriodeIncoherente(bornes, res)) return;
     try {
@@ -94,6 +112,7 @@ class ReportsController {
     }
     const domaine = this.domaine(req);
     if (this.refuserSi(domaine, res)) return;
+    if (this.refuserSiInterdit(req, domaine!, res)) return;
     const bornes = filtres(req);
     if (this.refuserSiPeriodeIncoherente(bornes, res)) return;
     try {
@@ -113,7 +132,7 @@ class ReportsController {
   }
 
   /** `GET /reports/domaines` — ce que l'écran peut proposer. */
-  async domaines(_req: AuthenticatedRequest, res: Response): Promise<void> {
+  async domaines(req: AuthenticatedRequest, res: Response): Promise<void> {
     const libelles: Record<DomaineRapport, string> = {
       colis: 'Colis',
       expediteurs: 'Expéditeurs',
@@ -123,7 +142,7 @@ class ReportsController {
     };
     res.json({
       success: true,
-      data: DOMAINES.map((id) => ({ id, libelle: libelles[id] })),
+      data: domainesAutorises(req).map((id) => ({ id, libelle: libelles[id] })),
     });
   }
 }

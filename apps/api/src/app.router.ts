@@ -25,12 +25,27 @@ import {
 import { openApiSpecification } from './common/swagger/swagger.config';
 import { asyncHandler } from './common/http/async-handler';
 import {
+  loginFailuresLimiter,
+  loginIpLimiter,
+  refreshLimiter,
+  passwordResetLimiter,
+  voucherSecretLimiter,
+} from './common/http/rate-limit';
+import {
   authenticateToken,
   requireRoles,
   requirePermissions,
   requireAnyPermission,
 } from './common/auth/auth.middleware';
 import { RoleType, PermissionCode } from '@logixpress/types';
+
+/**
+ * Rôles autorisés à déclarer un événement de livraison (démarrage, livraison,
+ * échec, report, échange, retour) : le livreur, sur ses propres colis, et
+ * l'exploitation depuis le back-office. Un expéditeur détient COLIS_UPDATE pour
+ * modifier ses colis, mais ne déclare jamais une livraison.
+ */
+const FIELD_ROLES = [RoleType.LIVREUR, RoleType.ADMIN, RoleType.GESTIONNAIRE] as const;
 
 export function createApiRouter(): Router {
   const router = Router();
@@ -94,6 +109,18 @@ export function createApiRouter(): Router {
   router.get('/health', asyncHandler((req, res) => healthController.check(req, res)));
 
   // Swagger OpenAPI Documentation
+  // Documentation OpenAPI : ouverte en développement, fermée en production
+  // sauf décision explicite (ENABLE_API_DOCS=true).
+  const docsEnabled = (): boolean =>
+    process.env.NODE_ENV !== 'production' || process.env.ENABLE_API_DOCS === 'true';
+  router.use('/docs', (req, res, next) => {
+    if (docsEnabled()) {
+      next();
+      return;
+    }
+    res.status(404).json({ success: false, message: 'Ressource introuvable.' });
+  });
+
   router.get('/docs/json', (req, res) => {
     res.json(openApiSpecification);
   });
@@ -134,15 +161,17 @@ export function createApiRouter(): Router {
   });
 
   // Authentification publique
-  router.post('/auth/login', asyncHandler((req, res) => authController.login(req, res)));
-  router.post('/auth/refresh', asyncHandler((req, res) => authController.refreshToken(req, res)));
+  router.post('/auth/login', loginIpLimiter, loginFailuresLimiter, asyncHandler((req, res) => authController.login(req, res)));
+  router.post('/auth/refresh', refreshLimiter, asyncHandler((req, res) => authController.refreshToken(req, res)));
   router.get('/auth/demo-users', asyncHandler((req, res) => authController.getDemoUsers(req, res)));
   router.post(
     '/auth/password-reset/request',
+    passwordResetLimiter,
     asyncHandler((req, res) => authController.requestPasswordReset(req, res))
   );
   router.post(
     '/auth/password-reset/confirm',
+    passwordResetLimiter,
     asyncHandler((req, res) => authController.confirmPasswordReset(req, res))
   );
 
@@ -211,6 +240,7 @@ export function createApiRouter(): Router {
   router.post(
     COLIS_ACTION_DELIVER,
     authenticateToken,
+    requireRoles(...FIELD_ROLES),
     requireAnyPermission(PermissionCode.COLIS_DELIVER, PermissionCode.COLIS_UPDATE),
     asyncHandler((req, res) => colisController.deliver(req, res))
   );
@@ -223,6 +253,7 @@ export function createApiRouter(): Router {
   router.post(
     COLIS_ACTION_PARTIAL_DELIVERY,
     authenticateToken,
+    requireRoles(...FIELD_ROLES),
     requireAnyPermission(PermissionCode.COLIS_DELIVER, PermissionCode.COLIS_UPDATE),
     asyncHandler((req, res) => colisController.partialDelivery(req, res))
   );
@@ -230,6 +261,7 @@ export function createApiRouter(): Router {
   router.post(
     COLIS_ACTION_EXCHANGE,
     authenticateToken,
+    requireRoles(...FIELD_ROLES),
     requireAnyPermission(PermissionCode.COLIS_DELIVER, PermissionCode.COLIS_UPDATE),
     asyncHandler((req, res) => colisController.exchange(req, res))
   );
@@ -237,6 +269,7 @@ export function createApiRouter(): Router {
   router.post(
     COLIS_ACTION_POSTPONE,
     authenticateToken,
+    requireRoles(...FIELD_ROLES),
     requireAnyPermission(PermissionCode.COLIS_DELIVER, PermissionCode.COLIS_UPDATE),
     asyncHandler((req, res) => colisController.postpone(req, res))
   );
@@ -246,6 +279,7 @@ export function createApiRouter(): Router {
   router.post(
     COLIS_ACTION_RETURN,
     authenticateToken,
+    requireRoles(...FIELD_ROLES),
     requireAnyPermission(PermissionCode.COLIS_RETURN, PermissionCode.COLIS_UPDATE),
     asyncHandler((req, res) => colisController.returnPackage(req, res))
   );
@@ -254,6 +288,7 @@ export function createApiRouter(): Router {
   router.post(
     COLIS_ACTION_START,
     authenticateToken,
+    requireRoles(...FIELD_ROLES),
     requirePermissions(PermissionCode.COLIS_DELIVER),
     asyncHandler((req, res) => colisController.startDelivery(req, res))
   );
@@ -262,6 +297,7 @@ export function createApiRouter(): Router {
   router.post(
     COLIS_ACTION_FAILED,
     authenticateToken,
+    requireRoles(...FIELD_ROLES),
     requireAnyPermission(PermissionCode.COLIS_DELIVER, PermissionCode.COLIS_UPDATE),
     asyncHandler((req, res) => colisController.failedAttempt(req, res))
   );
@@ -270,6 +306,7 @@ export function createApiRouter(): Router {
   router.post(
     COLIS_ACTION_RETURN_TO_SHIPPER,
     authenticateToken,
+    requireRoles(RoleType.ADMIN, RoleType.GESTIONNAIRE),
     requirePermissions(PermissionCode.COLIS_UPDATE),
     asyncHandler((req, res) => colisController.returnToShipper(req, res))
   );
@@ -696,6 +733,7 @@ export function createApiRouter(): Router {
     '/payments/vouchers/:voucherNumber/validate',
     authenticateToken,
     requirePermissions(PermissionCode.PAYMENT_VALIDATE),
+    voucherSecretLimiter,
     asyncHandler((req, res) => paymentsController.validatePayment(req, res))
   );
 

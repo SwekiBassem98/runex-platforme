@@ -111,6 +111,10 @@ function assertShipperOwnsPickup(
 
 type PickupRecord = Prisma.PickupAppointmentGetPayload<{ include: typeof PICKUP_INCLUDE }>;
 
+/** UUID qui ne correspond à aucune ligne : « aucun résultat » sans erreur de type. */
+const NO_MATCH_ID = '00000000-0000-0000-0000-000000000000';
+const PICKUP_STATUSES: string[] = ['A_CONFIRMER', 'EN_ATTENTE', 'ASSIGNE', 'EN_COURS', 'EFFECTUE', 'ANNULE'];
+
 export class RamassagesService {
   /**
    * Liste les rendez-vous visibles par l'appelant.
@@ -127,7 +131,11 @@ export class RamassagesService {
     const records = await prisma.pickupAppointment.findMany({
       where: {
         ...this.scopeFor(actor),
-        ...(filters?.status && filters.status !== 'ALL' ? { status: filters.status as never } : {}),
+        ...(filters?.status && filters.status !== 'ALL'
+          ? PICKUP_STATUSES.includes(filters.status)
+            ? { status: filters.status as never }
+            : { id: NO_MATCH_ID }
+          : {}),
         ...(filters?.date ? { scheduledDate: this.parseScheduledDate(filters.date) } : {}),
       },
       include: PICKUP_INCLUDE,
@@ -143,10 +151,10 @@ export class RamassagesService {
     if (actor.role === RoleType.EXPEDITEUR) {
       // Un expéditeur authentifié possède toujours un shipperId ; à défaut on
       // ne renvoie rien plutôt que tout le parc.
-      return actor.shipperId ? { shipperId: actor.shipperId } : { id: '__none__' };
+      return actor.shipperId ? { shipperId: actor.shipperId } : { id: NO_MATCH_ID };
     }
     if (actor.role === RoleType.LIVREUR) {
-      return actor.driverId ? { assignedDriverId: actor.driverId } : { id: '__none__' };
+      return actor.driverId ? { assignedDriverId: actor.driverId } : { id: NO_MATCH_ID };
     }
     return {};
   }

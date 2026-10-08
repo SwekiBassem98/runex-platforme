@@ -15,6 +15,7 @@
 import type { Server as HttpServer } from 'node:http';
 import { Server, type Socket } from 'socket.io';
 import { verifyAccessToken } from '../../common/auth/jwt.util';
+import { sessionService } from '../../common/auth/session.service';
 import { SOCKET_EVENTS, SOCKET_SYSTEM_EVENTS } from '@logixpress/types';
 
 /** Salle privée d'un utilisateur. */
@@ -24,6 +25,7 @@ interface SocketUser {
   id: string;
   fullName: string;
   role?: string;
+  exp?: number;
 }
 
 let io: Server | null = null;
@@ -36,27 +38,36 @@ let io: Server | null = null;
  * `allowRequest` rejette avant même l'ouverture, ce qui évite d'avoir à
  * déconnecter une connexion non autorisée déjà établie.
  */
-function authenticate(socket: Socket): boolean {
+async function authenticate(socket: Socket): Promise<boolean> {
   const token =
     (socket.handshake.auth?.token as string | undefined) ??
+    // Accepté pour compatibilité avec l'application mobile existante ;
+    // préférer `auth.token` (une URL se retrouve dans les journaux).
     (socket.handshake.query?.token as string | undefined);
-
-  if (!token) return false;
-
+  if (!token || typeof token !== 'string') return false;
   const payload = verifyAccessToken(token);
-  if (!payload?.sub) return false;
-
+  if (!payload?.sub || !payload.sid) return false;
+  const check = await sessionService.check(payload.sid, payload.sub).catch(() => ({ ok: false as const }));
+  if (!check.ok) return false;
   const user: SocketUser = {
     id: payload.sub,
     fullName: payload.fullName ?? '',
     role: payload.role,
+    exp: payload.exp,
   };
   (socket.data as { user?: SocketUser }).user = user;
   socket.join(userRoom(user.id));
   return true;
 }
 
-/** Déclarations de type enrichies, portées par `socket.data`. */
+/** Origines autorisées pour le navigateur ; un client sans `Origin` (mobile) est accepté. */
+function allowedOrigins(): string[] {
+  return (process.env.CORS_ORIGIN ?? 'http://localhost:3000')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+}
+
 declare module 'socket.io' {
   interface SocketData {
     user?: SocketUser;
@@ -71,33 +82,44 @@ export function initialiseRealtime(httpServer: HttpServer): Server {
     path: '/socket.io',
     serveClient: false,
     cors: {
-      // L'origine n'est pas mise en liste blanche ici : le jeton porte
-      // l'identité, et non la clé d'accès. Restreindre l'origine menambahait
-      // une contrainte sans ajouter de protection, tout en cassant les accès
-      // depuis un poste externe. Le contrôle d'accès réel est
-      // l'absence de jeton valide.
-      origin: true,
-      credentials: true,
+      // Navigateurs : seules les origines de CORS_ORIGIN. Un client sans en-tête
+      // Origin (application mobile) reste accepté ; le jeton fait le contrôle.
+      origin: (origin, callback) => {
+        if (!origin || allowedOrigins().includes(origin)) callback(null, true);
+        else callback(null, false);
+      },
+      credentials: false,
     },
     pingInterval: 25_000,
     pingTimeout: 20_000,
   });
 
   io.use((socket, next) => {
-    if (authenticate(socket)) {
-      next();
-    } else {
+    void authenticate(socket).then((authenticated) => {
+      if (authenticated) {
+        next();
+        return;
+      }
       const err = new Error('Jeton absent ou invalide.');
       // Code 4401 : catégorie 4xx = refus du client, contrairement à
       // 5000 qui signale une panne du serveur et que le client retenterait.
       (err as Error & { data?: { code: string } }).data = { code: '4401' };
       next(err);
-    }
+    });
   });
 
   io.on('connection', (socket) => {
     const user = socket.data.user;
     if (!user) return;
+
+    // La connexion ne survit pas au jeton qui l'a ouverte : à son échéance, le
+    // client doit se reconnecter avec un jeton rafraîchi.
+    if (user.exp) {
+      const remainingMs = user.exp * 1000 - Date.now();
+      const timer = setTimeout(() => socket.disconnect(true), Math.max(0, remainingMs));
+      timer.unref?.();
+      socket.on('disconnect', () => clearTimeout(timer));
+    }
 
     // Présence livreur : la connexion socket peut rafraîchir `lastSeenAt`,
     // mais n'est jamais l'unique source — le battement REST reste canonique.

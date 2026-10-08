@@ -17,6 +17,7 @@ import {
   type NotificationCategory,
 } from '@logixpress/types';
 import { emitToUser } from './realtime.gateway';
+import { isUuid } from '../../common/errors/api-error';
 
 const DEFAULT_LIMIT = 30;
 const MAX_LIMIT = 100;
@@ -56,7 +57,9 @@ export class NotificationsController {
     const q = req.query as Record<string, string | undefined>;
 
     const isRead = parseIsRead(q.isRead);
-    const type = q.type?.trim() || undefined;
+    const rawType = q.type?.trim() || undefined;
+    // Un type inconnu ne correspond à aucune notification : liste vide, pas d'erreur.
+    const type = rawType && rawType in NOTIFICATION_EVENT_META ? rawType : rawType ? '__none__' : undefined;
     const relatedEntity = q.relatedEntity?.trim() || undefined;
     const category = q.category?.trim() as NotificationCategory | undefined;
 
@@ -70,7 +73,9 @@ export class NotificationsController {
     // l'emporterait silencieusement : demander « finance » et « livraison »
     // renverrait la finance en ignorant la demande, sans aucun signe.
     let typeFilter: { in: string[] } | string | undefined;
-    if (categoryTypes) {
+    if (type === '__none__') {
+      typeFilter = { in: [] };
+    } else if (categoryTypes) {
       typeFilter = type
         ? { in: categoryTypes.filter((t) => t === type) }
         : { in: categoryTypes };
@@ -131,6 +136,10 @@ export class NotificationsController {
 
     const prisma = getPrisma();
     const id = req.params.id!;
+    if (!isUuid(id)) {
+      res.status(404).json({ success: false, message: 'Notification introuvable.' });
+      return;
+    }
     const now = new Date();
 
     const result = await prisma.notification.updateMany({

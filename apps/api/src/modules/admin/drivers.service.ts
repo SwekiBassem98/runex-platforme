@@ -21,6 +21,7 @@
 
 import { Prisma } from '@prisma/client';
 import { getPrisma } from '../../common/database/prisma-context';
+import { sessionService } from '../../common/auth/session.service';
 import { auditService } from '../../common/audit/audit.service';
 import { badRequest, conflict, notFound, asUuid } from '../../common/errors/api-error';
 import { usersService, type ActorRef } from './users.service';
@@ -350,6 +351,12 @@ export class DriversService {
     }
 
     const updated = await prisma.driver.update({ where: { id: uuid }, data, select: DRIVER_SELECT });
+    // Le jeton d'un livreur porte l'identifiant de sa fiche : un changement de
+    // rattachement ferme les sessions de l'ancien et du nouveau compte.
+    if (updated.userId !== actuel.userId) {
+      if (actuel.userId) await sessionService.revokeAllForUser(actuel.userId);
+      if (updated.userId) await sessionService.revokeAllForUser(updated.userId);
+    }
 
     await auditService.record({
       entityType: 'DRIVER',
@@ -397,6 +404,8 @@ export class DriversService {
     if (actuel.isActive === isActive) return this.findById(uuid);
 
     await prisma.driver.update({ where: { id: uuid }, data: { isActive } });
+    // Un livreur désactivé perd ses sessions ouvertes (application mobile comprise).
+    if (!isActive && actuel.userId) await sessionService.revokeAllForUser(actuel.userId);
 
     await auditService.record({
       entityType: 'DRIVER',

@@ -452,7 +452,14 @@ export const authApi = {
 
   me: () => requestData<AuthUser>('/auth/me'),
 
-  logout: () => request<unknown>('/auth/logout', { method: 'POST' }),
+  // Le refresh token est transmis : l'API ferme précisément cette session,
+  // sans toucher aux autres appareils de l'utilisateur.
+  logout: () =>
+    request<unknown>('/auth/logout', {
+      method: 'POST',
+      body: { refreshToken: tokenStorage.getRefreshToken() ?? undefined },
+      skipAuthRefresh: true,
+    }),
 
   demoUsers: () => requestData<DemoUser[]>('/auth/demo-users'),
 
@@ -1426,6 +1433,10 @@ async function performRaw(
   if (response.status === 401) {
     const refreshed = await refreshTokens();
     if (refreshed) {
+      // Un en-tête Authorization fourni par l'appelant (jeton figé dans une
+      // prop) est périmé : la nouvelle tentative utilise le jeton rafraîchi.
+      delete extraHeaders?.Authorization;
+      delete extraHeaders?.authorization;
       try {
         response = await send();
       } catch (error) {

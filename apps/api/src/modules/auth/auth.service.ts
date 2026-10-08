@@ -7,6 +7,11 @@
  *
  * Le rôle est celui du modèle d'autorisation de l'API (`RoleType`), obtenu par
  * correspondance avec les rôles du schéma (`prisma`).
+ *
+ * Les sessions sont persistées dans la table `Session` (voir
+ * `common/auth/session.service.ts`) : un redémarrage ne déconnecte personne,
+ * plusieurs instances partagent les sessions, et la déconnexion ne touche que
+ * la session de l'appelant.
  */
 
 import { Prisma } from '@prisma/client';
@@ -17,16 +22,14 @@ import {
   verifyPassword,
   generateTokenPair,
   verifyRefreshToken,
+  signPasswordResetToken,
+  verifyPasswordResetToken,
+  passwordFingerprint,
 } from '../../common/auth/jwt.util';
 import { getPermissionsForRole } from '../../common/auth/permissions.map';
+import { sessionService, type SessionMeta } from '../../common/auth/session.service';
 import { getPrisma } from '../../common/database/prisma-context';
-import crypto from 'node:crypto';
-
-interface PasswordResetRequest {
-  email: string;
-  token: string;
-  expiresAt: number;
-}
+import { ApiError } from '../../common/errors/api-error';
 
 /**
  * Rôles du schéma relationnel et rôle d'autorisation de l'API.
@@ -45,7 +48,7 @@ const PRISMA_ROLE_TO_API_ROLE: Record<string, RoleType> = {
   LIVREUR: RoleType.LIVREUR,
 };
 
-/** Charge utilePrisma nécessaire à l'hydratation d'un utilisateur authentifié. */
+/** Charge utile Prisma nécessaire à l'hydratation d'un utilisateur authentifié. */
 const USER_INCLUDE = {
   userRoles: { include: { role: true } },
   shipperUser: { include: { shipper: true } },
@@ -65,19 +68,36 @@ const ROLE_DISPLAY_NAMES: Record<RoleType, string> = {
   FINANCE: 'Finance',
 };
 
+/** Erreur d'authentification : toujours 401 sauf mention contraire. */
+function authError(message: string, status = 401): ApiError {
+  return new ApiError(message, status);
+}
+
+/**
+ * Hash factice : un e-mail inconnu coûte le même calcul PBKDF2 qu'un e-mail
+ * connu, pour que le temps de réponse ne révèle pas quelles adresses existent.
+ */
+const DUMMY_PASSWORD_HASH = hashPassword('runex-timing-equaliser');
+
+const INVALID_CREDENTIALS =
+  'Identifiants incorrects. Veuillez vérifier votre adresse email et votre mot de passe.';
+
+/**
+ * Comptes de démonstration : exposés uniquement quand l'exploitant l'a
+ * explicitement demandé ET hors production.
+ */
+export function demoAccountsEnabled(): boolean {
+  return process.env.ENABLE_DEMO_ACCOUNTS === 'true' && process.env.NODE_ENV !== 'production';
+}
+
 export class AuthService {
-  /** Jetons de rafraîchissement actifs (le refresh token est à usage unique). */
-  private activeRefreshTokens = new Set<string>();
-
-  private resetTokens = new Map<string, PasswordResetRequest>();
-
   /**
    * Traduit un enregistrement Prisma en utilisateur authentifié.
    *
-   * Les identifiants métier (expéditeur, livreur, dépôt) proviennent des
-   * relations : ce sont les UUID réellement stockés en base.
+   * Retourne `null` lorsque le compte ne porte aucun rôle connu : un compte
+   * sans rôle n'a accès à rien (il ne devient plus « livreur » par défaut).
    */
-  private mapToAuthUser(user: UserWithRelations): AuthUser {
+  private mapToAuthUser(user: UserWithRelations): AuthUser | null {
     // L'utilisateur peut porter plusieurs rôles : celui de plus haut niveau
     // d'habilitation l'emporte, dans l'ordre de priorité ci-dessous.
     const priority: RoleType[] = [
@@ -93,8 +113,8 @@ export class AuthService {
       .map((assignment) => PRISMA_ROLE_TO_API_ROLE[assignment.role.name])
       .filter((role): role is RoleType => Boolean(role));
 
-    const role =
-      priority.find((candidate) => roles.includes(candidate)) ?? RoleType.LIVREUR;
+    const role = priority.find((candidate) => roles.includes(candidate));
+    if (!role) return null;
 
     return {
       id: user.id,
@@ -114,44 +134,80 @@ export class AuthService {
   }
 
   /**
-   * Charge un utilisateur et ses relations depuis la base.
+   * Vérifie qu'un compte est utilisable et retourne son identité.
+   *
+   * Les contrôles qui suivent la vérification du mot de passe peuvent révéler
+   * l'état du compte : ils ne sont faits qu'une fois l'identité prouvée.
    */
-  private async findUser(idOrEmail: string, byEmail = false): Promise<UserWithRelations | null> {
-    const prisma = getPrisma();
-    return byEmail
-      ? prisma.user.findUnique({
-          where: { email: idOrEmail.toLowerCase() },
-          include: USER_INCLUDE,
-        })
-      : prisma.user.findUnique({ where: { id: idOrEmail }, include: USER_INCLUDE });
+  private assertUsable(user: UserWithRelations): AuthUser {
+    if (!user.isActive || user.deletedAt) {
+      throw authError("Votre compte est désactivé. Veuillez contacter l'administrateur.", 403);
+    }
+    const authUser = this.mapToAuthUser(user);
+    if (!authUser) {
+      throw authError("Aucun rôle n'est attribué à votre compte. Contactez l'administrateur RUNEX.", 403);
+    }
+    if (authUser.role === RoleType.LIVREUR) {
+      const driver = user.driverProfile;
+      if (!driver) {
+        throw authError(
+          "Votre compte livreur n'est rattaché à aucune fiche chauffeur. Contactez l'administrateur RUNEX.",
+          403
+        );
+      }
+      if (!driver.isActive || driver.deletedAt) {
+        throw authError("Votre fiche livreur est désactivée. Veuillez contacter l'administrateur.", 403);
+      }
+    }
+    if (authUser.role === RoleType.EXPEDITEUR) {
+      const shipper = user.shipperUser?.shipper;
+      if (!shipper) {
+        throw authError("Aucun expéditeur n'est associé à votre compte. Contactez l'administrateur RUNEX.", 403);
+      }
+      if (!shipper.isActive || shipper.deletedAt) {
+        throw authError("Le compte expéditeur de votre entreprise est désactivé.", 403);
+      }
+    }
+    if (authUser.role === RoleType.AGENT_DEPOT && !authUser.depositId) {
+      throw authError("Aucun dépôt n'est rattaché à votre compte magasinier. Contactez l'administrateur RUNEX.", 403);
+    }
+    return authUser;
   }
 
-  async login(email: string, passwordPlain: string): Promise<LoginResponse> {
-    const user = await this.findUser(email, true);
+  private async findUser(idOrEmail: string, byEmail = false): Promise<UserWithRelations | null> {
+    const prisma = getPrisma();
+    if (byEmail) {
+      return prisma.user.findUnique({
+        where: { email: idOrEmail.trim().toLowerCase() },
+        include: USER_INCLUDE,
+      });
+    }
+    return prisma.user.findUnique({ where: { id: idOrEmail }, include: USER_INCLUDE });
+  }
 
-    // Message volontairement identique que l'utilisateur n'existe pas ou que le
-    // mot de passe est faux : ne pas révéler quelles adresses existent.
-    const invalidCredentials = new Error(
-      'Identifiants incorrects. Veuillez vérifier votre adresse email et votre mot de passe.'
-    );
+  private async openSession(authUser: AuthUser, meta: SessionMeta) {
+    const sid = sessionService.newSessionId();
+    const tokens = generateTokenPair(authUser, sid);
+    await sessionService.create(sid, authUser.id, tokens.refreshToken, tokens.refreshExpiresAt, meta);
+    return tokens;
+  }
 
-    if (!user) throw invalidCredentials;
-    if (!user.isActive || user.deletedAt) {
-      throw new Error("Votre compte est désactivé. Veuillez contacter l'administrateur.");
+  async login(email: string, passwordPlain: string, meta: SessionMeta = {}): Promise<LoginResponse> {
+    const user = await this.findUser(String(email), true);
+
+    // Le mot de passe est vérifié AVANT tout autre contrôle : un message
+    // « compte désactivé » ne doit pas révéler qu'une adresse existe.
+    const passwordOk = verifyPassword(String(passwordPlain), user?.passwordHash ?? DUMMY_PASSWORD_HASH);
+    if (!user || !passwordOk) {
+      throw authError(INVALID_CREDENTIALS);
     }
 
-    if (!verifyPassword(passwordPlain, user.passwordHash)) {
-      throw invalidCredentials;
-    }
-
-    const authUser = this.mapToAuthUser(user);
-    const tokens = generateTokenPair(authUser);
-    this.activeRefreshTokens.add(tokens.refreshToken);
+    const authUser = this.assertUsable(user);
+    const tokens = await this.openSession(authUser, meta);
 
     // Trace la dernière connexion : exploitable par le tableau de bord.
-    const prisma = getPrisma();
-    void prisma.user
-      .update({ where: { id: user.id }, data: { lastLoginAt: new Date() } })
+    void getPrisma()
+      .user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } })
       .catch(() => undefined);
 
     return {
@@ -165,35 +221,41 @@ export class AuthService {
   /**
    * Renouvellement du jeton d'accès via Refresh Token.
    *
-   * Le refresh token est à usage unique : il est retiré de la liste active et
-   * remplacé par la nouvelle paire. Toute réutilisation de l'ancien jeton est
-   * donc rejetée.
+   * Le refresh token est à usage unique : il est remplacé atomiquement dans
+   * sa session. L'ancien jeton est donc refusé dès le premier usage.
    */
   async refreshAccessToken(refreshToken: string) {
-    if (!refreshToken) {
-      throw new Error('Jeton de rafraîchissement requis.');
-    }
+    if (!refreshToken) throw authError('Jeton de rafraîchissement requis.', 400);
 
     const payload = verifyRefreshToken(refreshToken);
-    if (!payload) {
-      throw new Error('Jeton de rafraîchissement invalide ou expiré.');
-    }
+    if (!payload?.sid) throw authError('Jeton de rafraîchissement invalide ou expiré.');
 
-    if (!this.activeRefreshTokens.has(refreshToken)) {
-      throw new Error('Jeton de rafraîchissement déjà utilisé ou révoqué.');
+    const session = await sessionService.findByRefreshToken(refreshToken);
+    if (!session || session.id !== payload.sid || session.revokedAt || session.expiresAt <= new Date()) {
+      throw authError('Jeton de rafraîchissement déjà utilisé ou révoqué.');
     }
 
     const user = await this.findUser(payload.sub);
-    if (!user || !user.isActive) {
-      this.activeRefreshTokens.delete(refreshToken);
-      throw new Error('Compte introuvable ou désactivé.');
+    if (!user) {
+      await sessionService.revoke(session.id);
+      throw authError('Compte introuvable ou désactivé.');
+    }
+    let authUser: AuthUser;
+    try {
+      authUser = this.assertUsable(user);
+    } catch (error) {
+      await sessionService.revoke(session.id);
+      throw authError(error instanceof Error ? error.message : 'Compte désactivé.');
     }
 
-    this.activeRefreshTokens.delete(refreshToken);
-
-    const authUser = this.mapToAuthUser(user);
-    const tokens = generateTokenPair(authUser);
-    this.activeRefreshTokens.add(tokens.refreshToken);
+    const tokens = generateTokenPair(authUser, session.id);
+    const rotated = await sessionService.rotate(
+      session.id,
+      refreshToken,
+      tokens.refreshToken,
+      tokens.refreshExpiresAt
+    );
+    if (!rotated) throw authError('Jeton de rafraîchissement déjà utilisé ou révoqué.');
 
     return {
       accessToken: tokens.accessToken,
@@ -203,71 +265,81 @@ export class AuthService {
     };
   }
 
-  async logout(refreshToken?: string) {
+  /**
+   * Déconnexion de l'appelant.
+   *
+   * - avec `refreshToken` : la session de ce jeton est fermée, à condition
+   *   qu'elle appartienne bien à l'appelant ;
+   * - sans corps : la session du jeton d'accès utilisé est fermée.
+   *
+   * Aucune autre session (autre appareil, autre utilisateur) n'est touchée.
+   */
+  async logout(caller: { id: string; sid?: string }, refreshToken?: string) {
     if (refreshToken) {
-      this.activeRefreshTokens.delete(refreshToken);
-    } else {
-      this.activeRefreshTokens.clear();
+      const session = await sessionService.findByRefreshToken(String(refreshToken));
+      if (session && session.userId === caller.id) await sessionService.revoke(session.id);
     }
+    if (caller.sid) await sessionService.revoke(caller.sid);
+    return { success: true, message: 'Déconnexion effectuée.' };
   }
 
   /**
    * Demande de réinitialisation de mot de passe.
    *
    * La réponse reste identique que l'adresse existe ou non, afin de ne pas
-   * énumérer les comptes enregistrés.
+   * énumérer les comptes enregistrés. Le jeton est signé et sans état : aucun
+   * stockage mémoire qui grossirait sans fin ni disparaîtrait au redémarrage.
+   *
+   * L'envoi par e-mail n'est pas encore branché (aucun service SMTP configuré).
+   * En développement uniquement, `PASSWORD_RESET_LOG_TOKEN=true` affiche le lien
+   * dans le journal du serveur pour permettre les tests manuels.
    */
   async requestPasswordReset(email: string) {
-    const token = crypto.randomBytes(32).toString('hex');
-    const expiresAt = Date.now() + 15 * 60 * 1000;
-
-    this.resetTokens.set(token, { email: email.toLowerCase(), token, expiresAt });
-
-    const user = await this.findUser(email, true);
-    if (user) {
-      // En production l'email serait envoyé ici ; on journalise l'événement
-      // de sécurité sans exposer le jeton.
-      console.log(`[Auth] Demande de réinitialisation pour ${user.email}.`);
+    const user = await this.findUser(String(email), true);
+    if (user && user.isActive && !user.deletedAt) {
+      const token = signPasswordResetToken(user.id, user.passwordHash);
+      if (process.env.NODE_ENV !== 'production' && process.env.PASSWORD_RESET_LOG_TOKEN === 'true') {
+        console.info(`[Auth] Lien de réinitialisation (dev) : /reinitialisation?token=${token}`);
+      }
     }
-
     return {
-      message: 'Si un compte est associé à cette adresse, un lien de réinitialisation vient d\'être envoyé.',
+      success: true,
+      message:
+        "Si un compte est associé à cette adresse, un lien de réinitialisation vient d'être envoyé.",
     };
   }
 
   async confirmPasswordReset(token: string, newPasswordPlain: string) {
-    const request = this.resetTokens.get(token);
-    if (!request || request.expiresAt < Date.now()) {
-      throw new Error('Jeton de réinitialisation invalide ou expiré.');
-    }
-    if (newPasswordPlain.length < 8) {
-      throw new Error('Le mot de passe doit contenir au moins 8 caractères.');
+    const claims = verifyPasswordResetToken(String(token));
+    if (!claims) throw authError('Jeton de réinitialisation invalide ou expiré.', 400);
+    if (String(newPasswordPlain).length < 8) {
+      throw authError('Le mot de passe doit contenir au moins 8 caractères.', 400);
     }
 
     const prisma = getPrisma();
-    const user = await prisma.user.update({
-      where: { email: request.email },
-      data: { passwordHash: hashPassword(newPasswordPlain) },
+    const user = await prisma.user.findUnique({ where: { id: claims.sub } });
+    if (!user || !user.isActive || user.deletedAt || passwordFingerprint(user.passwordHash) !== claims.pwh) {
+      throw authError('Jeton de réinitialisation invalide ou expiré.', 400);
+    }
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { passwordHash: hashPassword(String(newPasswordPlain)) },
     });
+    // Seules les sessions de CE compte sont fermées.
+    await sessionService.revokeAllForUser(user.id);
 
-    this.resetTokens.delete(token);
-    // Toute session en cours devient caduque après un changement de mot de passe.
-    this.activeRefreshTokens.clear();
-
-    return { message: `Mot de passe mis à jour pour ${user.email}.` };
+    return { success: true, message: 'Mot de passe mis à jour. Veuillez vous reconnecter.' };
   }
 
   async getProfile(userId: string): Promise<AuthUser | null> {
     const user = await this.findUser(userId);
-    if (!user || !user.isActive) return null;
+    if (!user || !user.isActive || user.deletedAt) return null;
     return this.mapToAuthUser(user);
   }
 
   /**
-   * Comptes de démonstration, lus en base.
-   *
-   * Le mot de passe de démonstration n'est stocké nulle part : il est restitué
-   * depuis une table locale, uniquement pour les comptes de démonstration.
+   * Comptes de démonstration (développement uniquement, voir `demoAccountsEnabled`).
    */
   async getDemoUsers(): Promise<
     { email: string; role: RoleType; name: string; passwordHint: string }[]
@@ -283,18 +355,21 @@ export class AuthService {
 
     const prisma = getPrisma();
     const users = await prisma.user.findMany({
-      where: { email: { in: Object.keys(DEMO_PASSWORDS) } },
+      where: { email: { in: Object.keys(DEMO_PASSWORDS) }, isActive: true, deletedAt: null },
       include: USER_INCLUDE,
     });
 
-    return users.map((user) => {
-      const apiRole = this.mapToAuthUser(user).role;
-      return {
-        email: user.email,
-        role: apiRole,
-        name: `${user.fullName} — ${ROLE_DISPLAY_NAMES[apiRole]}`,
-        passwordHint: DEMO_PASSWORDS[user.email] ?? '',
-      };
+    return users.flatMap((user) => {
+      const mapped = this.mapToAuthUser(user);
+      if (!mapped) return [];
+      return [
+        {
+          email: user.email,
+          role: mapped.role,
+          name: `${user.fullName} — ${ROLE_DISPLAY_NAMES[mapped.role]}`,
+          passwordHint: DEMO_PASSWORDS[user.email] ?? '',
+        },
+      ];
     });
   }
 }

@@ -1,5 +1,5 @@
 import { getPrisma } from '../../common/database/prisma-context';
-import { BusinessRuleError } from '../../common/errors/api-error';
+import { BusinessRuleError, isUuid } from '../../common/errors/api-error';
 
 const VALID_PLATFORMS = new Set(['android', 'ios', 'web']);
 
@@ -55,34 +55,23 @@ export class DevicesService {
 
     const existing = await this.prisma.pushDevice.findUnique({ where: { token } });
 
-    if (existing) {
-      // Même utilisateur : réactivation + mise à jour
-      if (existing.userId === userId) {
-        return this.prisma.pushDevice.update({
+    // Même utilisateur : réactivation ; autre utilisateur : transfert de
+    // propriété (l'appareil a changé de main) ; sinon création.
+    const device = existing
+      ? await this.prisma.pushDevice.update({
           where: { token },
-          data: { platform, deviceId, isActive: true, lastSeenAt: new Date() },
+          data: { userId, platform, deviceId, isActive: true, lastSeenAt: new Date() },
+        })
+      : await this.prisma.pushDevice.create({
+          data: { userId, token, platform, deviceId, isActive: true },
         });
-      }
-      // Autre utilisateur : réassignation (transfert de propriété)
-      return this.prisma.pushDevice.update({
-        where: { token },
-        data: { userId, platform, deviceId, isActive: true, lastSeenAt: new Date() },
-      });
-    }
 
-    const created = await this.prisma.pushDevice.create({
-      data: { userId, token, platform, deviceId, isActive: true },
-    });
+    // Enregistrer un appareil vaut consentement aux notifications poussées :
+    // sans cela `pushEnabled` restait à sa valeur par défaut (false) et le
+    // canal push ignorait tous les appareils.
+    await this.prisma.user.update({ where: { id: userId }, data: { pushEnabled: true } });
 
-    // Retirer le jeton legacy `User.pushToken` s'il coïncide : la vérité est désormais dans PushDevice.
-    try {
-      await this.prisma.user.updateMany({
-        where: { id: userId, pushToken: token },
-        data: { pushEnabled: true },
-      });
-    } catch { /* best-effort */ }
-
-    return created;
+    return device;
   }
 
   async removeToken(userId: string, token: string) {
@@ -107,6 +96,7 @@ export class DevicesService {
   async removeDevice(userId: string, deviceId: string) {
     const id = String(deviceId ?? '').trim();
     if (!id) throw new BusinessRuleError('Identifiant appareil requis.', 400);
+    if (!isUuid(id)) throw new BusinessRuleError('Appareil introuvable.', 404);
     const result = await this.prisma.pushDevice.updateMany({
       where: { id, userId },
       data: { isActive: false },

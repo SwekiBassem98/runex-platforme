@@ -86,8 +86,9 @@ tok() {
 # obligatoire, sinon les dates calculées tombent dans le passé.
 DAY() {
   case "$1" in
-    -*) date -v"$1"d +%Y-%m-%d ;;
-    *)  date -v"+$1d" +%Y-%m-%d ;;
+    # GNU date (Linux/CI) puis BSD date (macOS).
+    -*) date -d "$1 day" +%Y-%m-%d 2>/dev/null || date -v"$1"d +%Y-%m-%d ;;
+    *)  date -d "+$1 day" +%Y-%m-%d 2>/dev/null || date -v"+$1d" +%Y-%m-%d ;;
   esac
 }
 
@@ -102,8 +103,10 @@ make_stored_package() { # dépôt
   pid=$(printf '%s' "$created" | jq -r '.data.id // empty')
   barcode=$(printf '%s' "$created" | jq -r '.data.barcode // empty')
   [ -n "$pid" ] && [ -n "$barcode" ] || return 1
-  # L'acceptation se fait par code-barres : c'est le geste réel de l'agent.
-  api POST /warehouse/scan-accept "$AGENT" \
+  # L'acceptation se fait par code-barres. Prompt 26 : un magasinier ne reçoit
+  # que dans SON dépôt ; le jeu d'essai range des colis dans tous les dépôts,
+  # il passe donc par l'administration.
+  api POST /warehouse/scan-accept "$ADMIN" \
     "$(printf '{"barcode":"%s","depositId":"%s"}' "$barcode" "$1")" >/dev/null
   [ "$API_STATUS" = "200" ] || return 1
   printf '%s' "$pid"
@@ -361,7 +364,10 @@ ck_value "la réception est néanmoins datée" "1" 'if .data.receivedAt then 1 e
 # ------------------------------------------------------------------ 8
 echo "8. D6 — droits sur les transferts"
 D6PKG=$(make_stored_package "$SOUSSE")
-ck_status "l'agent de dépôt gère les transferts" "201" POST /inter-depots "$AGENT" \
+D6HUB=$(make_stored_package "$HUB")
+ck_status "l'agent de dépôt gère les transferts de son dépôt" "201" POST /inter-depots "$AGENT" \
+  "$(printf '{"sourceDepositId":"%s","destinationDepositId":"%s","transporterDriverId":"%s","notes":"%s","packageIds":["%s"]}' "$HUB" "$SOUSSE" "$DRIVER" "$QA_TAG" "$D6HUB")"
+ck_status "l'agent ne crée pas de transfert depuis un autre dépôt" "403" POST /inter-depots "$AGENT" \
   "$(printf '{"sourceDepositId":"%s","destinationDepositId":"%s","transporterDriverId":"%s","notes":"%s","packageIds":["%s"]}' "$SOUSSE" "$HUB" "$DRIVER" "$QA_TAG" "$D6PKG")"
 ck_status "le livreur ne peut pas créer de transfert" "403" POST /inter-depots "$LIVREUR" \
   "$(printf '{"sourceDepositId":"%s","destinationDepositId":"%s","transporterDriverId":"%s","packageIds":["%s"]}' "$SOUSSE" "$HUB" "$DRIVER" "$D6PKG")"

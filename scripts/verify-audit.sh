@@ -34,7 +34,7 @@ JSON_H='Content-Type: application/json'
 # Le contrôleur d'immuabilité a besoin de voir l'échec : sans `2>/dev/null`,
 # `psql` écrit son message d'erreur dans le fichier de corps, ce qui pollue
 # l'affichage des échecs voisins.
-q() { PGPASSWORD="${PGPASSWORD:-logixpress_secret_pwd}" psql -h 127.0.0.1 -U logixpress_user -d logixpress_db -t -A -c "$1"; }
+q() { PGPASSWORD="${PGPASSWORD:-logixpress_secret_pwd}" psql -h 127.0.0.1 -U logixpress_user -d logixpress_db -t -A -q -c "$1"; }
 
 # api <méthode> <chemin> <jeton|-> [corps]
 api() {

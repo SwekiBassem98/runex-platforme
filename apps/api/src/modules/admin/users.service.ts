@@ -23,6 +23,7 @@ import { Prisma, NotificationType } from '@prisma/client';
 import { getPrisma } from '../../common/database/prisma-context';
 import { hashPassword } from '../../common/auth/jwt.util';
 import { auditService } from '../../common/audit/audit.service';
+import { sessionService } from '../../common/auth/session.service';
 import { notificationService } from '../../common/notifications/notification.service';
 import { badRequest, conflict, notFound, asUuid } from '../../common/errors/api-error';
 
@@ -307,6 +308,11 @@ export class UsersService {
     if (!actuel) throw notFound('Utilisateur introuvable.');
 
     const avant = toDto(actuel);
+    // Un administrateur ne peut pas se retirer lui-même ses droits : ce serait
+    // la façon la plus simple de laisser la plateforme sans administrateur.
+    if (uuid === actor.id && input.role !== undefined && input.role !== avant.roles[0]) {
+      throw conflict('Vous ne pouvez pas modifier votre propre rôle.');
+    }
     const data: Prisma.UserUncheckedUpdateInput = {};
 
     if (input.fullName !== undefined) {
@@ -368,6 +374,16 @@ export class UsersService {
       return user;
     });
     const apres = toDto(updated);
+
+    // Un changement de droits, de rattachement ou de mot de passe ferme les
+    // sessions ouvertes : le compte devra se reconnecter avec ses nouveaux droits.
+    const droitsModifies =
+      input.password !== undefined ||
+      (input.role !== undefined && input.role !== avant.roles[0]) ||
+      JSON.stringify(avant.shipper?.id ?? null) !== JSON.stringify(apres.shipper?.id ?? null) ||
+      JSON.stringify(avant.driver?.id ?? null) !== JSON.stringify(apres.driver?.id ?? null) ||
+      JSON.stringify(avant.depositId ?? null) !== JSON.stringify(apres.depositId ?? null);
+    if (droitsModifies && uuid !== actor.id) await sessionService.revokeAllForUser(uuid);
 
     const champModifies = (['fullName', 'email', 'phone', 'depositId'] as const).filter(
       (c) => JSON.stringify(avant[c]) !== JSON.stringify(apres[c])
@@ -431,12 +447,17 @@ export class UsersService {
     const actuel = await prisma.user.findFirst({ where: { id: uuid, deletedAt: null } });
     if (!actuel) throw notFound('Utilisateur introuvable.');
     if (actuel.isActive === isActive) return this.findById(uuid);
+    if (!isActive && uuid === actor.id) {
+      throw conflict('Vous ne pouvez pas désactiver votre propre compte.');
+    }
 
     const updated = await prisma.user.update({
       where: { id: uuid },
       data: { isActive },
       include: USER_INCLUDE,
     });
+
+    if (!isActive) await sessionService.revokeAllForUser(uuid);
 
     await auditService.record({
       entityType: 'USER',
