@@ -3,6 +3,8 @@
 # Image de production de l'API LogiXpress (monorepo npm workspaces)
 # ==============================================================================
 FROM node:22-alpine AS builder
+# Cette étape sert aussi d'image de migration (docker-compose.prod.yml, service
+# `migrate`) : elle contient la CLI Prisma, absente de l'image d'exécution.
 
 WORKDIR /app
 
@@ -46,5 +48,9 @@ COPY --from=builder /app/apps/api/dist ./apps/api/dist
 COPY prisma ./prisma
 
 WORKDIR /app/apps/api
+# Jamais root : une faille applicative ne doit pas donner la main sur le conteneur.
+USER node
 EXPOSE 4000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:4000/api/v1/health >/dev/null || exit 1
 CMD ["node", "dist/main.js"]

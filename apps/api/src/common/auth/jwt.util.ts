@@ -10,7 +10,17 @@ import type { AuthUser } from '@logixpress/types';
  */
 function readSecret(name: string, devFallback: string): string {
   const value = process.env[name];
-  if (value && value.trim().length > 0) return value;
+  if (value && value.trim().length > 0) {
+    // En production, un secret court ou recopié de .env.example permettrait
+    // de forger des jetons : l'API refuse de démarrer plutôt que de l'accepter.
+    if (process.env.NODE_ENV === 'production' && (value.trim().length < 32 || /change_me|dev_only|^dev_/i.test(value))) {
+      throw new Error(
+        `[Config] ${name} est trop faible pour la production (32 caractères aléatoires minimum, ` +
+          'jamais la valeur de .env.example).'
+      );
+    }
+    return value;
+  }
 
   if (process.env.NODE_ENV === 'production') {
     throw new Error(
@@ -53,6 +63,9 @@ const REFRESH_SECRET = readSecret(
   'dev_only_insecure_jwt_refresh_secret_do_not_use_in_production'
 );
 const ACCESS_TTL_SECONDS = parseDurationToSeconds(process.env.JWT_ACCESS_EXPIRES_IN, 15 * 60);
+if (process.env.NODE_ENV === 'production' && ACCESS_SECRET === REFRESH_SECRET) {
+  throw new Error('[Config] JWT_ACCESS_SECRET et JWT_REFRESH_SECRET doivent être différents.');
+}
 const REFRESH_TTL_SECONDS = parseDurationToSeconds(process.env.JWT_REFRESH_EXPIRES_IN, 7 * 86400);
 
 interface TokenPayload {

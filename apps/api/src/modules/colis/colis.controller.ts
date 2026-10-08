@@ -78,9 +78,23 @@ export class ColisController {
       optionalNumber(req.body, 'totalPrice', 'Montant à encaisser');
       optionalPositiveInt(req.body, 'pieceCount', 'Nombre de pièces');
 
+      // Un expéditeur crée toujours pour son propre compte (le corps est
+      // ignoré). L'exploitation (ADMIN, GESTIONNAIRE) saisit pour le compte
+      // d'un expéditeur désigné explicitement : sans cela, l'écran « Nouveau
+      // colis » du back-office échouait systématiquement.
+      const staff = req.user?.role === RoleType.ADMIN || req.user?.role === RoleType.GESTIONNAIRE;
+      const onBehalf = staff && typeof req.body?.shipperId === 'string' ? req.body.shipperId.trim() : '';
+      if (staff && !req.user?.shipperId && !onBehalf) {
+        res.status(400).json({ success: false, message: "Choisissez l'expéditeur pour le compte duquel le colis est créé." });
+        return;
+      }
+      if (onBehalf && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(onBehalf)) {
+        res.status(400).json({ success: false, message: 'Identifiant expéditeur invalide.' });
+        return;
+      }
       const pkg = await colisService.create(req.body, {
-        shipperId: req.user?.shipperId,
-        shipperName: req.user?.shipperName,
+        shipperId: onBehalf || req.user?.shipperId,
+        shipperName: onBehalf ? undefined : req.user?.shipperName,
         fullName: req.user?.fullName,
       });
       res.status(201).json({

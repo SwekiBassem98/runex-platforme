@@ -608,8 +608,11 @@ export class ColisService {
       where: { id: shipperId },
       include: { config: true },
     });
-    if (!shipper) {
+    if (!shipper || (shipper as { deletedAt?: Date | null }).deletedAt) {
       throw new BusinessRuleError('Expéditeur introuvable.', 404);
+    }
+    if (shipper.isActive === false) {
+      throw new BusinessRuleError("Ce compte expéditeur est désactivé : aucun nouveau colis ne peut être créé.", 409);
     }
 
     const deposit = await this.defaultDeposit();
@@ -1174,7 +1177,28 @@ export class ColisService {
       userIds: [driver.userId],
     });
 
+    // Un colis qui rejoint une tournée est aussi une information pour celui qui
+    // suit le flux des tournées.
+    if (runsheet) {
+      await notificationDispatcher
+        .notify({
+          event: NotificationEvent.RUNSHEET_ASSIGNED,
+          title: 'Colis intégré à une tournée',
+          content: `Le colis #${record.trackingNumber} a rejoint la tournée ${runsheet.runsheetNumber} de ${driver.user.fullName}.`,
+          relatedEntity: 'RUNSHEET',
+          relatedEntityId: runsheet.id,
+          runsheetId: runsheet.id,
+          userIds: [driver.userId],
+        })
+        .catch(() => undefined);
+    }
+
     const fresh = await this.findRecord(record.id);
+    // La transition a eu lieu dans la transaction, qui ne notifie pas : on
+    // prévient l'exploitation et l'expéditeur maintenant qu'elle est validée.
+    if ((fresh.status as PackageStatus) !== status) {
+      await this.notifyStatusChanged(record.id, fresh.status as PackageStatus, user.fullName, user.id);
+    }
     return toPackageDto(fresh);
   }
 

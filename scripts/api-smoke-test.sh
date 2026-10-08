@@ -38,7 +38,7 @@ echo "$H" | grep -q '"database":{"status":"up"' && check "health: PostgreSQL up"
 echo "$H" | grep -q '"redis":{"status":"up"' && check "health: Redis up" 1 1 || check "health: Redis up" 1 0
 
 # ---------- Auth ----------
-check "GET /auth/demo-users (désactivé hors démonstration) -> 404" 404 "$(code "$BASE/auth/demo-users")"
+check "GET /auth/demo-users (désactivé hors démonstration) -> liste vide" '[]' "$(curl -s "$BASE/auth/demo-users" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.stringify(JSON.parse(s).data)))")"
 check "POST /auth/login sans corps -> 400" 400 "$(code -X POST "$BASE/auth/login" -H 'Content-Type: application/json' -d '{}')"
 check "POST /auth/login mauvais mdp -> 401" 401 "$(code -X POST "$BASE/auth/login" -H 'Content-Type: application/json' -d '{"email":"admin@logixpress.tn","password":"faux"}')"
 check "POST /auth/refresh sans jeton -> 400" 400 "$(code -X POST "$BASE/auth/refresh" -H 'Content-Type: application/json' -d '{}')"

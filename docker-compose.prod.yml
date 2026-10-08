@@ -9,6 +9,22 @@
 # ==============================================================================
 
 services:
+  # Applique les migrations avant le démarrage de l'API (une fois, puis s'arrête).
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: builder
+    command: ["npx", "prisma", "migrate", "deploy"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-logixpress_user}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD requis}@postgres:5432/${POSTGRES_DB:-logixpress_db}?schema=public
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - logixpress-network
+
   api:
     build:
       context: .
@@ -18,15 +34,28 @@ services:
     environment:
       NODE_ENV: production
       API_PORT: 4000
-      DATABASE_URL: postgresql://${POSTGRES_USER:-logixpress_user}:${POSTGRES_PASSWORD:-logixpress_secret_pwd}@postgres:5432/${POSTGRES_DB:-logixpress_db}?schema=public
+      # Idéalement un rôle applicatif NON superutilisateur (voir docs/SECURITY-DEPLOYMENT.md) :
+      # un superutilisateur contourne l'immuabilité du journal d'audit.
+      DATABASE_URL: ${API_DATABASE_URL:-postgresql://${POSTGRES_USER:-logixpress_user}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD requis}@postgres:5432/${POSTGRES_DB:-logixpress_db}?schema=public}
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
-      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
-      CORS_ORIGIN: http://localhost:3000
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET requis}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET requis}
+      CORS_ORIGIN: ${CORS_ORIGIN:?CORS_ORIGIN requis (origine publique du back-office)}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
+      PUSH_ENABLED: ${PUSH_ENABLED:-false}
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
+      FIREBASE_CLIENT_EMAIL: ${FIREBASE_CLIENT_EMAIL:-}
+      FIREBASE_PRIVATE_KEY: ${FIREBASE_PRIVATE_KEY:-}
+      # Jamais en production : ENABLE_DEMO_ACCOUNTS, PASSWORD_RESET_LOG_TOKEN, RATE_LIMIT_DISABLED.
+      ENABLE_API_DOCS: ${ENABLE_API_DOCS:-false}
     ports:
       - "4000:4000"
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
@@ -38,11 +67,13 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+      args:
+        # Inlinée au build par Next.js : une variable d'environnement d'exécution n'a aucun effet.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4000/api/v1}
     container_name: logixpress-web
     restart: unless-stopped
     environment:
       NODE_ENV: production
-      NEXT_PUBLIC_API_URL: http://localhost:4000/api/v1
     ports:
       - "3000:3000"
     depends_on:

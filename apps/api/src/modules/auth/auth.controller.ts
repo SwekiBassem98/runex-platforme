@@ -74,12 +74,13 @@ export class AuthController {
   }
 
   /**
-   * Comptes de démonstration : 404 sauf `ENABLE_DEMO_ACCOUNTS=true` hors production.
-   * La route reste déclarée pour que l'écran de connexion sache qu'il n'y en a pas.
+   * Comptes de démonstration : liste vide sauf `ENABLE_DEMO_ACCOUNTS=true` hors
+   * production. Une liste vide (et non un 404) évite une erreur console sur
+   * chaque écran de connexion, sans rien révéler.
    */
   async getDemoUsers(_req: Request, res: Response): Promise<void> {
     if (!demoAccountsEnabled()) {
-      res.status(404).json({ success: false, message: 'Ressource introuvable.' });
+      res.json({ success: true, data: [] });
       return;
     }
     const demoAccounts = await authService.getDemoUsers();

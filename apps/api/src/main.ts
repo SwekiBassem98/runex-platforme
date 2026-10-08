@@ -143,6 +143,13 @@ async function bootstrap() {
     console.log(`[RUNEX API] Swagger Docs  : http://localhost:${port}/api/v1/docs`);
   });
 
+  // Derrière un relais (Next.js, nginx, load balancer), le relais réutilise ses
+  // connexions keep-alive. Avec le délai Node par défaut (5 s), l'API ferme une
+  // connexion au moment où le relais l'emploie : « socket hang up », servi en
+  // 500 au navigateur. L'API doit garder ses connexions plus longtemps que le relais.
+  server.keepAliveTimeout = Number(process.env.HTTP_KEEP_ALIVE_TIMEOUT_MS ?? 65_000);
+  server.headersTimeout = server.keepAliveTimeout + 1_000;
+
   // La passerelle temps réel se monte sur le même serveur HTTP qu'un chemin
   // distinct : une notification écrite après le démarrage de l'API doit
   // pouvoir être poussée, et non seulement retrouvée au rechargement.

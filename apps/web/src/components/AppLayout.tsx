@@ -339,7 +339,7 @@ export function RequireAuth({ children }: { children: React.ReactNode }) {
   if (user.role === RoleType.LIVREUR) {
     return (
       <AccesRefuse
-        titre="Espace livreur sur mobile"
+        titre="Accès refusé — espace livreur sur mobile"
         message="Les livreurs utilisent l'application mobile RUNEX. L'espace web d'exploitation ne leur est pas ouvert."
         action="Se déconnecter"
         onAction={() => void logout()}

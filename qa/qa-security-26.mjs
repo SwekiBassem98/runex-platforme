@@ -202,6 +202,9 @@ async function main() {
   section('S4 — Demo credentials not public');
   const demo = await api(null, 'GET', '/auth/demo-users');
   ok(demo.status === 404 || (demo.status === 200 && !/Admin123|passwordHint":"[^"]+"/.test(demo.text)), '/auth/demo-users does not leak passwords', `HTTP ${demo.status}`);
+  if (!process.env.QA_EXPECT_DEMO) {
+    ok(demo.status === 200 && Array.isArray(demo.json?.data) && demo.json.data.length === 0, 'demo accounts disabled by default (empty list)', `HTTP ${demo.status}`);
+  }
 
   section('Password reset');
   const reqReset = await api(null, 'POST', '/auth/password-reset/request', { email: 'nobody@example.tn' });

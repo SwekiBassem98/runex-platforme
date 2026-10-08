@@ -13,7 +13,7 @@
 import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const CHROME = process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const WEB = 'http://localhost:3000';
 const API = 'http://localhost:4000/api/v1';
 const PORT = 9334;
@@ -302,7 +302,7 @@ console.log('\n4. Portail expéditeur, session expéditeur :');
   const rendered = await send('Runtime.evaluate', {
     expression: `(() => {
       const t = document.body.innerText;
-      return t.includes('Portail expéditeur') || t.includes('Mes Colis');
+      return t.includes('Portail expéditeur') || t.includes('Espace Expéditeur') || /Mes colis/i.test(t);
     })()`,
     returnByValue: true,
   });

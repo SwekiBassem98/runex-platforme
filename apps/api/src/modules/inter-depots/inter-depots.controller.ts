@@ -75,7 +75,7 @@ export class InterDepotsController {
         // Seules les réceptions en écart traduisent une perte physique : elles
         // remontent à part, jamais noyées dans le total.
         anomalies: visibles.filter((t) => t.hasDiscrepancy).length,
-        piecesEnMouvement: list
+        piecesEnMouvement: visibles
           .filter((t) => t.status === InterDepotStatus.EN_TRANSIT)
           .reduce((sum, t) => sum + t.totalPieces, 0),
       },

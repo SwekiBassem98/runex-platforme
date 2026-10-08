@@ -283,6 +283,10 @@ export class InterDepotsService {
       );
     }
     const validPackageIds = packageIds as string[];
+    const repeated = validPackageIds.length - new Set(validPackageIds).size;
+    if (repeated > 0) {
+      throw badRequest(`${repeated} identifiant(s) de colis sont répétés dans la demande.`);
+    }
 
     const [source, destination] = await Promise.all([
       prisma.deposit.findUnique({ where: { id: sourceId } }),
@@ -639,6 +643,10 @@ export class InterDepotsService {
 
     const isCancel = status === InterDepotStatus.ANNULE;
     const targetStatus = isCancel ? PackageStatus.RECU_DEPOT : STATUS_ON_TRANSFER_STEP[status];
+    // En route, le colis n'est plus physiquement dans aucun dépôt : il quitte
+    // le stock du dépôt d'origine au départ du véhicule, et n'entre dans celui
+    // de destination qu'à la réception.
+    const leavesSource = status === InterDepotStatus.EN_TRANSIT;
     const targetDepositId = isCancel ? record.sourceDepositId : status === InterDepotStatus.RECU ? record.destinationDepositId : null;
 
     // Sur annulation, le colis revient au dépôt d'origine : la transition
@@ -670,8 +678,10 @@ export class InterDepotsService {
     const { timeline, description } = this.stepNarrative(status, source, destination, record);
 
     await prisma.$transaction(async (tx) => {
-      await tx.interDepotTransfer.update({
-        where: { id: transferId },
+      // Mise à jour conditionnelle : deux réceptions (ou un départ et une
+      // annulation) simultanées ne peuvent pas toutes deux réussir.
+      const moved = await tx.interDepotTransfer.updateMany({
+        where: { id: transferId, status: record.status },
         data: {
           status: status as never,
           ...(status === InterDepotStatus.PREPARE ? { preparedAt: ctx.now } : {}),
@@ -686,6 +696,9 @@ export class InterDepotsService {
           ...(isCancel ? { cancelledAt: ctx.now } : {}),
         },
       });
+      if (moved.count !== 1) {
+        throw conflict(`Le transfert ${record.transferNumber} vient d'être modifié : rechargez-le.`);
+      }
 
       for (const pkg of packages) {
         if (targetStatus) {
@@ -709,6 +722,7 @@ export class InterDepotsService {
             allowSameStatus: !isCancel && targetStatus === pkg.status,
             data: {
               ...(targetDepositId !== null ? { currentDepositId: targetDepositId } : {}),
+              ...(leavesSource ? { currentDepositId: null } : {}),
               ...(detaches ? { interDepotTransferId: null } : {}),
             },
             client: tx,

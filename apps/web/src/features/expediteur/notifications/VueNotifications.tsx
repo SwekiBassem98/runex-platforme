@@ -44,10 +44,16 @@ type Filtre = 'toutes' | 'non-lues' | NotificationCategory;
  * dictionnaire, les suivants sont les catégories que l'API connaît. Un libellé
  * figé ici resterait français après un changement de langue.
  */
+// Un expéditeur ne reçoit jamais d'événement de tournée ni de transfert
+// inter-dépôts (vocabulaire interne d'exploitation) : ces filtres n'ont rien à
+// montrer dans son portail.
+const CATEGORIES_INTERNES: NotificationCategory[] = ['tournee', 'transfert'];
 const FILTRES: Filtre[] = [
   'toutes',
   'non-lues',
-  ...(Object.keys(NOTIFICATION_CATEGORY_LABELS) as NotificationCategory[]),
+  ...(Object.keys(NOTIFICATION_CATEGORY_LABELS) as NotificationCategory[]).filter(
+    (c) => !CATEGORIES_INTERNES.includes(c)
+  ),
 ];
 
 const CATEGORY_STYLE: Record<NotificationCategory, string> = {
