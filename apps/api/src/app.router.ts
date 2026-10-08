@@ -830,57 +830,74 @@ export function createApiRouter(): Router {
     asyncHandler((req, res) => depotsController.update(req, res))
   );
 
-  // Inter-Dépôts
+  // Inter-Dépôts (livraison & retours) — bordereau, scan de chargement,
+  // acceptation pièce par pièce. Les routes fixes avant `/:id`.
+  router.get(
+    ['/inter-depots/form-options', '/inter-depot/form-options'],
+    authenticateToken,
+    requirePermissions(PermissionCode.INTERDEPOT_READ),
+    asyncHandler((req, res) => interDepotsController.formOptions(req, res))
+  );
+  router.get(
+    ['/inter-depots/acceptance', '/inter-depot/acceptance'],
+    authenticateToken,
+    requirePermissions(PermissionCode.INTERDEPOT_MANAGE),
+    asyncHandler((req, res) => interDepotsController.acceptanceBoard(req, res))
+  );
+  router.post(
+    ['/inter-depots/acceptance/scan', '/inter-depot/acceptance/scan'],
+    authenticateToken,
+    requirePermissions(PermissionCode.INTERDEPOT_MANAGE),
+    asyncHandler((req, res) => interDepotsController.acceptScan(req, res))
+  );
   router.get(
     INTER_DEPOTS,
     authenticateToken,
     requirePermissions(PermissionCode.INTERDEPOT_READ),
     asyncHandler((req, res) => interDepotsController.getAll(req, res))
   );
-
   router.get(
     INTER_DEPOT_ITEM,
     authenticateToken,
     requirePermissions(PermissionCode.INTERDEPOT_READ),
     asyncHandler((req, res) => interDepotsController.getByNumber(req, res))
   );
-
-  // Ouverture d'un transfert : les colis quittent le stock du dépôt d'origine.
+  router.get(
+    ['/inter-depots/:id/candidates', '/inter-depot/:id/candidates'],
+    authenticateToken,
+    requirePermissions(PermissionCode.INTERDEPOT_MANAGE),
+    asyncHandler((req, res) => interDepotsController.candidates(req, res))
+  );
   router.post(
     INTER_DEPOTS,
     authenticateToken,
     requirePermissions(PermissionCode.INTERDEPOT_MANAGE),
     asyncHandler((req, res) => interDepotsController.create(req, res))
   );
-
-  // Préparation du lot.
-  router.post(
-    INTER_DEPOT_PREPARE,
+  router.patch(
+    INTER_DEPOT_ITEM,
     authenticateToken,
     requirePermissions(PermissionCode.INTERDEPOT_MANAGE),
-    asyncHandler((req, res) => interDepotsController.prepare(req, res))
+    asyncHandler((req, res) => interDepotsController.update(req, res))
   );
-
-  // Départ, réception et annulation.
   router.post(
-    INTER_DEPOT_DISPATCH,
+    ['/inter-depots/:id/scan', '/inter-depot/:id/scan'],
     authenticateToken,
     requirePermissions(PermissionCode.INTERDEPOT_MANAGE),
-    asyncHandler((req, res) => interDepotsController.dispatch(req, res))
+    asyncHandler((req, res) => interDepotsController.scan(req, res))
   );
-
-  router.post(
-    INTER_DEPOT_RECEIVE,
-    authenticateToken,
-    requirePermissions(PermissionCode.INTERDEPOT_MANAGE),
-    asyncHandler((req, res) => interDepotsController.receive(req, res))
-  );
-
   router.post(
     INTER_DEPOT_CANCEL,
     authenticateToken,
     requirePermissions(PermissionCode.INTERDEPOT_MANAGE),
     asyncHandler((req, res) => interDepotsController.cancel(req, res))
+  );
+  // Ancien cycle : 410 explicite plutôt qu'un comportement silencieux.
+  router.post(
+    [...INTER_DEPOT_PREPARE, ...INTER_DEPOT_DISPATCH, ...INTER_DEPOT_RECEIVE],
+    authenticateToken,
+    requirePermissions(PermissionCode.INTERDEPOT_MANAGE),
+    asyncHandler((req, res) => interDepotsController.legacy(req, res))
   );
 
   // Dashboard Métriques

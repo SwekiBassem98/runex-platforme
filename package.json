@@ -56,7 +56,8 @@
     "qa:security": "node qa/qa-security-26.mjs",
     "qa:interdepot": "node qa/qa-interdepot-26.mjs",
     "qa:runsheet-ui": "node qa/qa-runsheet-ui-26.mjs",
-    "qa:colis-ui": "node qa/qa-colis-ui-26.mjs"
+    "qa:colis-ui": "node qa/qa-colis-ui-26.mjs",
+    "qa:interdepot-ui": "node qa/qa-interdepot-ui-26.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",

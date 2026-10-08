@@ -450,7 +450,8 @@ async function seedPackages(ctx: SeedContext) {
           assignedDriverId: driver?.id ?? null,
           originDepositId: ctx.hub.id,
           currentDepositId: ctx.hub.id,
-          destinationDepositId: ctx.hub.id,
+          // Agence qui livre : celle du gouvernorat du destinataire, sinon le hub.
+          destinationDepositId: depositForGovernorate(ctx, customer.governorate),
           packageType: blueprint.packageType,
           status: blueprint.status,
           sizeCategory: blueprint.sizeCategory ?? PackageSize.MOYENNE,
@@ -651,24 +652,8 @@ async function seedPackages(ctx: SeedContext) {
     console.log(`  Bordereau      ${voucher.voucherNumber}`);
   }
 
-  /* --- Transfert inter-depots --- */
-  const hasTransfer = await prisma.interDepotTransfer.count();
-  if (hasTransfer === 0) {
-    const source = ctx.deposits.get('DEP-SOUSSE-AGT')!;
-    const transfer = await prisma.interDepotTransfer.create({
-      data: {
-        transferNumber: `ID-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-0001`,
-        sourceDepositId: source.id,
-        destinationDepositId: ctx.hub.id,
-        transporterDriverId: ctx.drivers[1]?.id ?? null,
-        sealNumber: 'PLOMB-2026-0042',
-        totalPackages: 7,
-        status: 'EN_TRANSIT',
-        shippedAt: new Date(Date.now() - 3600_000 * 8),
-      },
-    });
-    console.log(`  Transfert     ${transfer.transferNumber}`);
-  }
+  // Pas de bordereau inter-dépôt fictif : un bordereau se constitue au scan
+  // de colis réels (voir l'écran « Ajouter un inter dépôt »).
 
   /* --- Rendez-vous de ramassage --- */
   const hasPickup = await prisma.pickupAppointment.count();
@@ -690,6 +675,17 @@ async function seedPackages(ctx: SeedContext) {
     });
     console.log(`  Ramassage      ${pickup.referenceNumber}`);
   }
+}
+
+const DEPOSIT_BY_GOVERNORATE: Record<string, string> = {
+  tunis: 'DEP-TUNIS-AGT',
+  sousse: 'DEP-SOUSSE-AGT',
+  sfax: 'DEP-SFAX-AGT',
+};
+
+function depositForGovernorate(ctx: SeedContext, governorate: string): string {
+  const code = DEPOSIT_BY_GOVERNORATE[governorate.trim().toLowerCase()];
+  return (code && ctx.deposits.get(code)?.id) || ctx.hub.id;
 }
 
 /* ------------------------------------------------------------------ */

@@ -1,69 +1,82 @@
 /**
- * Transferts inter-dépôts : le mouvement des charges entre sites.
+ * Inter-dépôts « au scan » — livraison et retours.
  *
- * Un transfert déplace des colis d'un dépôt vers un autre. Trois invariants
- * portent tout le module :
+ * Le flux reprend celui que les agences pratiquent déjà :
  *
- * 1. **Rien ne se déplace silencieusement.** Chaque étape du cycle écrit un
- *    événement de suivi sur chacun des colis concernés. L'historique d'un colis
- *    doit pouvoir se lire seul et raconter le trajet complet — dépôt de départ,
- *    passage en inter-dépôt, dépôt d'arrivée, réception.
+ *  1. **Bordereau d'abord.** L'agence de départ choisit l'agence d'arrivée
+ *     (livraison) ou l'agence de l'expéditeur (retours), le livreur — son
+ *     immatriculation est reprise automatiquement — et la date. Le bordereau
+ *     est « En attente ».
+ *  2. **Chargement au scan.** Chaque colis scanné monte dans le bordereau et
+ *     quitte le stock du dépôt (en route). Un interrupteur Ajouter / Retirer
+ *     permet de corriger une erreur en rescannant. Un colis qui n'a rien à
+ *     faire dans ce camion est refusé avec son motif : destination différente
+ *     (un colis pour Nabeul ne monte pas dans un bordereau pour Sfax), colis
+ *     absent du dépôt, déjà dans un autre bordereau, engagé dans une tournée…
+ *  3. **Acceptation pièce par pièce** à l'arrivée. Chaque étiquette de pièce
+ *     est scannée ; un colis est reçu quand toutes ses pièces le sont,
+ *     « partiellement reçu » sinon. Le bordereau reste ouvert tant qu'une pièce
+ *     manque.
  *
- * 2. **Le dépôt suit le colis, pas l'inverse.** Un colis en transit n'est
- *    dans aucun dépôt : il a quitté le stock de l'origine sans être encore
- *    disponible à l'arrivée. Lui laisser un dépôt courant ferait croire qu'il
- *    est disponible.
- *
- * 3. **Les transitions sont validées par le modèle, pas par l'écran.** Le
- *    client peut appeler n'importe quelle route dans n'importe quel ordre ;
- *    c'est la table `INTER_DEPOT_TRANSITIONS` et la machine à états du colis
- *    qui décident. L'interface ne fait que refléter cette décision.
- *
- * Le cycle demandé est `CRE → PREPARE → EN_TRANSIT → RECU`, plus `ANNULE`.
- * `EN_TRANSIT` est directement atteignable depuis `CRE` : sur le terrain,
- * préparer et charger sont un seul geste, et imposer deux validations
- * successives n'ajouterait qu'un clic.
+ * Garde-fous : chaque écriture verrouille la ligne du bordereau (`FOR UPDATE`)
+ * et passe par la machine à états du colis, conditionnée au statut lu — deux
+ * postes qui scannent en même temps ne peuvent pas compter deux fois la même
+ * pièce ni charger un colis dans deux camions.
  */
 
+import type { Prisma } from '@prisma/client';
 import { getPrisma } from '../../common/database/prisma-context';
 import { auditService } from '../../common/audit/audit.service';
-import { notificationService } from '../../common/notifications/notification.service';
 import { notificationDispatcher } from '../notifications/notification.dispatcher';
-import type { PackageStatus as PrismaPackageStatus } from '@prisma/client';
 import {
   InterDepotStatus,
-  PackageStatus,
-  RoleType,
-  INTER_DEPOT_TRANSITIONS,
+  InterDepotType,
   INTER_DEPOT_STATUS_LABELS,
-  canTransitionInterDepot,
-  canTransition as canTransitionPackage,
+  INTER_DEPOT_OPEN_STATUSES,
+  PackageStatus,
+  PACKAGE_STATUS_LABELS,
+  RoleType,
   NotificationEvent,
+  pieceBarcode,
 } from '@logixpress/types';
-import { notFound, badRequest, conflict, asUuid } from '../../common/errors/api-error';
+import { notFound, badRequest, conflict, asUuid, ApiError } from '../../common/errors/api-error';
 import { packageWorkflowService } from '../colis/package-workflow.service';
+import { nextTransferNumber, tunisDayStamp } from '../../common/database/numbering';
+import { mainHubId } from '../../common/routing/deposit-routing';
 
-/**
- * Pont entre l'énumération générée par Prisma et celle du package partagé.
- *
- * Les deux portent les mêmes valeurs mais sont des types distincts : sans
- * conversion explicite, le service ne peut pas passer un statut lu en base à
- * la machine à états. Même conversion que dans le module Colis.
- */
-const toSharedStatus = (status: PrismaPackageStatus): PackageStatus =>
-  status as unknown as PackageStatus;
-const toPrismaStatus = (status: PackageStatus): PrismaPackageStatus =>
-  status as unknown as PrismaPackageStatus;
+/* ------------------------------------------------------------------ */
+/* Types publics                                                      */
+/* ------------------------------------------------------------------ */
 
-export interface TransferPackageRef {
-  id: string;
-  trackingNumber: string;
-  status: PackageStatus;
-  pieceCount: number;
-  customerName: string;
+export interface InterDepotActor {
+  id?: string;
+  fullName: string;
+  role: RoleType;
+  /** Dépôt de l'opérateur (agent de dépôt, ou dépôt de rattachement). */
+  depositId?: string | null;
 }
 
-/** Une étape de la chronologie visuelle du mouvement. */
+export type InterDepotDirection = 'ENVOI' | 'RECEPTION';
+
+export interface TransferItemDto {
+  packageId: string;
+  trackingNumber: string;
+  barcode: string;
+  shipperName: string;
+  customerName: string;
+  destination: string;
+  pieceCount: number;
+  receivedPieces: number;
+  receivedPieceNumbers: number[];
+  /** `EN_ROUTE`, `PARTIEL`, `RECU`. */
+  receptionState: 'EN_ROUTE' | 'PARTIEL' | 'RECU';
+  packageStatus: PackageStatus;
+  packageStatusLabel: string;
+  addedAt: string;
+  receivedAt: string | null;
+}
+
+/** Une étape de la chronologie visuelle du mouvement (compatibilité). */
 export interface MovementStep {
   key: string;
   label: string;
@@ -71,13 +84,14 @@ export interface MovementStep {
   location: string;
   description: string;
   timestamp: string | null;
-  /** L'étape est-elle atteinte à cet instant du cycle ? */
   reached: boolean;
 }
 
 export interface InterDepotDto {
   id: string;
   transferNumber: string;
+  type: InterDepotType;
+  typeLabel: string;
   sourceDeposit: string;
   sourceDepositId: string;
   destinationDeposit: string;
@@ -85,26 +99,33 @@ export interface InterDepotDto {
   driverId: string | null;
   driverName: string | null;
   driverPhone: string | null;
+  vehiclePlate: string | null;
+  departureAt: string | null;
   scheduledDate: string | null;
   sealNumber: string | null;
   status: InterDepotStatus;
   statusLabel: string;
-  /** Nombre de colis du lot. */
+  /** Sens du bordereau pour le dépôt qui le consulte. */
+  direction: InterDepotDirection | null;
+  /** Nombre de colis (« commandes »). */
   totalPackages: number;
-  /** Somme des pièces transportées. */
+  /** Nombre de pièces (« colis » au sens des étiquettes). */
   totalPieces: number;
   receivedPackages: number;
-  /** Écart expédié/reçu. Nul tant que la réception n'a pas eu lieu. */
+  receivedPieces: number;
+  partialPackages: number;
+  /** Colis dont aucune ou une partie seulement des pièces est arrivée. */
   discrepancy: number;
-  /** La réception a-t-elle été faite en écart ? */
   hasDiscrepancy: boolean;
+  /** Chargement encore modifiable (aucune pièce acceptée à l'arrivée). */
+  editable: boolean;
   notes: string | null;
   dispatchNotes: string | null;
   receptionNotes: string | null;
-  packages: TransferPackageRef[];
-  /** Chronologie du mouvement, prête à afficher telle quelle. */
+  items: TransferItemDto[];
+  /** Compatibilité avec les anciens écrans et l'application mobile. */
+  packages: { id: string; trackingNumber: string; status: PackageStatus; pieceCount: number; customerName: string }[];
   movement: MovementStep[];
-  /** Transitions encore possibles depuis l'état courant. */
   allowedTransitions: InterDepotStatus[];
   createdAt: string;
   preparedAt: string | null;
@@ -114,917 +135,1047 @@ export interface InterDepotDto {
   updatedAt: string;
 }
 
-const TRANSFER_INCLUDE = {
-  sourceDeposit: { select: { id: true, name: true, phone: true, city: true } },
-  destinationDeposit: { select: { id: true, name: true, phone: true, city: true } },
-  transporterDriver: { select: { id: true, user: { select: { fullName: true, phone: true } } } },
-  packages: {
-    include: { customer: { select: { fullName: true } } },
-    orderBy: { trackingNumber: 'asc' },
-  },
-} as const;
-
-/**
- * Statuts depuis lesquels un colis peut quitter un dépôt vers un autre.
- *
- * La liste est volontairement courte. Un colis se transfère parce qu'il est
- * physiquement dans un dépôt et n'est engagé nulle part : `RECU_DEPOT` est le
- * cas normal, `RETOUR_DEPOT` le cas du rapatrié qui doit être réorienté. Tout
- * le reste est refusé, avec un motif nommé — voir `refusalReason`.
- */
-const TRANSFERABLE_STATUSES: readonly PackageStatus[] = [
-  PackageStatus.RECU_DEPOT,
-  PackageStatus.RETOUR_DEPOT,
-];
-
-/**
- * Statut du colis après chaque étape du transfert.
- *
- * La table est la traduction directe du mouvement physique : le lot est
- * conditionné, il roule, il est pointé à l'arrivée. L'annulation, elle, ne
- * suit pas ce chemin : le colis n'a jamais quitté le dépôt, il y revient.
- */
-const STATUS_ON_TRANSFER_STEP: Partial<Record<InterDepotStatus, PackageStatus>> = {
-  [InterDepotStatus.CRE]: PackageStatus.EN_LOT_INTER_DEPOT,
-  [InterDepotStatus.PREPARE]: PackageStatus.EN_LOT_INTER_DEPOT,
-  [InterDepotStatus.EN_TRANSIT]: PackageStatus.EN_TRANSIT_INTER_DEPOT,
-  [InterDepotStatus.RECU]: PackageStatus.RECU_DEPOT_DESTINATION,
-};
-
-/** Libellé d'un dépôt tel qu'il apparaît dans l'historique d'un colis. */
-const depositLabel = (name: string): string => `Dépôt ${name}`;
-
-/**
- * Motif de refus nommé, pour un colis non transférable.
- *
- * Un refus qui dit seulement « statut incompatible » oblige l'opérateur à
- * deviner. Chaque cas interdit est donc nommé : c'est ce message que
- * l'utilisateur voit, et il dit ce qu'il faut faire.
- */
-function refusalReason(
-  status: PackageStatus,
-  ctx: { inTransfer: boolean; assignedDriver: boolean; atSource: boolean }
-): string {
-  if (ctx.inTransfer) return 'déjà rattaché à un transfert en cours';
-  if (status === PackageStatus.ANNULE) return 'annulé';
-  if (status === PackageStatus.LIVRE) return 'livré';
-  if (status === PackageStatus.RETOURNE_EXPEDITEUR) return 'restitué à son expéditeur';
-  if (status === PackageStatus.LIVRAISON_PARTIELLE) return 'en cours de restitution';
-  if (
-    status === PackageStatus.EN_COURS_LIVRAISON ||
-    status === PackageStatus.AFFECTE_RUNSHEET ||
-    status === PackageStatus.EN_RUNSHEET_RETOUR
-  ) {
-    return 'engagé dans une tournée de livraison';
-  }
-  if (status === PackageStatus.EN_LOT_INTER_DEPOT) return 'déjà conditionné dans un lot';
-  if (status === PackageStatus.EN_TRANSIT_INTER_DEPOT) return 'déjà en route vers un autre dépôt';
-  if (ctx.assignedDriver) return 'affecté à un livreur';
-  if (!ctx.atSource) return 'présent dans un autre dépôt';
-  if (
-    status === PackageStatus.CREE ||
-    status === PackageStatus.RAMASSAGE_PROGRAMME ||
-    status === PackageStatus.RAMASSE
-  ) {
-    return 'pas encore réceptionné au dépôt';
-  }
-  if (status === PackageStatus.REPORTE || status === PackageStatus.ECHEC_LIVRAISON) {
-    return 'dans le processus de livraison, pas disponible au dépôt';
-  }
-  return `dans un état incompatible (${status})`;
+export interface InterDepotStats {
+  total: number;
+  sentPending: number;
+  sentReceived: number;
+  toReceive: number;
+  received: number;
 }
 
+export interface ScanResult {
+  mode: 'add' | 'remove';
+  message: string;
+  trackingNumber: string;
+  transfer: InterDepotDto;
+}
+
+export interface AcceptanceResult {
+  message: string;
+  trackingNumber: string;
+  pieceNumber: number;
+  pieceCount: number;
+  receivedPieces: number;
+  packageComplete: boolean;
+  transferNumber: string;
+  transferStatus: InterDepotStatus;
+}
+
+/* ------------------------------------------------------------------ */
+/* Constantes                                                         */
+/* ------------------------------------------------------------------ */
+
+const OPEN = INTER_DEPOT_OPEN_STATUSES as readonly string[];
+
+/** Statuts depuis lesquels un colis de livraison peut monter dans un bordereau. */
+const LOADABLE_DELIVERY: readonly string[] = ['RECU_DEPOT', 'RECU_DEPOT_DESTINATION'];
+/** Statut d'un retour prêt à repartir vers l'agence de son expéditeur. */
+const LOADABLE_RETURN: readonly string[] = ['RETOUR_DEPOT'];
+
+const TRANSFER_INCLUDE = {
+  sourceDeposit: { select: { id: true, name: true, city: true, isMainHub: true } },
+  destinationDeposit: { select: { id: true, name: true, city: true, isMainHub: true } },
+  transporterDriver: {
+    select: { id: true, licensePlate: true, user: { select: { fullName: true, phone: true } } },
+  },
+  items: {
+    orderBy: { addedAt: 'asc' },
+    include: {
+      pieces: { select: { pieceNumber: true }, orderBy: { pieceNumber: 'asc' } },
+      package: {
+        select: {
+          id: true,
+          trackingNumber: true,
+          barcode: true,
+          status: true,
+          pieceCount: true,
+          customer: { select: { fullName: true } },
+          customerAddress: { select: { governorate: true, delegation: true } },
+          shipper: { select: { companyName: true, brandName: true } },
+        },
+      },
+    },
+  },
+} satisfies Prisma.InterDepotTransferInclude;
+
+type TransferRecord = Prisma.InterDepotTransferGetPayload<{ include: typeof TRANSFER_INCLUDE }>;
+
+const statusLabel = (s: string) => PACKAGE_STATUS_LABELS[s as PackageStatus] ?? s;
+const typeLabel = (t: InterDepotType) =>
+  t === InterDepotType.RETOUR ? 'Inter-dépôt retours et échanges' : 'Inter-dépôt livraison';
+
+/** Motif lisible d'un colis qui ne peut pas monter dans un bordereau. */
+function loadRefusal(status: string, type: InterDepotType): string {
+  switch (status) {
+    case 'CREE':
+    case 'RAMASSAGE_PROGRAMME':
+    case 'RAMASSE':
+      return "n'a pas encore été réceptionné au dépôt (passez-le d'abord en acceptation magasin)";
+    case 'AFFECTE_RUNSHEET':
+    case 'EN_COURS_LIVRAISON':
+    case 'EN_RUNSHEET_RETOUR':
+      return 'est engagé dans une tournée';
+    case 'REPORTE':
+    case 'ECHEC_LIVRAISON':
+    case 'LIVRAISON_PARTIELLE':
+      return 'est encore dans le processus de livraison';
+    case 'EN_LOT_INTER_DEPOT':
+    case 'EN_TRANSIT_INTER_DEPOT':
+      return 'est déjà en route dans un autre inter-dépôt';
+    case 'LIVRE':
+      return 'est déjà livré';
+    case 'RETOURNE_EXPEDITEUR':
+      return 'a déjà été rendu à son expéditeur';
+    case 'ANNULE':
+      return 'est annulé';
+    case 'RETOUR_DEPOT':
+      return type === InterDepotType.LIVRAISON
+        ? "est un retour : chargez-le dans un inter-dépôt retours"
+        : 'ne peut pas être chargé';
+    case 'RECU_DEPOT':
+    case 'RECU_DEPOT_DESTINATION':
+      return type === InterDepotType.RETOUR
+        ? "n'est pas un retour : chargez-le dans un inter-dépôt livraison"
+        : 'ne peut pas être chargé';
+    default:
+      return `est au statut « ${statusLabel(status)} »`;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Lecture d'un code scanné                                            */
+/* ------------------------------------------------------------------ */
+
+interface ParsedCode {
+  raw: string;
+  base: string;
+  piece: number | null;
+}
+
+/**
+ * Un scan est soit le code du colis (code-barres ou numéro de suivi), soit
+ * l'étiquette d'une pièce : `<code colis>-<n°>`.
+ */
+function parseCode(input: unknown): ParsedCode {
+  const raw = String(input ?? '').trim();
+  if (!raw) throw badRequest('Scannez ou saisissez un code-barres.');
+  if (raw.length > 80 || !/^[A-Za-z0-9-]+$/.test(raw)) {
+    throw badRequest('Code-barres illisible.');
+  }
+  const m = /^(.+)-(\d{1,3})$/.exec(raw);
+  if (m) return { raw, base: m[1]!, piece: Number(m[2]) };
+  return { raw, base: raw, piece: null };
+}
+
+async function findPackageByCode(client: Prisma.TransactionClient | ReturnType<typeof getPrisma>, code: ParsedCode) {
+  const select = {
+    id: true,
+    trackingNumber: true,
+    barcode: true,
+    status: true,
+    pieceCount: true,
+    deletedAt: true,
+    currentDepositId: true,
+    originDepositId: true,
+    destinationDepositId: true,
+    assignedDriverId: true,
+    currentRunsheetId: true,
+    interDepotTransferId: true,
+    destinationDeposit: { select: { name: true } },
+    originDeposit: { select: { name: true } },
+  } as const;
+  // Le code complet d'abord (un numéro de suivi peut lui-même contenir un tiret).
+  const exact = await client.package.findFirst({
+    where: { deletedAt: null, OR: [{ barcode: code.raw }, { trackingNumber: code.raw }] },
+    select,
+  });
+  if (exact) return { pkg: exact, piece: null as number | null };
+  if (code.piece !== null) {
+    const byBase = await client.package.findFirst({
+      where: { deletedAt: null, OR: [{ barcode: code.base }, { trackingNumber: code.base }] },
+      select,
+    });
+    if (byBase) return { pkg: byBase, piece: code.piece };
+  }
+  return null;
+}
+
+/* ------------------------------------------------------------------ */
+/* Service                                                             */
+/* ------------------------------------------------------------------ */
+
 export class InterDepotsService {
-  async findAll(filters?: {
+  private get prisma() {
+    return getPrisma();
+  }
+
+  /* ---------------------------- lecture ---------------------------- */
+
+  /** Dépôt d'où l'opérateur travaille : le sien, sinon celui demandé, sinon le hub. */
+  async operatingDepositId(actor: InterDepotActor, requested?: unknown): Promise<string> {
+    if (actor.role === RoleType.AGENT_DEPOT) {
+      if (!actor.depositId) throw new ApiError("Votre compte n'est rattaché à aucun dépôt.", 403);
+      return actor.depositId;
+    }
+    const asked = typeof requested === 'string' && requested ? asUuid(requested) : null;
+    if (typeof requested === 'string' && requested && !asked) throw badRequest('Identifiant de dépôt invalide.');
+    const id = asked ?? actor.depositId ?? (await mainHubId(this.prisma));
+    if (!id) throw new ApiError('Aucun dépôt configuré.', 503);
+    const deposit = await this.prisma.deposit.findUnique({ where: { id }, select: { id: true } });
+    if (!deposit) throw notFound('Dépôt introuvable.');
+    return deposit.id;
+  }
+
+  async list(filters: {
+    type?: string;
     status?: string;
+    start?: string;
+    end?: string;
+    viewerDepositId?: string | null;
     sourceDepositId?: string;
     destinationDepositId?: string;
-  }): Promise<InterDepotDto[]> {
-    const prisma = getPrisma();
+    driverId?: string | null;
+  }): Promise<{ rows: InterDepotDto[]; stats: InterDepotStats }> {
+    const where: Prisma.InterDepotTransferWhereInput = {};
+    if (filters.type) {
+      if (!Object.values(InterDepotType).includes(filters.type as InterDepotType)) {
+        throw badRequest(`Type d'inter-dépôt inconnu : ${filters.type}.`);
+      }
+      where.type = filters.type as InterDepotType;
+    }
+    const range = this.dateRange(filters.start, filters.end);
+    if (range) where.createdAt = range;
+    if (filters.viewerDepositId) {
+      where.OR = [{ sourceDepositId: filters.viewerDepositId }, { destinationDepositId: filters.viewerDepositId }];
+    }
+    if (filters.driverId) where.transporterDriverId = filters.driverId;
+    const src = filters.sourceDepositId ? asUuid(filters.sourceDepositId) : null;
+    const dst = filters.destinationDepositId ? asUuid(filters.destinationDepositId) : null;
+    if (src) where.sourceDepositId = src;
+    if (dst) where.destinationDepositId = dst;
 
-    const where: Record<string, unknown> = {};
-    if (filters?.status && filters.status !== 'ALL') {
-      where.status = filters.status as InterDepotStatus;
-    }
-    if (filters?.sourceDepositId) {
-      const id = asUuid(filters.sourceDepositId);
-      if (id) where.sourceDepositId = id;
-    }
-    if (filters?.destinationDepositId) {
-      const id = asUuid(filters.destinationDepositId);
-      if (id) where.destinationDepositId = id;
-    }
-
-    const records = await prisma.interDepotTransfer.findMany({
+    const all = await this.prisma.interDepotTransfer.findMany({
       where,
       include: TRANSFER_INCLUDE,
       orderBy: { createdAt: 'desc' },
-      take: 200,
+      take: 500,
     });
+    const viewer = filters.viewerDepositId ?? null;
+    const dtos = all.map((r) => this.toDto(r, viewer));
 
-    return records.map((record) => this.toDto(record));
+    const stats: InterDepotStats = { total: dtos.length, sentPending: 0, sentReceived: 0, toReceive: 0, received: 0 };
+    for (const t of dtos) {
+      const open = OPEN.includes(t.status);
+      const done = t.status === InterDepotStatus.RECU;
+      if (!viewer || t.sourceDepositId === viewer) {
+        if (open) stats.sentPending++;
+        if (done) stats.sentReceived++;
+      }
+      if (!viewer || t.destinationDepositId === viewer) {
+        if (open) stats.toReceive++;
+        if (done) stats.received++;
+      }
+    }
+
+    let rows = dtos;
+    if (filters.status && filters.status !== 'ALL') {
+      const s = String(filters.status);
+      if (s === 'EN_ATTENTE') rows = rows.filter((t) => OPEN.includes(t.status));
+      else rows = rows.filter((t) => t.status === s);
+    }
+    return { rows, stats };
   }
 
-  async findByNumber(identifier: string): Promise<InterDepotDto | null> {
-    const prisma = getPrisma();
-    const record = await prisma.interDepotTransfer.findFirst({
+  async findByNumber(identifier: string, viewerDepositId?: string | null): Promise<InterDepotDto | null> {
+    const record = await this.prisma.interDepotTransfer.findFirst({
       where: this.lookupWhere(identifier),
       include: TRANSFER_INCLUDE,
     });
-    return record ? this.toDto(record) : null;
+    return record ? this.toDto(record, viewerDepositId ?? null) : null;
+  }
+
+  /** Référentiels du formulaire : agences et livreurs (avec immatriculation). */
+  async formOptions() {
+    const [deposits, drivers] = await Promise.all([
+      this.prisma.deposit.findMany({
+        where: { isActive: true },
+        select: { id: true, name: true, code: true, isMainHub: true, governorate: true, status: true },
+        orderBy: [{ isMainHub: 'desc' }, { name: 'asc' }],
+      }),
+      this.prisma.driver.findMany({
+        where: { isActive: true, deletedAt: null, user: { isActive: true } },
+        select: {
+          id: true,
+          driverCode: true,
+          licensePlate: true,
+          vehicleType: true,
+          user: { select: { fullName: true, phone: true, deposit: { select: { id: true, name: true } } } },
+        },
+        orderBy: { user: { fullName: 'asc' } },
+      }),
+    ]);
+    return {
+      deposits: deposits.filter((d) => d.status !== 'FERME'),
+      drivers: drivers.map((d) => ({
+        id: d.id,
+        driverCode: d.driverCode,
+        fullName: d.user.fullName,
+        phone: d.user.phone,
+        licensePlate: d.licensePlate,
+        vehicleType: d.vehicleType,
+        depositId: d.user.deposit?.id ?? null,
+        depositName: d.user.deposit?.name ?? null,
+        label: `${d.user.fullName}${d.user.deposit ? ` - ${d.user.deposit.name}` : ''}`,
+      })),
+    };
   }
 
   /**
-   * Ouvre un transfert.
-   *
-   * La charge est contrôlée à l'entrée : chaque colis doit être physiquement
-   * au dépôt source, dans un état transférable, et libre de tout engagement.
-   * Le lot est constitué immédiatement — le colis quitte le stock du dépôt source et
-   * passe en `EN_LOT_INTER_DEPOT` — pour qu'un même colis ne puisse pas être
-   * engagé dans deux transferts à la fois.
+   * Colis du dépôt de départ qui peuvent monter dans ce bordereau (panneau de
+   * gauche de l'écran d'édition).
    */
-  async create(payload: {
-    sourceDepositId: string;
-    destinationDepositId: string;
-    transporterDriverId: string;
-    scheduledDate?: string;
-    sealNumber?: string;
-    packageIds?: string[];
-    notes?: string;
-    dispatchNotes?: string;
-  }): Promise<InterDepotDto> {
-    const prisma = getPrisma();
+  async candidates(identifier: string) {
+    const transfer = await this.requireTransfer(identifier);
+    const base: Prisma.PackageWhereInput = {
+      deletedAt: null,
+      currentDepositId: transfer.sourceDepositId,
+      interDepotTransferId: null,
+      ...(transfer.type === InterDepotType.RETOUR ? {} : { assignedDriverId: null, currentRunsheetId: null }),
+    };
+    const where: Prisma.PackageWhereInput =
+      transfer.type === InterDepotType.RETOUR
+        ? { ...base, status: { in: LOADABLE_RETURN as never }, originDepositId: transfer.destinationDepositId }
+        : {
+            ...base,
+            status: { in: LOADABLE_DELIVERY as never },
+            ...(transfer.destinationDeposit.isMainHub
+              ? { destinationDepositId: { not: transfer.sourceDepositId } }
+              : { destinationDepositId: transfer.destinationDepositId }),
+          };
+    const rows = await this.prisma.package.findMany({
+      where,
+      select: {
+        id: true,
+        trackingNumber: true,
+        barcode: true,
+        pieceCount: true,
+        sizeCategory: true,
+        status: true,
+        shipper: { select: { companyName: true, brandName: true } },
+        customer: { select: { fullName: true } },
+        customerAddress: { select: { governorate: true, delegation: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+      take: 500,
+    });
+    return rows.map((p) => ({
+      id: p.id,
+      trackingNumber: p.trackingNumber,
+      barcode: p.barcode,
+      pieceCount: p.pieceCount,
+      sizeCategory: p.sizeCategory,
+      status: p.status,
+      shipperName: p.shipper.brandName || p.shipper.companyName,
+      customerName: p.customer.fullName,
+      destination: [p.customerAddress.delegation, p.customerAddress.governorate].filter(Boolean).join(', '),
+    }));
+  }
 
-    const sourceId = asUuid(payload.sourceDepositId);
-    const destinationId = asUuid(payload.destinationDepositId);
-    if (!sourceId || !destinationId) {
-      throw badRequest('Dépôt source ou destination invalide.');
-    }
-    if (sourceId === destinationId) {
-      throw badRequest('Un transfert ne peut pas avoir la même source et la même destination.');
-    }
-    if (!payload.packageIds?.length) {
-      throw badRequest('Un transfert doit porter au moins un colis.');
-    }
-    if (!payload.transporterDriverId) {
-      throw badRequest('Le conducteur du transfert est obligatoire.');
-    }
+  /**
+   * Écran d'acceptation d'un dépôt : colis attendus (bordereaux ouverts vers
+   * ce dépôt) et compteurs « reçus / partiellement reçus ».
+   */
+  async acceptanceBoard(depositId: string, type: InterDepotType) {
+    const transfers = await this.prisma.interDepotTransfer.findMany({
+      where: { destinationDepositId: depositId, type, status: { in: OPEN as never } },
+      include: TRANSFER_INCLUDE,
+      orderBy: { createdAt: 'asc' },
+    });
+    const dtos = transfers.map((t) => this.toDto(t, depositId));
+    const expected = dtos.flatMap((t) =>
+      t.items
+        .filter((i) => i.receptionState !== 'RECU')
+        .map((i) => ({ ...i, transferNumber: t.transferNumber, sourceDeposit: t.sourceDeposit }))
+    );
+    const since = new Date(Date.now() - 24 * 3600 * 1000);
+    const recent = await this.prisma.interDepotItem.findMany({
+      where: {
+        transfer: { destinationDepositId: depositId, type },
+        OR: [{ receivedAt: { gte: since } }, { pieces: { some: { scannedAt: { gte: since } } } }],
+      },
+      include: {
+        pieces: { select: { pieceNumber: true, scannedAt: true }, orderBy: { pieceNumber: 'asc' } },
+        transfer: { select: { transferNumber: true } },
+        package: {
+          select: {
+            trackingNumber: true,
+            barcode: true,
+            pieceCount: true,
+            sizeCategory: true,
+            status: true,
+            shipper: { select: { companyName: true, brandName: true } },
+          },
+        },
+      },
+      orderBy: { receivedAt: 'desc' },
+      take: 200,
+    });
+    const accepted = recent.map((i) => ({
+      trackingNumber: i.package.trackingNumber,
+      barcode: i.package.barcode,
+      shipperName: i.package.shipper.brandName || i.package.shipper.companyName,
+      pieceCount: i.pieceCount,
+      receivedPieces: i.receivedPieces,
+      sizeCategory: i.package.sizeCategory,
+      state: i.receivedPieces >= i.pieceCount ? 'RECU' : 'PARTIEL',
+      transferNumber: i.transfer.transferNumber,
+      lastScanAt: i.pieces.length ? i.pieces[i.pieces.length - 1]!.scannedAt.toISOString() : null,
+    }));
+    accepted.sort((a, b) => String(b.lastScanAt).localeCompare(String(a.lastScanAt)));
+    return {
+      depositId,
+      type,
+      receivedCount: accepted.filter((a) => a.state === 'RECU').length,
+      partialCount: accepted.filter((a) => a.state === 'PARTIEL').length,
+      expectedCount: expected.length,
+      expected,
+      accepted,
+      openTransfers: dtos.map((t) => ({
+        transferNumber: t.transferNumber,
+        sourceDeposit: t.sourceDeposit,
+        totalPackages: t.totalPackages,
+        totalPieces: t.totalPieces,
+        receivedPieces: t.receivedPieces,
+        status: t.status,
+        statusLabel: t.statusLabel,
+      })),
+    };
+  }
 
-    // Les identifiants sont validés avant d'atteindre PostgreSQL : sans ce
-    // contrôle, une saisie maladroite provoke une erreur de type de colonne
-    // et remonte en 500, indiscernable d'une panne.
-    const packageIds = payload.packageIds.map((id) => asUuid(id));
-    if (packageIds.some((id) => id === null)) {
-      const invalid = payload.packageIds.filter((id) => asUuid(id) === null);
+  /* ---------------------------- écriture --------------------------- */
+
+  /** Ouvre un bordereau (en-tête seul) : « Enregistrer ». */
+  async create(
+    actor: InterDepotActor,
+    payload: {
+      type?: string;
+      sourceDepositId?: string;
+      destinationDepositId?: string;
+      transporterDriverId?: string;
+      vehiclePlate?: string;
+      departureAt?: string;
+      notes?: string;
+      packageIds?: unknown;
+    }
+  ): Promise<InterDepotDto> {
+    if (payload.packageIds !== undefined) {
       throw badRequest(
-        `${invalid.length} identifiant(s) de colis sont mal formés : ${invalid
-          .slice(0, 3)
-          .join(', ')}.`
+        "Les colis ne se joignent plus à la création : enregistrez le bordereau, puis scannez chaque colis."
       );
     }
-    const validPackageIds = packageIds as string[];
-    const repeated = validPackageIds.length - new Set(validPackageIds).size;
-    if (repeated > 0) {
-      throw badRequest(`${repeated} identifiant(s) de colis sont répétés dans la demande.`);
-    }
+    const type = (payload.type ? String(payload.type).toUpperCase() : InterDepotType.LIVRAISON) as InterDepotType;
+    if (!Object.values(InterDepotType).includes(type)) throw badRequest(`Type d'inter-dépôt inconnu : ${payload.type}.`);
 
+    const sourceId = await this.operatingDepositId(actor, payload.sourceDepositId);
+    const destinationId = asUuid(payload.destinationDepositId ?? '');
+    if (!destinationId) {
+      throw badRequest(type === InterDepotType.RETOUR ? "Choisissez l'agence source des retours." : "Choisissez l'agence de destination.");
+    }
+    if (destinationId === sourceId) {
+      throw badRequest("L'agence choisie est votre propre dépôt : un inter-dépôt relie deux agences différentes.");
+    }
     const [source, destination] = await Promise.all([
-      prisma.deposit.findUnique({ where: { id: sourceId } }),
-      prisma.deposit.findUnique({ where: { id: destinationId } }),
+      this.prisma.deposit.findUnique({ where: { id: sourceId } }),
+      this.prisma.deposit.findUnique({ where: { id: destinationId } }),
     ]);
-    if (!source || !destination) throw notFound('Dépôt source ou destination introuvable.');
+    if (!source || !destination) throw notFound('Agence introuvable.');
+    if (!source.isActive || source.status === 'FERME') throw conflict(`Le dépôt ${source.name} est fermé.`);
+    if (!destination.isActive || destination.status === 'FERME') throw conflict(`L'agence ${destination.name} est fermée.`);
 
-    // Un dépôt fermé ne participe à aucun mouvement, ni entrant ni sortant.
-    if (source.status === 'FERME' || source.isActive === false) {
-      throw conflict(`Le dépôt ${source.name} est fermé : il ne peut pas expédier.`);
-    }
-    if (destination.status === 'FERME' || destination.isActive === false) {
-      throw conflict(`Le dépôt ${destination.name} est fermé : il ne peut pas recevoir.`);
-    }
-    if (destination.status === 'MAINTENANCE') {
-      throw conflict(
-        `Le dépôt ${destination.name} est en maintenance : il accepte les réceptions, ` +
-          'mais pas de nouveau transfert. Les réceptions en cours restent possibles.'
-      );
-    }
-
-    const driverId = asUuid(payload.transporterDriverId);
-    if (!driverId) throw badRequest('Identifiant de conducteur invalide.');
-    const driver = await prisma.driver.findFirst({
+    const driverId = asUuid(payload.transporterDriverId ?? '');
+    if (!driverId) throw badRequest('Choisissez le livreur qui transporte le bordereau.');
+    const driver = await this.prisma.driver.findFirst({
       where: { id: driverId, deletedAt: null },
-      include: { user: { select: { fullName: true, phone: true } } },
+      include: { user: { select: { fullName: true, isActive: true } } },
     });
-    if (!driver) throw notFound('Conducteur introuvable.');
-    if (!driver.isActive) throw badRequest(`Le conducteur ${driver.user.fullName} est inactif.`);
+    if (!driver) throw notFound('Livreur introuvable.');
+    if (!driver.isActive || !driver.user.isActive) throw conflict(`Le livreur ${driver.user.fullName} est inactif.`);
 
-    const scheduledDate = this.parseDate(payload.scheduledDate);
+    const plate = this.parsePlate(payload.vehiclePlate) ?? driver.licensePlate ?? null;
+    const departureAt = this.parseDateTime(payload.departureAt) ?? new Date();
+    const notes = payload.notes ? String(payload.notes).trim().slice(0, 500) : null;
 
-    const packages = await prisma.package.findMany({
-      where: { id: { in: validPackageIds }, deletedAt: null },
-      include: { customer: { select: { fullName: true } } },
-    });
-
-    // Un identifiant fourni mais introuvable n'est pas une absence : c'est une
-    // erreur de saisie, et la différence compte pour l'appelant.
-    const found = new Set(packages.map((p) => p.id));
-    const missing = validPackageIds.filter((id) => !found.has(id));
-    if (missing.length > 0) {
-      throw notFound(`${missing.length} colis introuvable(s) ou supprimés.`);
-    }
-
-    this.assertTransferable(packages, source, destination.id);
-
-    const totalPieces = packages.reduce((sum, p) => sum + (p.pieceCount || 1), 0);
-    const number = await this.nextTransferNumber();
-    const now = new Date();
-
-    // La constitution du lot et le départ du colis du stock source forment un
-    // seul fait : s'ils étaient deux transactions, un échec entre les deux
-    // laisserait des colis « en lot » sans transfert correspondant.
-    const transfer = await prisma.$transaction(async (tx) => {
-      const created = await tx.interDepotTransfer.create({
+    const created = await this.prisma.$transaction(async (tx) => {
+      const transferNumber = await nextTransferNumber(tx, type === InterDepotType.RETOUR ? 'R' : 'D', tunisDayStamp());
+      const t = await tx.interDepotTransfer.create({
         data: {
-          transferNumber: number,
-          sourceDepositId: source.id,
-          destinationDepositId: destination.id,
+          transferNumber,
+          type,
+          sourceDepositId: sourceId,
+          destinationDepositId: destinationId,
           transporterDriverId: driver.id,
-          scheduledDate,
-          sealNumber: payload.sealNumber?.trim() || null,
-          totalPackages: packages.length,
-          totalPieces,
-          status: InterDepotStatus.CRE,
-          notes: payload.notes?.trim() || null,
-          dispatchNotes: payload.dispatchNotes?.trim() || null,
+          vehiclePlate: plate,
+          departureAt,
+          scheduledDate: departureAt,
+          createdByUserId: actor.id ?? null,
+          status: 'CRE',
+          notes,
         },
       });
-
-      for (const pkg of packages) {
-        // La constitution du lot est une transition comme les autres : elle
-        // passe par le service domaine, qui refuse un colis dont l'historique
-        // ne permettrait pas le conditionnement. La transaction en cours est
-        // transmise pour que le lot reste atomique.
-        await packageWorkflowService.transition({
-          packageId: pkg.id,
-          to: PackageStatus.EN_LOT_INTER_DEPOT,
-          actor: { fullName: driver.user.fullName, role: RoleType.AGENT_DEPOT },
-          title: 'Constitution du lot inter-dépôt',
-          note:
-            `Colis conditionné pour le transfert ${created.transferNumber} ` +
-            `vers ${destination.name} (${totalPieces} pièces).`,
-          location: depositLabel(source.name),
-          transferNumber: created.transferNumber,
-          auditAction: 'TRANSFER_LOT_CONSTITUTION',
-          data: { currentDepositId: null, interDepotTransferId: created.id },
-          client: tx,
-        });
-      }
-
-      return created;
+      await auditService.record(
+        {
+          entityType: 'TRANSFER',
+          entityId: t.id,
+          action: 'TRANSFERT_CRE',
+          userId: actor.id ?? null,
+          reason: `Bordereau ${transferNumber} (${typeLabel(type)}) : ${source.name} → ${destination.name}, livreur ${driver.user.fullName}.`,
+          newValues: { status: 'CRE', type, vehiclePlate: plate },
+        },
+        tx
+      );
+      return t;
     });
+    return (await this.findByNumber(created.id, sourceId))!;
+  }
 
+  /** Modifie l'en-tête (livreur, immatriculation, date) tant que rien n'est accepté. */
+  async updateHeader(
+    identifier: string,
+    actor: InterDepotActor,
+    payload: { transporterDriverId?: string; vehiclePlate?: string; departureAt?: string; notes?: string }
+  ): Promise<InterDepotDto> {
+    const transfer = await this.requireTransfer(identifier);
+    if (transfer.status !== 'CRE') {
+      throw conflict(`Le bordereau ${transfer.transferNumber} n'est plus modifiable (${INTER_DEPOT_STATUS_LABELS[transfer.status as InterDepotStatus]}).`);
+    }
+    const data: Prisma.InterDepotTransferUncheckedUpdateInput = {};
+    if (payload.transporterDriverId !== undefined) {
+      const driverId = asUuid(payload.transporterDriverId);
+      if (!driverId) throw badRequest('Livreur invalide.');
+      const driver = await this.prisma.driver.findFirst({
+        where: { id: driverId, deletedAt: null, isActive: true },
+        select: { id: true, licensePlate: true },
+      });
+      if (!driver) throw notFound('Livreur introuvable ou inactif.');
+      data.transporterDriverId = driver.id;
+      if (payload.vehiclePlate === undefined) data.vehiclePlate = driver.licensePlate ?? null;
+    }
+    if (payload.vehiclePlate !== undefined) data.vehiclePlate = this.parsePlate(payload.vehiclePlate);
+    if (payload.departureAt !== undefined) {
+      const at = this.parseDateTime(payload.departureAt);
+      if (!at) throw badRequest('Date de départ invalide.');
+      data.departureAt = at;
+      data.scheduledDate = at;
+    }
+    if (payload.notes !== undefined) data.notes = String(payload.notes ?? '').trim().slice(0, 500) || null;
+
+    const result = await this.prisma.interDepotTransfer.updateMany({
+      where: { id: transfer.id, status: 'CRE' },
+      data: data as Prisma.InterDepotTransferUncheckedUpdateManyInput,
+    });
+    if (result.count !== 1) throw conflict('Le bordereau vient d’être modifié : rechargez-le.');
     await auditService.record({
       entityType: 'TRANSFER',
       entityId: transfer.id,
-      action: 'TRANSFERT_CREE',
-      reason:
-        `Transfert ${number} créé : ${source.name} → ${destination.name}, ` +
-        `${packages.length} colis, ${totalPieces} pièces.`,
-      newValues: { status: InterDepotStatus.CRE, totalPackages: packages.length, totalPieces },
+      action: 'TRANSFERT_ENTETE',
+      userId: actor.id ?? null,
+      reason: `En-tête du bordereau ${transfer.transferNumber} modifié par ${actor.fullName}.`,
+      newValues: JSON.parse(JSON.stringify(data)),
     });
-
-    return (await this.reload(transfer.id))!;
+    return (await this.findByNumber(transfer.id, transfer.sourceDepositId))!;
   }
 
-  /**
-   * Fait avancer le transfert d'une étape.
-   *
-   * Toutes les règles sont vérifiées ici, jamais supposer que l'appelant suit
-   * le parcours affiché. La validation est explicite même quand la table de
-   * transitions suffit : une règle de negócio qu'on ne voit pas dans la table
-   * devient une règle qu'on ne voit nulle part.
-   */
-  async transition(
-    identifier: string,
-    to: InterDepotStatus,
-    actor: { id?: string; fullName: string },
-    extra: { receivedPackages?: number; receptionNotes?: string } = {}
-  ): Promise<InterDepotDto> {
-    const prisma = getPrisma();
+  /** Scan de chargement : « Ajouter au inter dépôt » / « Retirer de l'inter dépôt ». */
+  async scan(identifier: string, actor: InterDepotActor, payload: { code?: unknown; mode?: unknown }): Promise<ScanResult> {
+    const mode = String(payload.mode ?? 'add').toLowerCase() === 'remove' ? 'remove' : 'add';
+    const code = parseCode(payload.code);
+    const transfer = await this.requireTransfer(identifier);
+    const found = await findPackageByCode(this.prisma, code);
+    if (!found) throw notFound(`Aucun colis ne correspond au code ${code.raw}.`);
+    const pkg = found.pkg;
 
-    const record = await prisma.interDepotTransfer.findFirst({
-      where: this.lookupWhere(identifier),
-      include: TRANSFER_INCLUDE,
-    });
-    if (!record) throw notFound('Transfert introuvable.');
+    if (mode === 'remove') {
+      await this.prisma.$transaction(async (tx) => {
+        const locked = await this.lockTransfer(tx, transfer.id);
+        if (locked.status !== 'CRE') {
+          throw conflict(`Le bordereau ${transfer.transferNumber} est déjà en cours d'acceptation : plus aucun retrait possible.`);
+        }
+        const item = await tx.interDepotItem.findUnique({
+          where: { transferId_packageId: { transferId: transfer.id, packageId: pkg.id } },
+        });
+        if (!item) throw conflict(`Le colis ${pkg.trackingNumber} ne fait pas partie de ce bordereau.`);
+        if (item.receivedPieces > 0) throw conflict(`Le colis ${pkg.trackingNumber} est déjà accepté à l'arrivée.`);
+        await packageWorkflowService.transition({
+          packageId: pkg.id,
+          to: item.previousStatus as unknown as PackageStatus,
+          actor: { id: actor.id, fullName: actor.fullName, role: RoleType.AGENT_DEPOT },
+          title: `Retiré de l'inter-dépôt ${transfer.transferNumber}`,
+          note: `Retiré par ${actor.fullName}`,
+          location: transfer.sourceDeposit.name,
+          transferNumber: transfer.transferNumber,
+          auditAction: 'INTERDEPOT_RETRAIT',
+          reason: `Retiré de l'inter-dépôt ${transfer.transferNumber}`,
+          data: { currentDepositId: item.previousDepositId ?? transfer.sourceDepositId, interDepotTransferId: null },
+          client: tx,
+        });
+        await tx.interDepotItem.delete({ where: { id: item.id } });
+        await tx.interDepotTransfer.update({
+          where: { id: transfer.id },
+          data: { totalPackages: { decrement: 1 }, totalPieces: { decrement: item.pieceCount } },
+        });
+      });
+      return {
+        mode,
+        message: `Colis ${pkg.trackingNumber} retiré du bordereau.`,
+        trackingNumber: pkg.trackingNumber,
+        transfer: (await this.findByNumber(transfer.id, transfer.sourceDepositId))!,
+      };
+    }
 
-    // Garde explicite sur la double réception : c'est l'erreur la plus coûteuse
-    // du module, puisqu'elle pousse à corriger un comptage déjà validé.
-    if (to === InterDepotStatus.RECU && record.status === InterDepotStatus.RECU) {
+    // --- Ajout : contrôles nommés, du plus parlant au plus général ---
+    if (pkg.interDepotTransferId === transfer.id) {
+      throw conflict(`Le colis ${pkg.trackingNumber} est déjà dans ce bordereau.`);
+    }
+    if (pkg.interDepotTransferId) {
+      const other = await this.prisma.interDepotTransfer.findUnique({
+        where: { id: pkg.interDepotTransferId },
+        select: { transferNumber: true },
+      });
+      throw conflict(`Le colis ${pkg.trackingNumber} est déjà chargé dans l'inter-dépôt ${other?.transferNumber ?? ''}.`.trim());
+    }
+    const loadable = transfer.type === InterDepotType.RETOUR ? LOADABLE_RETURN : LOADABLE_DELIVERY;
+    if (!loadable.includes(pkg.status)) {
+      throw conflict(`Le colis ${pkg.trackingNumber} ${loadRefusal(pkg.status, transfer.type as InterDepotType)}.`);
+    }
+    if (pkg.currentDepositId !== transfer.sourceDepositId) {
+      throw conflict(`Le colis ${pkg.trackingNumber} n'est pas dans votre dépôt (${transfer.sourceDeposit.name}).`);
+    }
+    if (transfer.type === InterDepotType.RETOUR) {
+      // Un retour revenu au dépôt garde la trace de son dernier livreur ; seule
+      // une tournée encore ouverte (marchandise pas encore remise) bloque.
+      if (pkg.currentRunsheetId) {
+        const rs = await this.prisma.runsheet.findUnique({
+          where: { id: pkg.currentRunsheetId },
+          select: { runsheetNumber: true, status: true },
+        });
+        if (rs && !['RETOUR_DEPOT', 'CLOTUREE_CONFORME', 'CLOTUREE_DEFICIT', 'ANNULEE'].includes(rs.status)) {
+          throw conflict(`Le retour ${pkg.trackingNumber} est encore sur la tournée ${rs.runsheetNumber} : clôturez-la d'abord.`);
+        }
+      }
+    } else if (pkg.assignedDriverId || pkg.currentRunsheetId) {
+      throw conflict(`Le colis ${pkg.trackingNumber} est affecté à un livreur : retirez-le de sa tournée d'abord.`);
+    }
+    if (transfer.type === InterDepotType.RETOUR) {
+      if (pkg.originDepositId !== transfer.destinationDepositId) {
+        throw conflict(
+          `Ce retour appartient à l'agence ${pkg.originDeposit.name} : il ne peut pas partir vers ${transfer.destinationDeposit.name}.`
+        );
+      }
+    } else if (transfer.destinationDeposit.isMainHub) {
+      if (pkg.destinationDepositId === transfer.sourceDepositId) {
+        throw conflict(`Le colis ${pkg.trackingNumber} est destiné à votre propre agence : il n'a pas à partir.`);
+      }
+    } else if (pkg.destinationDepositId !== transfer.destinationDepositId) {
       throw conflict(
-        `Le transfert ${record.transferNumber} a déjà été réceptionné ` +
-          `le ${record.receivedAt ? new Date(record.receivedAt).toLocaleDateString('fr-FR') : '—'}. ` +
-          "Une réception ne se refait pas : passez par une correction d'écart."
+        `Le colis ${pkg.trackingNumber} est destiné à l'agence ${pkg.destinationDeposit.name} : ` +
+          `il ne peut pas monter dans un inter-dépôt vers ${transfer.destinationDeposit.name}.`
       );
     }
 
-    if (!canTransitionInterDepot(record.status as InterDepotStatus, to)) {
-      const allowed = INTER_DEPOT_TRANSITIONS[record.status as InterDepotStatus] ?? [];
+    await this.prisma.$transaction(async (tx) => {
+      const locked = await this.lockTransfer(tx, transfer.id);
+      if (locked.status !== 'CRE') {
+        throw conflict(`Le bordereau ${transfer.transferNumber} est déjà en cours d'acceptation : plus aucun ajout possible.`);
+      }
+      await tx.interDepotItem.create({
+        data: {
+          transferId: transfer.id,
+          packageId: pkg.id,
+          pieceCount: Math.max(1, pkg.pieceCount),
+          previousStatus: pkg.status as never,
+          previousDepositId: pkg.currentDepositId,
+          addedByUserId: actor.id ?? null,
+        },
+      });
+      await packageWorkflowService.transition({
+        packageId: pkg.id,
+        to: PackageStatus.EN_TRANSIT_INTER_DEPOT,
+        actor: { id: actor.id, fullName: actor.fullName, role: RoleType.AGENT_DEPOT },
+        title:
+          transfer.type === InterDepotType.RETOUR
+            ? `Retour en route vers ${transfer.destinationDeposit.name}`
+            : `En route vers ${transfer.destinationDeposit.name}`,
+        note: `Inter-dépôt ${transfer.transferNumber}${transfer.transporterDriver ? ` — ${transfer.transporterDriver.user.fullName}` : ''}`,
+        location: `Inter-dépôt ${transfer.sourceDeposit.name} → ${transfer.destinationDeposit.name}`,
+        transferNumber: transfer.transferNumber,
+        auditAction: 'INTERDEPOT_CHARGEMENT',
+        data: {
+          currentDepositId: null,
+          interDepotTransferId: transfer.id,
+          ...(transfer.type === InterDepotType.RETOUR ? { assignedDriverId: null, currentRunsheetId: null } : {}),
+        },
+        client: tx,
+      });
+      await tx.interDepotTransfer.update({
+        where: { id: transfer.id },
+        data: { totalPackages: { increment: 1 }, totalPieces: { increment: Math.max(1, pkg.pieceCount) } },
+      });
+    });
+    return {
+      mode,
+      message: `Colis ${pkg.trackingNumber} ajouté (${Math.max(1, pkg.pieceCount)} pièce(s)).`,
+      trackingNumber: pkg.trackingNumber,
+      transfer: (await this.findByNumber(transfer.id, transfer.sourceDepositId))!,
+    };
+  }
+
+  /** Acceptation à l'arrivée, une pièce par scan. */
+  async acceptScan(actor: InterDepotActor, depositId: string, payload: { code?: unknown; type?: unknown }): Promise<AcceptanceResult> {
+    const type = String(payload.type ?? InterDepotType.LIVRAISON).toUpperCase() as InterDepotType;
+    if (!Object.values(InterDepotType).includes(type)) throw badRequest("Type d'inter-dépôt inconnu.");
+    const code = parseCode(payload.code);
+    const found = await findPackageByCode(this.prisma, code);
+    if (!found) throw notFound(`Aucun colis ne correspond au code ${code.raw}.`);
+    const pkg = found.pkg;
+
+    const item = await this.prisma.interDepotItem.findFirst({
+      where: { packageId: pkg.id, transfer: { status: { in: OPEN as never } } },
+      include: { transfer: { include: { destinationDeposit: { select: { name: true } }, sourceDeposit: { select: { name: true } } } } },
+    });
+    if (!item) {
+      throw conflict(`Le colis ${pkg.trackingNumber} n'est attendu dans aucun inter-dépôt en cours.`);
+    }
+    if (item.transfer.destinationDepositId !== depositId) {
       throw conflict(
-        `Transition impossible : ${INTER_DEPOT_STATUS_LABELS[record.status as InterDepotStatus]} ` +
-          `→ ${INTER_DEPOT_STATUS_LABELS[to]}. ` +
-          (allowed.length
-            ? `Transitions possibles : ${allowed
-                .map((s) => INTER_DEPOT_STATUS_LABELS[s])
-                .join(', ')}.`
-            : 'Ce transfert est terminé : il ne peut plus changer d\'état.')
+        `Le colis ${pkg.trackingNumber} voyage vers ${item.transfer.destinationDeposit.name} (bordereau ${item.transfer.transferNumber}), pas vers votre dépôt.`
       );
+    }
+    if (item.transfer.type !== type) {
+      throw conflict(
+        type === InterDepotType.RETOUR
+          ? `Le colis ${pkg.trackingNumber} arrive par un inter-dépôt livraison : acceptez-le dans « Acceptation inter dépôt ».`
+          : `Le colis ${pkg.trackingNumber} arrive par un inter-dépôt retours : acceptez-le dans « Acceptation inter dépôt retours ».`
+      );
+    }
+    let pieceNumber = found.piece;
+    if (pieceNumber === null) {
+      if (item.pieceCount > 1) {
+        throw conflict(
+          `Le colis ${pkg.trackingNumber} compte ${item.pieceCount} pièces : scannez l'étiquette de chaque pièce (${pieceBarcode(pkg.barcode, 1)}, ${pieceBarcode(pkg.barcode, 2)}…).`
+        );
+      }
+      pieceNumber = 1;
+    }
+    if (pieceNumber < 1 || pieceNumber > item.pieceCount) {
+      throw badRequest(`Pièce ${pieceNumber} inexistante : le colis ${pkg.trackingNumber} compte ${item.pieceCount} pièce(s).`);
     }
 
     const now = new Date();
-    let received = record.receivedPackages;
-    let status = to;
-
-    if (to === InterDepotStatus.RECU) {
-      received = this.parseReceivedCount(extra.receivedPackages, record.totalPackages);
-      // L'écart est un fait constaté, pas une appréciation : la réception est
-      // toujours enregistrée, et c'est l'écart qui la signale. La refuser
-      // laisserait la perte sans trace et le transfert bloqué.
-      status = InterDepotStatus.RECU;
-    }
-
-    await this.applyTransfer(record.id, record, status, {
-      actor,
-      now,
-      received,
-      receptionNotes: extra.receptionNotes,
-    });
-
-    await auditService.record({
-      entityType: 'TRANSFER',
-      entityId: record.id,
-      action: `TRANSFERT_${status}`,
-      reason:
-        `Transfert ${record.transferNumber} : ` +
-        `${INTER_DEPOT_STATUS_LABELS[record.status as InterDepotStatus]} → ` +
-        `${INTER_DEPOT_STATUS_LABELS[status]}.`,
-      previousValues: { status: record.status },
-      newValues: { status, receivedPackages: received },
-      userId: actor.id,
-    });
-
-    return (await this.reload(record.id))!;
-  }
-
-  /** Réception au dépôt d'arrivée. */
-  async receive(
-    identifier: string,
-    actor: { id?: string; fullName: string },
-    extra: { receivedPackages?: number; receptionNotes?: string } = {}
-  ): Promise<InterDepotDto> {
-    return this.transition(identifier, InterDepotStatus.RECU, actor, extra);
-  }
-
-  /** Préparation du lot. */
-  async prepare(identifier: string, actor: { id?: string; fullName: string }): Promise<InterDepotDto> {
-    return this.transition(identifier, InterDepotStatus.PREPARE, actor);
-  }
-
-  /** Départ du véhicule. */
-  async dispatch(identifier: string, actor: { id?: string; fullName: string }): Promise<InterDepotDto> {
-    return this.transition(identifier, InterDepotStatus.EN_TRANSIT, actor);
-  }
-
-  /**
-   * Annulation.
-   *
-   * Les colis du lot redeviennent disponibles au dépôt d'origine. C'est la
-   * seule étape où un colis revient en arrière dans la machine à états, et ce
-   * n'est pas un détour : un transfert annulé n'a jamais eu lieu.
-   */
-  async cancel(identifier: string, actor: { id?: string; fullName: string }): Promise<InterDepotDto> {
-    const prisma = getPrisma();
-    const record = await prisma.interDepotTransfer.findFirst({
-      where: this.lookupWhere(identifier),
-      include: TRANSFER_INCLUDE,
-    });
-    if (!record) throw notFound('Transfert introuvable.');
-
-    // Un colis reçu au dépôt d'arrivée n'est plus récupérable : il est
-    // physiquement ailleurs. L'annuler laisserait le stock et l'historique
-    // dans deux états contraires.
-    if (record.status === InterDepotStatus.RECU) {
-      throw conflict(
-        `Le transfert ${record.transferNumber} est réceptionné : les colis sont ` +
-          `installés à ${record.destinationDeposit.name} et ne peuvent plus être annulés.`
-      );
-    }
-
-    return this.transition(identifier, InterDepotStatus.ANNULE, actor);
-  }
-
-  // ------------------------------------------------------------------
-  // Règles métier
-  // ------------------------------------------------------------------
-
-  /**
-   * Vérifie qu'un lot peut quitter le dépôt source.
-   *
-   * Le contrôle est fait colis par colis et le refus est global et motivé :
-   * dire « 3 colis sur 12 ne sont pas transférables » avec la raison est
-   * exploitable, là où un rejet silencieux du premier colis ne l'est pas.
-   */
-  private assertTransferable(
-    packages: {
-      id: string;
-      trackingNumber: string;
-      status: PrismaPackageStatus;
-      currentDepositId: string | null;
-      interDepotTransferId: string | null;
-      assignedDriverId: string | null;
-    }[],
-    source: { id: string; name: string },
-    destinationId: string
-  ): void {
-    if (packages.length === 0) {
-      throw badRequest('Aucun colis à transférer.');
-    }
-
-    const duplicates = packages.length - new Set(packages.map((p) => p.id)).size;
-    if (duplicates > 0) {
-      throw badRequest(`${duplicates} identifiant(s) de colis sont répétés dans la demande.`);
-    }
-
-    const rejected = packages.filter(
-      (p) =>
-        !TRANSFERABLE_STATUSES.includes(toSharedStatus(p.status)) ||
-        p.interDepotTransferId !== null ||
-        p.assignedDriverId !== null ||
-        p.currentDepositId !== source.id
-    );
-
-    if (rejected.length > 0) {
-      const detail = rejected
-        .slice(0, 5)
-        .map(
-          (p) =>
-            `${p.trackingNumber} (${refusalReason(toSharedStatus(p.status), {
-              inTransfer: p.interDepotTransferId !== null,
-              assignedDriver: p.assignedDriverId !== null,
-              atSource: p.currentDepositId === source.id,
-            })})`
-        )
-        .join(', ');
-
-      throw conflict(
-        `${rejected.length} colis ne peuvent pas quitter ${source.name} : ${detail}` +
-          (rejected.length > 5 ? `, et ${rejected.length - 5} autre(s).` : '.') +
-          ` Destination demandée : ${destinationId.slice(0, 8)}.`
-      );
-    }
-  }
-
-  /** Nombre de colis reçus, validé avant écriture. */
-  private parseReceivedCount(value: number | undefined, total: number): number {
-    if (value === undefined || value === null) return total;
-    const received = Number(value);
-    if (!Number.isInteger(received) || received < 0) {
-      throw badRequest('Le nombre de colis reçus est invalide.');
-    }
-    if (received > total) {
-      throw badRequest(
-        `Impossible d'avoir reçu plus de colis qu'expédiés (${received} reçus pour ${total} expédiés).`
-      );
-    }
-    return received;
-  }
-
-  private parseDate(value?: string): Date | null {
-    if (!value) return null;
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-      throw badRequest('Date de transfert invalide : format attendu AAAA-MM-JJ.');
-    }
-    const parsed = new Date(`${value}T00:00:00.000Z`);
-    if (Number.isNaN(parsed.getTime())) {
-      throw badRequest('Date de transfert invalide.');
-    }
-    return parsed;
-  }
-
-  // ------------------------------------------------------------------
-  // Écritures
-  // ------------------------------------------------------------------
-
-  /**
-   * Applique une étape : statut du transfert, statut et dépôt des colis,
-   * événements de suivi, dans une seule transaction.
-   *
-   * Les trois écritures ne sont pas dissociables : un colis passé en
-   * `EN_TRANSIT_INTER_DEPOT` sans événement de suivi produirait un historique
-   * muet, et c'est précisément ce que l'historique doit empêcher.
-   */
-  private async applyTransfer(
-    transferId: string,
-    record: any,
-    status: InterDepotStatus,
-    ctx: {
-      // L'identifiant de l'acteur est conservé pour l'exclure des
-      // notifications : celui qui réceptionne n'a pas besoin d'être prévenu
-      // qu'il a réceptionné.
-      actor: { id?: string; fullName: string };
-      now: Date;
-      received: number;
-      receptionNotes?: string;
-    }
-  ): Promise<void> {
-    const prisma = getPrisma();
-    const source = record.sourceDeposit as { name: string };
-    const destination = record.destinationDeposit as { name: string };
-    const packages = (record.packages ?? []) as { id: string; status: PackageStatus }[];
-
-    const isCancel = status === InterDepotStatus.ANNULE;
-    const targetStatus = isCancel ? PackageStatus.RECU_DEPOT : STATUS_ON_TRANSFER_STEP[status];
-    // En route, le colis n'est plus physiquement dans aucun dépôt : il quitte
-    // le stock du dépôt d'origine au départ du véhicule, et n'entre dans celui
-    // de destination qu'à la réception.
-    const leavesSource = status === InterDepotStatus.EN_TRANSIT;
-    const targetDepositId = isCancel ? record.sourceDepositId : status === InterDepotStatus.RECU ? record.destinationDepositId : null;
-
-    // Sur annulation, le colis revient au dépôt d'origine : la transition
-    // arrière est légitime et doit être validée comme telle.
-    if (isCancel) {
-      const invalid = packages.filter((p) => p.status !== PackageStatus.EN_LOT_INTER_DEPOT);
-      if (invalid.length > 0) {
-        throw conflict(
-          `${invalid.length} colis ne sont plus dans le lot (statut inattendu) : ` +
-            "l'annulation ne peut pas les replacer au dépôt d'origine."
-        );
+    const outcome = await this.prisma.$transaction(async (tx) => {
+      await this.lockTransfer(tx, item.transferId);
+      const fresh = await tx.interDepotItem.findUnique({ where: { id: item.id }, include: { pieces: true } });
+      if (!fresh) throw conflict('Bordereau modifié entre-temps : rescannez.');
+      if (fresh.pieces.some((p) => p.pieceNumber === pieceNumber)) {
+        throw conflict(`Pièce ${pieceNumber}/${fresh.pieceCount} du colis ${pkg.trackingNumber} déjà reçue.`);
       }
-    } else if (targetStatus) {
-      // Une étape peut ne rien demander au colis : préparer le lot alors que
-      // la constitution l'a déjà conditionné laisse le statut inchangé. Ce
-      // n'est pas une transition avortée, c'est un état déjà atteint.
-      const invalid = packages.filter(
-        (p) =>
-          p.status !== targetStatus && !canTransitionPackage(p.status as PackageStatus, targetStatus)
-      );
-      if (invalid.length > 0) {
-        throw conflict(
-          `${invalid.length} colis ne peuvent pas passer à l'état ` +
-            `${targetStatus} depuis leur état actuel : l'historique du lot est incohérent.`
-        );
-      }
-    }
-
-    const { timeline, description } = this.stepNarrative(status, source, destination, record);
-
-    await prisma.$transaction(async (tx) => {
-      // Mise à jour conditionnelle : deux réceptions (ou un départ et une
-      // annulation) simultanées ne peuvent pas toutes deux réussir.
-      const moved = await tx.interDepotTransfer.updateMany({
-        where: { id: transferId, status: record.status },
+      await tx.interDepotPieceScan.create({
+        data: { itemId: fresh.id, pieceNumber: pieceNumber!, scannedByUserId: actor.id ?? null, scannedAt: now },
+      });
+      const receivedPieces = fresh.pieces.length + 1;
+      const complete = receivedPieces >= fresh.pieceCount;
+      await tx.interDepotItem.update({
+        where: { id: fresh.id },
         data: {
-          status: status as never,
-          ...(status === InterDepotStatus.PREPARE ? { preparedAt: ctx.now } : {}),
-          ...(status === InterDepotStatus.EN_TRANSIT ? { shippedAt: ctx.now } : {}),
-          ...(status === InterDepotStatus.RECU
-            ? {
-                receivedAt: ctx.now,
-                receivedPackages: ctx.received,
-                receptionNotes: ctx.receptionNotes?.trim() || null,
-              }
-            : {}),
-          ...(isCancel ? { cancelledAt: ctx.now } : {}),
+          receivedPieces,
+          ...(complete ? { receivedAt: now, receivedByUserId: actor.id ?? null } : {}),
         },
       });
-      if (moved.count !== 1) {
-        throw conflict(`Le transfert ${record.transferNumber} vient d'être modifié : rechargez-le.`);
+      if (complete) {
+        const arrival =
+          type === InterDepotType.RETOUR
+            ? PackageStatus.RETOUR_DEPOT
+            : pkg.destinationDepositId === depositId
+              ? PackageStatus.RECU_DEPOT_DESTINATION
+              : PackageStatus.RECU_DEPOT;
+        await packageWorkflowService.transition({
+          packageId: pkg.id,
+          to: arrival,
+          actor: { id: actor.id, fullName: actor.fullName, role: RoleType.AGENT_DEPOT },
+          title:
+            type === InterDepotType.RETOUR
+              ? `Retour reçu à ${item.transfer.destinationDeposit.name}`
+              : `Reçu à ${item.transfer.destinationDeposit.name}`,
+          note: `Inter-dépôt ${item.transfer.transferNumber} — ${fresh.pieceCount} pièce(s) acceptée(s)`,
+          location: item.transfer.destinationDeposit.name,
+          transferNumber: item.transfer.transferNumber,
+          auditAction: 'INTERDEPOT_ACCEPTATION',
+          reason: `Accepté par inter-dépôt ${item.transfer.transferNumber}`,
+          data: { currentDepositId: depositId, interDepotTransferId: null },
+          client: tx,
+        });
       }
-
-      for (const pkg of packages) {
-        if (targetStatus) {
-          // Le lot reste attaché au transfert tant qu'il n'est pas arrivé :
-          // c'est ce lien qui empêche un colis d'être re-transféré par
-          // erreur alors qu'il roule. L'arrivée le détache, comme
-          // l'annulation : au-delà, le colis appartient au dépôt, plus au
-          // transfert.
-          const detaches = isCancel || status === InterDepotStatus.RECU;
-          await packageWorkflowService.transition({
-            packageId: pkg.id,
-            to: toSharedStatus(targetStatus),
-            actor: { fullName: ctx.actor.fullName, role: RoleType.AGENT_DEPOT },
-            title: timeline.title,
-            note: description,
-            location: timeline.location,
-            transferNumber: record.transferNumber,
-            auditAction: `TRANSFER_STEP_${status}`,
-            // Sur annulation le colis revient au dépôt d'origine : c'est la
-            // seule transition arrière du cycle, et elle est légitime.
-            allowSameStatus: !isCancel && targetStatus === pkg.status,
-            data: {
-              ...(targetDepositId !== null ? { currentDepositId: targetDepositId } : {}),
-              ...(leavesSource ? { currentDepositId: null } : {}),
-              ...(detaches ? { interDepotTransferId: null } : {}),
-            },
-            client: tx,
-          });
-        } else {
-          // Aucune étape ne correspond à un statut de colis : on se contente
-          // de tracer l'événement, sans prétendre à une transition.
-          await tx.packageTimeline.create({
-            data: {
-              packageId: pkg.id,
-              status: toPrismaStatus(toSharedStatus(pkg.status)),
-              title: timeline.title,
-              description,
-              locationName: timeline.location,
-              transferNumber: record.transferNumber,
-              operatorName: ctx.actor.fullName,
-            },
-          });
-        }
+      const items = await tx.interDepotItem.findMany({
+        where: { transferId: item.transferId },
+        select: { pieceCount: true, receivedPieces: true },
+      });
+      const done = items.filter((i) => i.receivedPieces >= i.pieceCount).length;
+      const allDone = done === items.length;
+      const status = allDone ? 'RECU' : 'RECU_PARTIEL';
+      await tx.interDepotTransfer.update({
+        where: { id: item.transferId },
+        data: {
+          status: status as never,
+          receivedPackages: done,
+          ...(allDone ? { receivedAt: now } : {}),
+        },
+      });
+      if (allDone || item.transfer.status === 'CRE') {
+        await auditService.record(
+          {
+            entityType: 'TRANSFER',
+            entityId: item.transferId,
+            action: allDone ? 'TRANSFERT_RECU' : 'TRANSFERT_RECU_PARTIEL',
+            userId: actor.id ?? null,
+            reason: allDone
+              ? `Bordereau ${item.transfer.transferNumber} entièrement reçu (${items.length} colis).`
+              : `Acceptation du bordereau ${item.transfer.transferNumber} commencée.`,
+            previousValues: { status: item.transfer.status },
+            newValues: { status },
+          },
+          tx
+        );
       }
+      return { receivedPieces, complete, status, allDone, pieceCount: fresh.pieceCount };
     });
 
-    if (status === InterDepotStatus.CRE) {
-      await notificationService
-        .notify({
-          type: 'TRANSFERT_CREE',
-          title: `Transfert ${record.transferNumber} créé`,
-          content: `${record.totalPackages} colis à charger vers ${destination.name}.`,
-          relatedEntity: 'TRANSFER',
-          relatedEntityId: transferId,
-        })
-        .catch(() => undefined);
-    }
-
-    if (status === InterDepotStatus.RECU) {
+    if (outcome.allDone) {
       await notificationDispatcher
         .notify({
           event: NotificationEvent.INTER_DEPOT_RECEIVED,
-          title: `Transfert ${record.transferNumber} réceptionné`,
-          content:
-            `${ctx.received} colis reçus à ${destination.name}` +
-            (ctx.received < record.totalPackages
-              ? ` — ${record.totalPackages - ctx.received} manquants.`
-              : '.'),
+          title: `Inter-dépôt ${item.transfer.transferNumber} reçu`,
+          content: `Bordereau ${item.transfer.sourceDeposit.name} → ${item.transfer.destinationDeposit.name} entièrement accepté.`,
           relatedEntity: 'INTER_DEPOT',
-          relatedEntityId: transferId,
-          transferId,
-          actorUserId: ctx.actor.id,
+          relatedEntityId: item.transferId,
+          transferId: item.transferId,
+          actorUserId: actor.id,
         })
         .catch(() => undefined);
     }
+
+    return {
+      message: outcome.complete
+        ? `Colis ${pkg.trackingNumber} reçu (${outcome.pieceCount}/${outcome.pieceCount}).`
+        : `Pièce ${pieceNumber}/${outcome.pieceCount} du colis ${pkg.trackingNumber} reçue — colis partiellement reçu.`,
+      trackingNumber: pkg.trackingNumber,
+      pieceNumber: pieceNumber!,
+      pieceCount: outcome.pieceCount,
+      receivedPieces: outcome.receivedPieces,
+      packageComplete: outcome.complete,
+      transferNumber: item.transfer.transferNumber,
+      transferStatus: outcome.status as InterDepotStatus,
+    };
   }
 
-  /** Titre, lieu et description de l'événement de suivi pour une étape. */
-  private stepNarrative(
-    status: InterDepotStatus,
-    source: { name: string },
-    destination: { name: string },
-    record: { totalPackages: number; totalPieces: number; receivedPackages?: number; sealNumber: string | null }
-  ): { timeline: { title: string; location: string }; description: string } {
-    switch (status) {
-      case InterDepotStatus.PREPARE:
-        return {
-          timeline: { title: 'Lot préparé', location: depositLabel(source.name) },
-          description:
-            `Lot de ${record.totalPackages} colis conditionné et prêt à charger` +
-            (record.sealNumber ? ` (plomb ${record.sealNumber})` : '') +
-            '.',
-        };
-      case InterDepotStatus.EN_TRANSIT:
-        return {
-          timeline: { title: 'Départ inter-dépôt', location: 'Inter-dépôt' },
-          description: `En route vers ${depositLabel(destination.name)}.`,
-        };
-      case InterDepotStatus.RECU:
-        return {
-          timeline: { title: 'Réceptionné', location: depositLabel(destination.name) },
-          description:
-            `Réceptionné à ${depositLabel(destination.name)}` +
-            (record.receivedPackages !== undefined && record.receivedPackages < record.totalPackages
-              ? ` — ${record.totalPackages - record.receivedPackages} colis manquants.`
-              : '.'),
-        };
-      case InterDepotStatus.ANNULE:
-        return {
-          timeline: { title: 'Transfert annulé', location: depositLabel(source.name) },
-          description: `Transfert annulé : colis replacés à ${depositLabel(source.name)}.`,
-        };
-      default:
-        return {
-          timeline: { title: 'Constitution du lot', location: depositLabel(source.name) },
-          description: `Colis conditionné à ${depositLabel(source.name)}.`,
-        };
-    }
+  /** Annulation : seulement tant qu'aucune pièce n'est acceptée. Les colis reviennent. */
+  async cancel(identifier: string, actor: InterDepotActor): Promise<InterDepotDto> {
+    const transfer = await this.requireTransfer(identifier);
+    await this.prisma.$transaction(async (tx) => {
+      const locked = await this.lockTransfer(tx, transfer.id);
+      if (locked.status !== 'CRE') {
+        throw conflict(
+          locked.status === 'ANNULE'
+            ? `Le bordereau ${transfer.transferNumber} est déjà annulé.`
+            : `Le bordereau ${transfer.transferNumber} est déjà en acceptation à l'arrivée : il ne peut plus être annulé.`
+        );
+      }
+      const items = await tx.interDepotItem.findMany({ where: { transferId: transfer.id } });
+      for (const item of items) {
+        await packageWorkflowService.transition({
+          packageId: item.packageId,
+          to: item.previousStatus as unknown as PackageStatus,
+          actor: { id: actor.id, fullName: actor.fullName, role: RoleType.AGENT_DEPOT },
+          title: `Inter-dépôt ${transfer.transferNumber} annulé`,
+          note: `Colis remis en stock à ${transfer.sourceDeposit.name}`,
+          location: transfer.sourceDeposit.name,
+          transferNumber: transfer.transferNumber,
+          auditAction: 'INTERDEPOT_ANNULATION',
+          reason: `Inter-dépôt ${transfer.transferNumber} annulé`,
+          data: { currentDepositId: item.previousDepositId ?? transfer.sourceDepositId, interDepotTransferId: null },
+          client: tx,
+        });
+      }
+      await tx.interDepotItem.deleteMany({ where: { transferId: transfer.id } });
+      await tx.interDepotTransfer.update({
+        where: { id: transfer.id },
+        data: { status: 'ANNULE', cancelledAt: new Date(), totalPackages: 0, totalPieces: 0 },
+      });
+      await auditService.record(
+        {
+          entityType: 'TRANSFER',
+          entityId: transfer.id,
+          action: 'TRANSFERT_ANNULE',
+          userId: actor.id ?? null,
+          reason: `Bordereau ${transfer.transferNumber} annulé par ${actor.fullName} (${items.length} colis remis en stock).`,
+          previousValues: { status: 'CRE' },
+          newValues: { status: 'ANNULE' },
+        },
+        tx
+      );
+    });
+    return (await this.findByNumber(transfer.id, transfer.sourceDepositId))!;
   }
 
-  /**
-   * Criteres de recherche d'un transfert.
-   *
-   * Un transfert est identifié par son numéro (`ID-AAAAMMJJ-0000`) ou par son
-   * UUID. La clause sur `id` n'est ajoutée que si la valeur est réellement un
-   * UUID : la passer telle quelle ferait échouer PostgreSQL sur le type de la
-   * colonne, et l'erreur remonterait en 500 au lieu d'un 404.
-   */
-  private lookupWhere(identifier: string): Record<string, unknown> {
-    const id = asUuid(identifier);
-    return id
-      ? { OR: [{ transferNumber: identifier }, { id }] }
-      : { transferNumber: identifier };
-  }
+  /* ---------------------------- internes --------------------------- */
 
-  private async reload(id: string): Promise<InterDepotDto | null> {
-    const prisma = getPrisma();
-    const record = await prisma.interDepotTransfer.findUnique({
-      where: { id },
+  async requireTransfer(identifier: string): Promise<TransferRecord> {
+    const record = await this.prisma.interDepotTransfer.findFirst({
+      where: this.lookupWhere(identifier),
       include: TRANSFER_INCLUDE,
     });
-    return record ? this.toDto(record) : null;
+    if (!record) throw notFound('Inter-dépôt introuvable.');
+    return record;
   }
 
-  /** Numéro lisible : ID-AAAAMMJJ-0000, séquence quotidienne. */
-  private async nextTransferNumber(): Promise<string> {
-    const prisma = getPrisma();
-    const now = new Date();
-    const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(
-      now.getDate()
-    ).padStart(2, '0')}`;
-
-    const last = await prisma.interDepotTransfer.findFirst({
-      where: { transferNumber: { contains: stamp } },
-      orderBy: { transferNumber: 'desc' },
-      select: { transferNumber: true },
-    });
-
-    const sequence = last ? Number(last.transferNumber.split('-').pop() ?? '0') + 1 : 1;
-    return `ID-${stamp}-${String(sequence).padStart(4, '0')}`;
+  private async lockTransfer(tx: Prisma.TransactionClient, id: string): Promise<{ status: string }> {
+    const rows = await tx.$queryRaw<{ status: string }[]>`
+      SELECT status::text AS status FROM "InterDepotTransfer" WHERE id = ${id}::uuid FOR UPDATE`;
+    if (!rows.length) throw notFound('Inter-dépôt introuvable.');
+    return rows[0]!;
   }
 
-  // ------------------------------------------------------------------
-  // Restitution
-  // ------------------------------------------------------------------
+  private lookupWhere(identifier: string): Prisma.InterDepotTransferWhereInput {
+    const id = asUuid(identifier);
+    return id ? { OR: [{ transferNumber: identifier }, { id }] } : { transferNumber: identifier };
+  }
 
-  private toDto(record: any): InterDepotDto {
+  private parsePlate(value: unknown): string | null {
+    if (value === undefined || value === null) return null;
+    const plate = String(value).trim().replace(/\s+/g, ' ').toUpperCase();
+    if (!plate) return null;
+    if (plate.length > 30 || !/^[0-9A-Z ]+$/.test(plate)) throw badRequest('Immatriculation invalide (ex. 3687 TUN 203).');
+    return plate;
+  }
+
+  private parseDateTime(value: unknown): Date | null {
+    if (value === undefined || value === null || value === '') return null;
+    const d = new Date(String(value));
+    if (Number.isNaN(d.getTime())) throw badRequest('Date de départ invalide.');
+    const yearMs = 366 * 24 * 3600 * 1000;
+    if (Math.abs(d.getTime() - Date.now()) > yearMs) throw badRequest('Date de départ hors plage (± 1 an).');
+    return d;
+  }
+
+  private dateRange(start?: string, end?: string): Prisma.DateTimeFilter | null {
+    const day = /^\d{4}-\d{2}-\d{2}$/;
+    if (start && !day.test(start)) throw badRequest('Date de début invalide (AAAA-MM-JJ).');
+    if (end && !day.test(end)) throw badRequest('Date de fin invalide (AAAA-MM-JJ).');
+    if (!start && !end) return null;
+    // Journées de Tunis (UTC+1, sans heure d'été).
+    const from = start ? new Date(`${start}T00:00:00+01:00`) : undefined;
+    const to = end ? new Date(new Date(`${end}T00:00:00+01:00`).getTime() + 24 * 3600 * 1000) : undefined;
+    return { ...(from ? { gte: from } : {}), ...(to ? { lt: to } : {}) };
+  }
+
+  private toDto(record: TransferRecord, viewer: string | null): InterDepotDto {
     const status = record.status as InterDepotStatus;
-    const source = record.sourceDeposit as { id: string; name: string; phone: string; city: string };
-    const destination = record.destinationDeposit as {
-      id: string;
-      name: string;
-      phone: string;
-      city: string;
-    };
-    const driver = record.transporterDriver as
-      | { id: string; user: { fullName: string; phone: string } }
-      | null;
-    const packages = (record.packages ?? []) as {
-      id: string;
-      trackingNumber: string;
-      status: PackageStatus;
-      pieceCount: number;
-      customer: { fullName: string };
-    }[];
-
-    const received = record.receivedPackages as number;
-    const discrepancy = record.receivedAt ? record.totalPackages - received : 0;
+    const items: TransferItemDto[] = record.items.map((i) => {
+      const received = i.pieces.map((p) => p.pieceNumber);
+      const state = i.receivedPieces >= i.pieceCount ? 'RECU' : i.receivedPieces > 0 ? 'PARTIEL' : 'EN_ROUTE';
+      return {
+        packageId: i.package.id,
+        trackingNumber: i.package.trackingNumber,
+        barcode: i.package.barcode,
+        shipperName: i.package.shipper.brandName || i.package.shipper.companyName,
+        customerName: i.package.customer.fullName,
+        destination: [i.package.customerAddress.delegation, i.package.customerAddress.governorate].filter(Boolean).join(', '),
+        pieceCount: i.pieceCount,
+        receivedPieces: i.receivedPieces,
+        receivedPieceNumbers: received,
+        receptionState: state,
+        packageStatus: i.package.status as PackageStatus,
+        packageStatusLabel: statusLabel(i.package.status),
+        addedAt: i.addedAt.toISOString(),
+        receivedAt: i.receivedAt?.toISOString() ?? null,
+      };
+    });
+    const receivedPackages = items.filter((i) => i.receptionState === 'RECU').length;
+    const partialPackages = items.filter((i) => i.receptionState === 'PARTIEL').length;
+    const receivedPieces = items.reduce((s, i) => s + i.receivedPieces, 0);
+    const totalPieces = items.reduce((s, i) => s + i.pieceCount, 0);
+    const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
+    const direction: InterDepotDirection | null =
+      viewer === record.sourceDepositId ? 'ENVOI' : viewer === record.destinationDepositId ? 'RECEPTION' : null;
+    const started = status !== InterDepotStatus.CRE;
 
     return {
       id: record.id,
       transferNumber: record.transferNumber,
-      sourceDeposit: source.name,
-      sourceDepositId: source.id,
-      destinationDeposit: destination.name,
-      destinationDepositId: destination.id,
-      driverId: driver?.id ?? null,
-      driverName: driver?.user.fullName ?? null,
-      driverPhone: driver?.user.phone ?? null,
-      scheduledDate: record.scheduledDate
-        ? new Date(record.scheduledDate as Date).toISOString().slice(0, 10)
-        : null,
-      sealNumber: record.sealNumber ?? null,
+      type: record.type as InterDepotType,
+      typeLabel: typeLabel(record.type as InterDepotType),
+      sourceDeposit: record.sourceDeposit.name,
+      sourceDepositId: record.sourceDepositId,
+      destinationDeposit: record.destinationDeposit.name,
+      destinationDepositId: record.destinationDepositId,
+      driverId: record.transporterDriver?.id ?? null,
+      driverName: record.transporterDriver?.user.fullName ?? null,
+      driverPhone: record.transporterDriver?.user.phone ?? null,
+      vehiclePlate: record.vehiclePlate ?? record.transporterDriver?.licensePlate ?? null,
+      departureAt: iso(record.departureAt ?? record.createdAt),
+      scheduledDate: iso(record.scheduledDate),
+      sealNumber: record.sealNumber,
       status,
       statusLabel: INTER_DEPOT_STATUS_LABELS[status] ?? status,
-      totalPackages: record.totalPackages,
-      totalPieces: record.totalPieces,
-      receivedPackages: received,
-      discrepancy,
-      hasDiscrepancy: discrepancy > 0,
-      notes: record.notes ?? null,
-      dispatchNotes: record.dispatchNotes ?? null,
-      receptionNotes: record.receptionNotes ?? null,
-      packages: packages.map((p) => ({
-        id: p.id,
-        trackingNumber: p.trackingNumber,
-        status: p.status,
-        pieceCount: p.pieceCount,
-        customerName: p.customer?.fullName ?? '',
+      direction,
+      totalPackages: items.length,
+      totalPieces,
+      receivedPackages,
+      receivedPieces,
+      partialPackages,
+      discrepancy: started ? items.length - receivedPackages : 0,
+      hasDiscrepancy: started && receivedPackages < items.length,
+      editable: status === InterDepotStatus.CRE,
+      notes: record.notes,
+      dispatchNotes: record.dispatchNotes,
+      receptionNotes: record.receptionNotes,
+      items,
+      packages: items.map((i) => ({
+        id: i.packageId,
+        trackingNumber: i.trackingNumber,
+        status: i.packageStatus,
+        pieceCount: i.pieceCount,
+        customerName: i.customerName,
       })),
-      movement: this.buildMovement(record, status, source, destination),
-      allowedTransitions: [...(INTER_DEPOT_TRANSITIONS[status] ?? [])],
+      movement: [
+        {
+          key: 'CRE',
+          label: 'Bordereau ouvert',
+          status: InterDepotStatus.CRE,
+          location: record.sourceDeposit.name,
+          description: `${items.length} colis chargé(s)`,
+          timestamp: iso(record.createdAt),
+          reached: true,
+        },
+        {
+          key: 'RECU',
+          label: 'Accepté à l’arrivée',
+          status: InterDepotStatus.RECU,
+          location: record.destinationDeposit.name,
+          description: `${receivedPackages}/${items.length} colis reçus`,
+          timestamp: iso(record.receivedAt),
+          reached: status === InterDepotStatus.RECU,
+        },
+      ],
+      allowedTransitions:
+        status === InterDepotStatus.CRE
+          ? [InterDepotStatus.ANNULE]
+          : [],
       createdAt: record.createdAt.toISOString(),
-      preparedAt: record.preparedAt ? record.preparedAt.toISOString() : null,
-      shippedAt: record.shippedAt ? record.shippedAt.toISOString() : null,
-      receivedAt: record.receivedAt ? record.receivedAt.toISOString() : null,
-      cancelledAt: record.cancelledAt ? record.cancelledAt.toISOString() : null,
+      preparedAt: iso(record.preparedAt),
+      shippedAt: iso(record.shippedAt),
+      receivedAt: iso(record.receivedAt),
+      cancelledAt: iso(record.cancelledAt),
       updatedAt: record.updatedAt.toISOString(),
     };
-  }
-
-  /**
-   * Chronologie de mouvement, de la création à l'arrivée.
-   *
-   * Les étapes non atteintes portent `timestamp: null` : l'interface peut ainsi
-   * dessiner la trajectoire complète d'un coup, en distinguant visuellement ce
-   * qui est fait de ce qui reste à faire, sans reconstruire l'avancement.
-   */
-  private buildMovement(
-    record: any,
-    status: InterDepotStatus,
-    source: { name: string },
-    destination: { name: string }
-  ): MovementStep[] {
-    const iso = (value: Date | null): string | null => (value ? new Date(value).toISOString() : null);
-    const order: InterDepotStatus[] = [
-      InterDepotStatus.CRE,
-      InterDepotStatus.PREPARE,
-      InterDepotStatus.EN_TRANSIT,
-      InterDepotStatus.RECU,
-    ];
-    const stamps: Partial<Record<InterDepotStatus, string | null>> = {
-      [InterDepotStatus.CRE]: iso(record.createdAt),
-      [InterDepotStatus.PREPARE]: iso(record.preparedAt),
-      [InterDepotStatus.EN_TRANSIT]: iso(record.shippedAt),
-      [InterDepotStatus.RECU]: iso(record.receivedAt),
-    };
-
-    const steps: MovementStep[] = order.map((step) => {
-      const timestamp = stamps[step] ?? null;
-      // `reached` suit l'horodatage réel, pas la position dans le cycle :
-      // `EN_TRANSIT` est directement atteignable depuis `CRE`, et un transfert
-      // parti sans être préparé ne doit pas afficher « Préparé » comme accompli.
-      const reached = timestamp !== null;
-      return {
-        key: step,
-        label: INTER_DEPOT_STATUS_LABELS[step],
-        status: step,
-        location:
-          step === InterDepotStatus.EN_TRANSIT
-            ? 'Inter-dépôt'
-            : step === InterDepotStatus.RECU
-              ? depositLabel(destination.name)
-              : depositLabel(source.name),
-        description: this.movementDescription(
-          step,
-          source.name,
-          destination.name,
-          record,
-          reached
-        ),
-        timestamp,
-        reached,
-      };
-    });
-
-    if (status === InterDepotStatus.ANNULE) {
-      // Un transfert annulé n'a pas parcouru la trajectoire : le montrer
-      // éviterait de laisser croire que la charge est arrivée.
-      return steps.map((step) => ({
-        ...step,
-        reached: false,
-        timestamp: step.key === InterDepotStatus.CRE ? iso(record.createdAt) : null,
-      }));
-    }
-
-    return steps;
-  }
-
-  private movementDescription(
-    step: InterDepotStatus,
-    sourceName: string,
-    destinationName: string,
-    record: any,
-    reached: boolean
-  ): string {
-    switch (step) {
-      case InterDepotStatus.CRE:
-        return `Lot créé à ${depositLabel(sourceName)} : ${record.totalPackages} colis, ${record.totalPieces} pièces.`;
-      case InterDepotStatus.PREPARE:
-        return !reached
-          ? 'En attente de préparation du lot.'
-          : record.sealNumber
-            ? `Lot conditionné et plommé (${record.sealNumber}).`
-            : 'Lot conditionné et prêt à charger.';
-      case InterDepotStatus.EN_TRANSIT:
-        return reached
-          ? `Véhicule en route vers ${depositLabel(destinationName)}.`
-          : 'Véhicule non encore parti.';
-      case InterDepotStatus.RECU:
-        return reached
-          ? `${record.receivedPackages} colis réceptionnés à ${depositLabel(destinationName)}.`
-          : `En attente de réception à ${depositLabel(destinationName)}.`;
-      default:
-        return '';
-    }
   }
 }
 

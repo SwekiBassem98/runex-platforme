@@ -16,6 +16,7 @@
  *     restreinte, tracée, et notifiée au chauffeur.
  */
 
+import { resolveDestinationDepositId, resolveShipperDepositId } from '../../common/routing/deposit-routing';
 import { Prisma, PackageStatus as PrismaPackageStatus } from '@prisma/client';
 import {
   PackageStatus,
@@ -641,6 +642,15 @@ export class ColisService {
 
     const record = await this.prisma.$transaction(async (tx) => {
       const { customerId, addressId } = await this.resolveCustomer(tx, payload);
+      // Routage : l'agence de l'expéditeur prend le colis en charge, l'agence
+      // qui dessert l'adresse le livre (voir common/routing).
+      const address = await tx.customerAddress.findUnique({
+        where: { id: addressId },
+        select: { governorate: true, delegation: true },
+      });
+      const originId = (await resolveShipperDepositId(tx, shipper.governorate)) ?? deposit.id;
+      const destinationId =
+        (await resolveDestinationDepositId(tx, address?.governorate, address?.delegation)) ?? deposit.id;
       return tx.package.create({
         data: {
           trackingNumber,
@@ -649,9 +659,9 @@ export class ColisService {
           shipperId,
           customerId,
           customerAddressId: addressId,
-          originDepositId: deposit.id,
-          currentDepositId: deposit.id,
-          destinationDepositId: deposit.id,
+          originDepositId: originId,
+          currentDepositId: originId,
+          destinationDepositId: destinationId,
           packageType: ((payload.packageType as PackageType) ?? PackageType.NORMAL),
           sizeCategory: ((payload.sizeCategory as PackageSize) ?? PackageSize.MOYENNE),
           pieceCount: Number.isFinite(pieceCount) && pieceCount > 0 ? pieceCount : 1,
@@ -831,6 +841,14 @@ export class ColisService {
       criticalChanges.push(FIELD_LABELS.totalPrice!);
     }
     if (quantityChanged) {
+      // Les étiquettes de pièces sont déjà imprimées et comptées dans un
+      // bordereau : changer le nombre de pièces en route fausserait l'acceptation.
+      if (record.interDepotTransferId) {
+        throw new BusinessRuleError(
+          "Le colis est en route dans un inter-dépôt : son nombre de pièces ne peut pas changer avant son arrivée.",
+          409
+        );
+      }
       data.pieceCount = Number(payload.pieceCount);
       criticalChanges.push(FIELD_LABELS.pieceCount!);
     }
@@ -856,6 +874,16 @@ export class ColisService {
         });
         data.customerId = customerId;
         data.customerAddressId = addressId;
+        // Nouvelle adresse, nouvelle agence de livraison — tant que le colis
+        // n'a pas déjà pris la route.
+        if (['CREE', 'RAMASSAGE_PROGRAMME', 'RAMASSE', 'RECU_DEPOT'].includes(record.status)) {
+          const destinationId = await resolveDestinationDepositId(
+            tx,
+            String(payload.governorate ?? record.customerAddress.governorate),
+            String(payload.delegation ?? record.customerAddress.delegation)
+          );
+          if (destinationId) data.destinationDepositId = destinationId;
+        }
       }
       return tx.package.update({
         where: { id: record.id },

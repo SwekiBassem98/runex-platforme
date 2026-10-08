@@ -209,173 +209,36 @@ ck_value "l'état d'un dépôt se modifie" "MAINTENANCE" '.data.status' \
 api PATCH "/depots/$NEWID" "$ADMIN" '{"status":"FERME"}' >/dev/null
 CLOSED_PKG=$(make_stored_package "$NEWID")
 ck_status "un dépôt fermé ne peut pas expédier" "409" POST /inter-depots "$ADMIN" \
-  "$(printf '{"sourceDepositId":"%s","destinationDepositId":"%s","transporterDriverId":"%s","packageIds":["%s"]}' "$NEWID" "$HUB" "$DRIVER" "$CLOSED_PKG")"
+  "$(printf '{"sourceDepositId":"%s","destinationDepositId":"%s","transporterDriverId":"%s","notes":"%s"}' "$NEWID" "$HUB" "$DRIVER" "$QA_TAG")"
 q "delete from \"Package\" where id = '$CLOSED_PKG'" >/dev/null 2>&1
 q "delete from \"Deposit\" where code = '$NEWCODE'" >/dev/null 2>&1
 
 # ------------------------------------------------------------------ 3
-echo "3. Cycle de vie d'un transfert"
-T1=$(open_transfer "$SOUSSE" "$HUB" 2)
-ck_last "un transfert se crée" "1" 'if .data.id then 1 else 0 end'
-ck_value "le numéro suit le format ID-AAAAMMJJ-NNNN" "1" \
-  'if (.data.transferNumber | test("^ID-[0-9]{8}-[0-9]{4}$")) then 1 else 0 end' GET "/inter-depots/$T1" "$ADMIN"
-ck_value "le transfert est créé à l'état CRÉÉ" "CRE" '.data.status' GET "/inter-depots/$T1" "$ADMIN"
-ck_value "le nombre de colis est celui du lot" "2" '.data.totalPackages' GET "/inter-depots/$T1" "$ADMIN"
-ck_value "le nombre de pièces est la somme des colis" "1" \
-  'if ([.data.packages[].pieceCount] | add) == .data.totalPieces then 1 else 0 end' GET "/inter-depots/$T1" "$ADMIN"
-ck_value "le conducteur est porté par le transfert" "1" 'if .data.driverName then 1 else 0 end' GET "/inter-depots/$T1" "$ADMIN"
-ck_value "la date de transfert est enregistrée" "$(DAY 0)" '.data.scheduledDate' GET "/inter-depots/$T1" "$ADMIN"
-ck_value "les notes sont enregistrées" "$QA_TAG" '.data.notes' GET "/inter-depots/$T1" "$ADMIN"
-
-PKG1=$(q "select p.id from \"Package\" p join \"InterDepotTransfer\" t on t.id = p.\"interDepotTransferId\" where t.\"transferNumber\" = '$T1' order by p.\"trackingNumber\" limit 1")
+# Le cycle complet des inter-dépôts (bordereau, scan de chargement,
+# contrôle de destination, acceptation pièce par pièce, retours) est vérifié
+# par qa/qa-interdepot-26.mjs. Ici, seulement le contrat minimal vu des dépôts.
+echo "3. Inter-dépôt au scan (contrat minimal)"
+api POST /inter-depots "$ADMIN" "$(printf '{"sourceDepositId":"%s","destinationDepositId":"%s","transporterDriverId":"%s","notes":"%s"}' "$SOUSSE" "$HUB" "$DRIVER" "$QA_TAG")" >/dev/null
+ck_last "un bordereau se crée (en-tête seul)" "1" 'if .data.id then 1 else 0 end'
+T1=$(jq -r '.data.transferNumber // empty' < "$TMPD/body")
+ck_value "le numéro suit le format ID-D-AAAAMMJJ-NNNN" "1" \
+  'if (.data.transferNumber | test("^ID-D-[0-9]{8}-[0-9]{4}$")) then 1 else 0 end' GET "/inter-depots/$T1" "$ADMIN"
+ck_value "le bordereau est « En attente »" "CRE" '.data.status' GET "/inter-depots/$T1" "$ADMIN"
+PKG1=$(make_stored_package "$SOUSSE")
+BC1=$(q "select barcode from \"Package\" where id = '$PKG1'")
+ck_status "un colis du dépôt se scanne dans le bordereau" "200" POST "/inter-depots/$T1/scan" "$ADMIN" \
+  "$(printf '{"code":"%s","mode":"add"}' "$BC1")"
 ck_db "le colis quitte le stock du dépôt source" "1" \
-  "select count(*) from \"Package\" where id = '$PKG1' and \"currentDepositId\" is null"
-ck_db "le colis passe en lot inter-dépôt" "EN_LOT_INTER_DEPOT" \
-  "select status from \"Package\" where id = '$PKG1'"
-ck_db "un événement de suivi est écrit à la constitution" "1" \
-  "select count(*) from \"PackageTimeline\" where \"packageId\" = '$PKG1' and \"transferNumber\" = '$T1'"
-
-ck_value "étape suivante : PRÉPARÉ" "PREPARE" '.data.status' \
-  POST "/inter-depots/$T1/prepare" "$ADMIN" '{}'
-ck_value "étape suivante : EN_TRANSIT" "EN_TRANSIT" '.data.status' \
-  POST "/inter-depots/$T1/dispatch" "$ADMIN" '{}'
-ck_db "le colis roule en inter-dépôt" "EN_TRANSIT_INTER_DEPOT" \
-  "select status from \"Package\" where id = '$PKG1'"
-ck_value "étape suivante : REÇU" "RECU" '.data.status' \
-  POST "/inter-depots/$T1/receive" "$ADMIN" '{}'
-ck_db "le colis est installé au dépôt de destination" "$HUB" \
-  "select \"currentDepositId\" from \"Package\" where id = '$PKG1'"
-ck_db "le colis est reçu au dépôt de destination" "RECU_DEPOT_DESTINATION" \
-  "select status from \"Package\" where id = '$PKG1'"
-ck_db "le colis n'est plus rattaché au transfert" "1" \
-  "select count(*) from \"Package\" where id = '$PKG1' and \"interDepotTransferId\" is null"
-ck_db "le transfert est complet" "4" \
-  "select count(*) from \"PackageTimeline\" where \"packageId\" = '$PKG1' and \"transferNumber\" = '$T1'"
-
-# ------------------------------------------------------------------ 4
-echo "4. D1 — l'historique du colis raconte le trajet"
-ck_value "les trois étapes du transfert figurent à l'historique" "1" \
-  '([.data.trackingTimeline[].status] | (index("EN_LOT_INTER_DEPOT") != null) and (index("EN_TRANSIT_INTER_DEPOT") != null) and (index("RECU_DEPOT_DESTINATION") != null)) | if . then 1 else 0 end' \
-  GET "/colis/$PKG1" "$ADMIN"
-ck_db "l'étape de transit est localisée « Inter-dépôt »" "1" \
-  "select count(*) from \"PackageTimeline\" where \"packageId\" = '$PKG1' and \"locationName\" = 'Inter-dépôt'"
-ck_db "l'arrivée est localisée au dépôt de destination" "1" \
-  "select count(*) from \"PackageTimeline\" where \"packageId\" = '$PKG1' and \"locationName\" = 'Dépôt $HUB_NAME'"
-ck_db "la constitution et la préparation sont localisées au dépôt d'origine" "2" \
-  "select count(*) from \"PackageTimeline\" where \"packageId\" = '$PKG1' and \"locationName\" = 'Dépôt Agence Sousse'"
-
-# ------------------------------------------------------------------ 5
-echo "5. Chronologie de mouvement"
-ck_value "la chronologie expose les quatre étapes" "4" '.data.movement | length' GET "/inter-depots/$T1" "$ADMIN"
-ck_value "les quatre étapes sont atteintes en fin de parcours" "4" \
-  '[.data.movement[] | select(.reached == true)] | length' GET "/inter-depots/$T1" "$ADMIN"
-ck_value "chaque étape atteinte est horodatée" "1" \
-  '[.data.movement[] | select(.reached == true)] | if (map(.timestamp) | all(. != null)) then 1 else 0 end' \
-  GET "/inter-depots/$T1" "$ADMIN"
-ck_value "un transfert terminé n'admet plus de transition" "0" \
-  '.data.allowedTransitions | length' GET "/inter-depots/$T1" "$ADMIN"
-
-# ------------------------------------------------------------------ 6
-echo "6. D2 — opérations impossibles refusées par le backend"
-ck_status "réceptionner deux fois -> 409" "409" POST "/inter-depots/$T1/receive" "$ADMIN" '{}'
-ck_status "annuler un transfert réceptionné -> 409" "409" POST "/inter-depots/$T1/cancel" "$ADMIN" '{}'
-ck_status "repartir un transfert réceptionné -> 409" "409" POST "/inter-depots/$T1/dispatch" "$ADMIN" '{}'
-
-CANCELLED=$(open_transfer "$SOUSSE" "$HUB" 1)
-ck_last "un transfert annulable se crée" "1" 'if .data.id then 1 else 0 end'
-# Le colis est résolu avant l'annulation : celle-ci détache le lot, et la
-# jointure de la requête ne retrouverait plus rien ensuite.
-CPKG=$(q "select p.id from \"Package\" p join \"InterDepotTransfer\" t on t.id = p.\"interDepotTransferId\" where t.\"transferNumber\" = '$CANCELLED' limit 1")
-ck_value "l'annulation est acceptée" "ANNULE" '.data.status' \
-  POST "/inter-depots/$CANCELLED/cancel" "$ADMIN" '{}'
-ck_status "annuler deux fois -> 409" "409" POST "/inter-depots/$CANCELLED/cancel" "$ADMIN" '{}'
-ck_db "le colis annulé redevient disponible au dépôt" "RECU_DEPOT" \
-  "select status from \"Package\" where id = '$CPKG'"
-ck_db "le colis annulé retourne à son dépôt d'origine" "$SOUSSE" \
-  "select \"currentDepositId\" from \"Package\" where id = '$CPKG'"
-ck_db "l'annulation écrit un événement de suivi" "1" \
-  "select count(*) from \"PackageTimeline\" where \"packageId\" = '$CPKG' and title = 'Transfert annulé'"
-
-# D3 — colis non transférables
-LIVREPKG=$(q "select id from \"Package\" where status = 'LIVRE' limit 1")
-if [ -n "$LIVREPKG" ]; then
-  ck_status "transférer un colis livré -> 409" "409" POST /inter-depots "$ADMIN" \
-    "$(printf '{"sourceDepositId":"%s","destinationDepositId":"%s","transporterDriverId":"%s","packageIds":["%s"]}' "$SOUSSE" "$HUB" "$DRIVER" "$LIVREPKG")"
-else
-  RESULTS+=("  N/A   aucun colis livré en base pour ce contrôle")
-fi
-ANNULEPKG=$(q "select id from \"Package\" where status = 'ANNULE' limit 1")
-if [ -n "$ANNULEPKG" ]; then
-  ck_status "transférer un colis annulé -> 409" "409" POST /inter-depots "$ADMIN" \
-    "$(printf '{"sourceDepositId":"%s","destinationDepositId":"%s","transporterDriverId":"%s","packageIds":["%s"]}' "$SOUSSE" "$HUB" "$DRIVER" "$ANNULEPKG")"
-else
-  RESULTS+=("  N/A   aucun colis annulé en base pour ce contrôle")
-fi
-ENGAGE=$(q "select id from \"Package\" where status in ('AFFECTE_RUNSHEET','EN_COURS_LIVRAISON') limit 1")
-if [ -n "$ENGAGE" ]; then
-  ck_status "transférer un colis engagé en tournée -> 409" "409" POST /inter-depots "$ADMIN" \
-    "$(printf '{"sourceDepositId":"%s","destinationDepositId":"%s","transporterDriverId":"%s","packageIds":["%s"]}' "$SOUSSE" "$HUB" "$DRIVER" "$ENGAGE")"
-else
-  RESULTS+=("  N/A   aucun colis engagé en tournée pour ce contrôle")
-fi
-
-T2=$(open_transfer "$SOUSSE" "$HUB" 1)
-BUSY=$(q "select p.id from \"Package\" p join \"InterDepotTransfer\" t on t.id = p.\"interDepotTransferId\" where t.\"transferNumber\" = '$T2' limit 1")
-ck_status "transférer un colis déjà en lot -> 409" "409" POST /inter-depots "$ADMIN" \
-  "$(printf '{"sourceDepositId":"%s","destinationDepositId":"%s","transporterDriverId":"%s","packageIds":["%s"]}' "$SOUSSE" "$HUB" "$DRIVER" "$BUSY")"
-
-# D4 — cohérence de la demande
-ck_status "un transfert sans colis -> 400" "400" POST /inter-depots "$ADMIN" \
-  "$(printf '{"sourceDepositId":"%s","destinationDepositId":"%s","transporterDriverId":"%s","packageIds":[]}' "$SOUSSE" "$HUB" "$DRIVER")"
-ck_status "même source et destination -> 400" "400" POST /inter-depots "$ADMIN" \
-  "$(printf '{"sourceDepositId":"%s","destinationDepositId":"%s","transporterDriverId":"%s","packageIds":["%s"]}' "$HUB" "$HUB" "$DRIVER" "$PKG1")"
-ck_status "un identifiant de colis mal formé -> 400" "400" POST /inter-depots "$ADMIN" \
-  "$(printf '{"sourceDepositId":"%s","destinationDepositId":"%s","transporterDriverId":"%s","packageIds":["pas-un-uuid"]}' "$SOUSSE" "$HUB" "$DRIVER")"
-ck_status "un colis inexistant -> 404" "404" POST /inter-depots "$ADMIN" \
-  "$(printf '{"sourceDepositId":"%s","destinationDepositId":"%s","transporterDriverId":"%s","packageIds":["00000000-0000-4000-8000-000000000000"]}' "$SOUSSE" "$HUB" "$DRIVER")"
-ck_status "un conducteur inconnu -> 404" "404" POST /inter-depots "$ADMIN" \
-  "$(printf '{"sourceDepositId":"%s","destinationDepositId":"%s","transporterDriverId":"00000000-0000-4000-8000-000000000000","packageIds":["%s"]}' "$SOUSSE" "$HUB" "$PKG1")"
-ck_status "un conducteur absent -> 400" "400" POST /inter-depots "$ADMIN" \
-  "$(printf '{"sourceDepositId":"%s","destinationDepositId":"%s","packageIds":["%s"]}' "$SOUSSE" "$HUB" "$PKG1")"
-ck_status "une date mal formée -> 400" "400" POST /inter-depots "$ADMIN" \
-  "$(printf '{"sourceDepositId":"%s","destinationDepositId":"%s","transporterDriverId":"%s","scheduledDate":"hier","packageIds":["%s"]}' "$SOUSSE" "$HUB" "$DRIVER" "$PKG1")"
-ck_status "un dépôt inconnu -> 404" "404" POST /inter-depots "$ADMIN" \
-  "$(printf '{"sourceDepositId":"00000000-0000-4000-8000-000000000000","destinationDepositId":"%s","transporterDriverId":"%s","packageIds":["%s"]}' "$HUB" "$DRIVER" "$PKG1")"
+  "select count(*) from \"Package\" where id = '$PKG1' and \"currentDepositId\" is null and status = 'EN_TRANSIT_INTER_DEPOT'"
+ck_status "les colis joints à la création sont refusés -> 400" "400" POST /inter-depots "$ADMIN" \
+  "$(printf '{"sourceDepositId":"%s","destinationDepositId":"%s","transporterDriverId":"%s","packageIds":["%s"]}' "$SOUSSE" "$HUB" "$DRIVER" "$PKG1")"
+ck_status "l'ancienne expédition explicite -> 410" "410" POST "/inter-depots/$T1/dispatch" "$ADMIN" '{}'
 ck_status "un transfert inconnu -> 404" "404" GET /inter-depots/ID-19700101-9999 "$ADMIN"
-# Le lot part d'abord : ces deux contrôles portent sur le comptage, pas sur
-# l'étape. Sans cela, l'état refuserait la réception avant que le nombre soit
-# regardé, et le test ne mesurerait pas la règle qu'il prétend vérifier.
-api POST "/inter-depots/$T2/dispatch" "$ADMIN" '{}' >/dev/null
-ck_status "une réception avec trop de colis -> 400" "400" POST "/inter-depots/$T2/receive" "$ADMIN" '{"receivedPackages":99}'
-ck_status "une réception avec un nombre négatif -> 400" "400" POST "/inter-depots/$T2/receive" "$ADMIN" '{"receivedPackages":-1}'
-ck_status "réceptionner avant le départ -> 409" "409" POST "/inter-depots/$CANCELLED/receive" "$ADMIN" '{}'
-
-# ------------------------------------------------------------------ 7
-echo "7. D5 — réception partielle tracée, jamais bloquée"
-T3=$(open_transfer "$SOUSSE" "$HUB" 3)
-ck_value "un lot de 3 colis se crée" "3" '.data.totalPackages' GET "/inter-depots/$T3" "$ADMIN"
-api POST "/inter-depots/$T3/dispatch" "$ADMIN" '{}' >/dev/null
-ck_value "l'écart de réception est calculé, non déclaré" "1" '.data.discrepancy' \
-  POST "/inter-depots/$T3/receive" "$ADMIN" '{"receivedPackages":2,"receptionNotes":"1 colis manquant"}'
-ck_value "le transfert reste réceptionné malgré l'écart" "RECU" '.data.status' GET "/inter-depots/$T3" "$ADMIN"
-ck_value "l'anomalie est signalée" "true" '.data.hasDiscrepancy' GET "/inter-depots/$T3" "$ADMIN"
-ck_value "la réception est néanmoins datée" "1" 'if .data.receivedAt then 1 else 0 end' GET "/inter-depots/$T3" "$ADMIN"
-
-# ------------------------------------------------------------------ 8
-echo "8. D6 — droits sur les transferts"
-D6PKG=$(make_stored_package "$SOUSSE")
-D6HUB=$(make_stored_package "$HUB")
-ck_status "l'agent de dépôt gère les transferts de son dépôt" "201" POST /inter-depots "$AGENT" \
-  "$(printf '{"sourceDepositId":"%s","destinationDepositId":"%s","transporterDriverId":"%s","notes":"%s","packageIds":["%s"]}' "$HUB" "$SOUSSE" "$DRIVER" "$QA_TAG" "$D6HUB")"
-ck_status "l'agent ne crée pas de transfert depuis un autre dépôt" "403" POST /inter-depots "$AGENT" \
-  "$(printf '{"sourceDepositId":"%s","destinationDepositId":"%s","transporterDriverId":"%s","notes":"%s","packageIds":["%s"]}' "$SOUSSE" "$HUB" "$DRIVER" "$QA_TAG" "$D6PKG")"
-ck_status "le livreur ne peut pas créer de transfert" "403" POST /inter-depots "$LIVREUR" \
-  "$(printf '{"sourceDepositId":"%s","destinationDepositId":"%s","transporterDriverId":"%s","packageIds":["%s"]}' "$SOUSSE" "$HUB" "$DRIVER" "$D6PKG")"
-ck_status "le livreur ne peut pas réceptionner" "403" POST "/inter-depots/$T3/receive" "$LIVREUR" '{}'
-ck_status "l'expéditeur ne peut pas créer de transfert" "403" POST /inter-depots "$EXPEDITEUR" \
-  "$(printf '{"sourceDepositId":"%s","destinationDepositId":"%s","transporterDriverId":"%s","packageIds":["%s"]}' "$SOUSSE" "$HUB" "$DRIVER" "$D6PKG")"
 ck_status "le livreur peut consulter les transferts" "200" GET /inter-depots "$LIVREUR"
+ck_status "l'expéditeur ne peut pas créer de transfert" "403" POST /inter-depots "$EXPEDITEUR" \
+  "$(printf '{"sourceDepositId":"%s","destinationDepositId":"%s","transporterDriverId":"%s"}' "$SOUSSE" "$HUB" "$DRIVER")"
 ck_status "sans jeton -> 401" "401" GET /inter-depots -
+api POST "/inter-depots/$T1/cancel" "$ADMIN" '{}' >/dev/null
 
 printf '%s\n' "${RESULTS[@]}"
 echo
