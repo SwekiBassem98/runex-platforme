@@ -148,6 +148,12 @@ export const AUDIT_ACTIONS: Readonly<Record<string, AuditActionDefinition>> = {
   PACKAGE_REMOVED: { label: 'Colis retiré de la tournée', category: 'TOURNEE' },
   RUNSHEET_DEPARTURE: { label: 'Départ de la tournée', category: 'TOURNEE' },
   RUNSHEET_CLOSED: { label: 'Tournée clôturée', category: 'TOURNEE' },
+  // Codes écrits par le service des tournées : sans entrée ici, la famille
+  // RUNSHEET_* les « humanisait » en « Tournée : Package added ».
+  RUNSHEET_PACKAGE_ADDED: { label: 'Colis intégré à une tournée', category: 'TOURNEE' },
+  RUNSHEET_DEPART: { label: 'Départ en tournée', category: 'TOURNEE' },
+  RUNSHEET_ANNULEE: { label: 'Tournée annulée', category: 'TOURNEE', critical: true },
+  RUNSHEET_STATUT: { label: 'Statut de la tournée modifié', category: 'TOURNEE' },
   CAISSE_DECLAREE: {
     label: 'Caisse déclarée par le livreur',
     category: 'FINANCE',
@@ -213,6 +219,11 @@ export const AUDIT_ACTIONS: Readonly<Record<string, AuditActionDefinition>> = {
   // --- Transferts inter-dépôts ----------------------------------------
   TRANSFERT_CREE: { label: 'Transfert créé', category: 'TRANSFERT' },
   TRANSFER_LOT_CONSTITUTION: { label: 'Lot inter-dépôt constitué', category: 'TRANSFERT' },
+  TRANSFERT_ENTETE: { label: 'Transfert modifié', category: 'TRANSFERT' },
+  INTERDEPOT_CHARGEMENT: { label: 'Colis chargé dans un inter-dépôt', category: 'TRANSFERT' },
+  INTERDEPOT_ACCEPTATION: { label: "Colis accepté à l'arrivée d'un inter-dépôt", category: 'TRANSFERT', critical: true },
+  INTERDEPOT_RETRAIT: { label: "Colis retiré d'un inter-dépôt", category: 'TRANSFERT' },
+  INTERDEPOT_ANNULATION: { label: 'Inter-dépôt annulé', category: 'TRANSFERT', critical: true },
   TRANSFERT_RECU: {
     label: 'Transfert réceptionné',
     category: 'TRANSFERT',
@@ -292,6 +303,10 @@ export const AUDIT_ACTIONS: Readonly<Record<string, AuditActionDefinition>> = {
     category: 'PARAMETRAGE',
     critical: true,
   },
+
+  // --- Génériques -------------------------------------------------------
+  UPDATE: { label: 'Modification', category: 'PARAMETRAGE' },
+  DELETE: { label: 'Suppression', category: 'PARAMETRAGE', critical: true },
 
   // --- Exports ---------------------------------------------------------
   EXPORT: { label: 'Export réalisé', category: 'PARAMETRAGE' },

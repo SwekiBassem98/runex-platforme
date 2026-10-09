@@ -105,6 +105,11 @@ const fetch = createApiFetch();
 interface ColisManagementModuleProps {
   currentUser: AuthUser;
   token: string;
+  /**
+   * Colis à ouvrir directement (route `/colis/<id>`) : lien d'une
+   * notification, de la recherche globale ou du magasin.
+   */
+  initialColisId?: string | null;
 }
 
 /**
@@ -142,12 +147,22 @@ type ActionPayload = Partial<PackageDto> & {
   returnedQuantity?: number;
 };
 
-export function ColisManagementModule({ currentUser, token }: ColisManagementModuleProps) {
+export function ColisManagementModule({ currentUser, token, initialColisId = null }: ColisManagementModuleProps) {
   const { addToast } = useToast();
 
   // Navigation dans le module Colis
-  const [viewMode, setViewMode] = useState<'list' | 'detail' | 'nouveau'>('list');
-  const [selectedColisId, setSelectedColisId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'list' | 'detail' | 'nouveau'>(
+    initialColisId ? 'detail' : 'list'
+  );
+  const [selectedColisId, setSelectedColisId] = useState<string | null>(initialColisId);
+
+  // Ouvert par `/colis/<id>` : en revenant à la liste, l'adresse redevient
+  // `/colis`, pour qu'un rechargement ne rouvre pas la fiche quittée.
+  useEffect(() => {
+    if (viewMode !== 'detail' && window.location.pathname.startsWith('/colis/')) {
+      window.history.replaceState(window.history.state, '', '/colis');
+    }
+  }, [viewMode]);
   const [colis, setColis] = useState<PackageDto | null>(null);
   // Chargement et erreur de la fiche sont distincts : sans cette distinction, un
   // échec de lecture et une fiche encore en vol se rendent de la même façon, et
