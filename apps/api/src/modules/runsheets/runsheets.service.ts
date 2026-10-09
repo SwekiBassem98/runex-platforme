@@ -198,7 +198,46 @@ export class RunsheetsService {
       return runsheet;
     });
 
+    const count = packageIds.length;
+    await this.notifyDriver(created.driverId, {
+      title: 'Nouvelle tournée',
+      content:
+        `La tournée ${created.runsheetNumber} vous est affectée` +
+        (count > 0 ? ` (${count} colis).` : '.'),
+      runsheetId: created.id,
+    });
+
     return (await this.findByNumber(created.runsheetNumber))!;
+  }
+
+  /**
+   * Prévient le livreur d'une tournée, et lui seul : notification en base,
+   * temps réel et notification poussée sur son téléphone. Ne lève jamais —
+   * l'opération métier a déjà abouti.
+   */
+  private async notifyDriver(
+    driverId: string | null | undefined,
+    message: { title: string; content: string; runsheetId: string; actorUserId?: string | null }
+  ): Promise<void> {
+    if (!driverId) return;
+    try {
+      const driver = await getPrisma().driver.findUnique({
+        where: { id: driverId },
+        select: { userId: true },
+      });
+      if (!driver?.userId || driver.userId === message.actorUserId) return;
+      await notificationDispatcher.notify({
+        event: NotificationEvent.RUNSHEET_ASSIGNED,
+        title: message.title,
+        content: message.content,
+        relatedEntity: 'RUNSHEET',
+        relatedEntityId: message.runsheetId,
+        runsheetId: message.runsheetId,
+        userIds: [driver.userId],
+      });
+    } catch (error) {
+      console.warn('[Notification] Livreur non prévenu :', error);
+    }
   }
 
   /**
@@ -311,6 +350,21 @@ export class RunsheetsService {
       data,
       include: RUNSHEET_INCLUDE,
     });
+
+    if (data.driverId && data.driverId !== runsheet.driverId) {
+      await this.notifyDriver(data.driverId as string, {
+        title: 'Nouvelle tournée',
+        content: `La tournée ${runsheet.runsheetNumber} vous est affectée.`,
+        runsheetId: runsheet.id,
+        actorUserId: actor.id ?? null,
+      });
+      await this.notifyDriver(runsheet.driverId, {
+        title: 'Tournée retirée',
+        content: `La tournée ${runsheet.runsheetNumber} a été confiée à un autre livreur.`,
+        runsheetId: runsheet.id,
+        actorUserId: actor.id ?? null,
+      });
+    }
 
     await auditService.record({
       entityType: 'RUNSHEET',
@@ -586,6 +640,13 @@ export class RunsheetsService {
         },
         tx
       );
+    });
+
+    await this.notifyDriver(runsheet.driverId, {
+      title: 'Colis retiré de votre tournée',
+      content: `Le colis #${item.package.trackingNumber} a été retiré de la tournée ${runsheet.runsheetNumber} : ne le livrez pas.`,
+      runsheetId: runsheet.id,
+      actorUserId: user.id ?? null,
     });
 
     return (await this.findByNumber(runsheet.runsheetNumber))!;

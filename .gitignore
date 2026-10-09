@@ -29,3 +29,6 @@ Thumbs.db
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# Clé du compte de service Firebase (secret) : jamais dans le dépôt.
+*firebase-adminsdk*.json

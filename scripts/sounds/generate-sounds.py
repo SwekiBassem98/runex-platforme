@@ -5,7 +5,8 @@ Sons d'interface RUNEX — synthèse reproductible (aucun échantillon tiers).
     python3 scripts/sounds/generate-sounds.py <dossier de sortie>
 
 Produit des WAV 44,1 kHz mono 16 bits, crête à -3 dBFS, courts (≤ 0,9 s) :
-scan, success, complete, error, warning, notify, remove. Les mêmes fichiers
+scan, success, complete, error, warning, notify, remove, et « alert »
+(1,7 s, notification poussée du livreur). Les mêmes fichiers
 servent au web (apps/web/public/sounds) et à l'application livreur
 (assets/sounds), pour que l'utilisateur reconnaisse le même retour partout.
 """
@@ -114,6 +115,20 @@ SOUNDS = {
         (0.00, tone(1760.0, 0.25, decay=0.07)),
         (0.08, tone(1318.5, 0.35, decay=0.10)),
     ], 0.45)), peak_db=-5.0),
+    # (En dernier : le générateur aléatoire de la salle est partagé, et les
+    # sons précédents restent ainsi identiques à ceux déjà publiés.)
+    # Alerte livreur (notification poussée, téléphone en poche) : carillon
+    # sol-si-ré joué deux fois, plus long et plus fort que « notify » pour
+    # être entendu dans la rue. Fichier copié dans l'application sous
+    # assets/sounds/runex_alert.wav (nom de ressource Android).
+    'alert': lambda: finish(room(place([
+        (0.00, bell(784.0, 0.6, decay=0.20)),
+        (0.13, bell(987.8, 0.6, decay=0.20)),
+        (0.26, bell(1174.7, 0.8, decay=0.28)),
+        (0.80, bell(784.0, 0.6, decay=0.20)),
+        (0.93, bell(987.8, 0.6, decay=0.20)),
+        (1.06, bell(1174.7, 0.9, decay=0.32)),
+    ], 1.9), level=0.1), peak_db=-1.0),
 }
 
 

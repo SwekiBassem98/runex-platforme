@@ -108,7 +108,7 @@ créent ensuite depuis le web (Administration). Relançable sans effet ;
 | `JWT_REFRESH_SECRET` 🔒 | `openssl rand -hex 32` (différent du premier) |
 | `CORS_ORIGIN` | `https://<projet>.vercel.app` (à compléter après l'étape 4 ; plusieurs origines séparées par des virgules) |
 | `REDIS_REQUIRED` | `false` |
-| `PUSH_ENABLED` | `false` (tant que Firebase n'est pas configuré) |
+| `FIREBASE_SERVICE_ACCOUNT_JSON` 🔒 | compte de service Firebase en base64 (§ 5.1) — sans lui, pas de notification sur les téléphones |
 | `NODE_OPTIONS` | `--max-old-space-size=384` (instance de 512 Mo) |
 
    Koyeb fournit `PORT` (8000) ; l'API le lit en priorité. Derrière la passerelle
@@ -148,6 +148,38 @@ mettre `https://<service>.koyeb.app/api/v1` dans `eas.json`, puis
 le fichier `.apk`. Le livreur se connecte avec le compte créé dans
 Administration → Livreurs (téléphone, matricule, code livreur ou email).
 
+### 5.1 Notifications sur le téléphone du livreur (Firebase)
+
+Application fermée ou téléphone verrouillé, le livreur reçoit une notification
+sonore (son « Alertes RUNEX », vibration) quand :
+
+| Événement | Notification |
+|---|---|
+| Tournée créée pour lui, ou réaffectée à lui | « Nouvelle tournée » |
+| Tournée confiée à un autre livreur | « Tournée retirée » |
+| Colis ajouté / retiré de sa tournée | « Colis ajouté à votre tournée » / « Colis retiré de votre tournée » |
+| Colis affecté, modifié (montant, quantité), retourné | selon l'événement |
+| Ramassage affecté | « Ramassage à collecter » |
+| Encaissement validé, transfert inter-dépôt reçu | selon l'événement |
+
+Toucher la notification ouvre l'écran concerné ; application ouverte, les
+écrans se rechargent seuls.
+
+Mise en place (une fois) :
+1. console.firebase.google.com → **Créer un projet** `runex` (Google Analytics inutile).
+2. **Ajouter une application → Android** : nom du package `tn.runex.driver` →
+   **Enregistrer** → télécharger `google-services.json` → le placer à la racine
+   de `runex-driver-app` et le committer (identifiants publics, prévus pour être
+   dans l'application).
+3. ⚙ **Paramètres du projet → Comptes de service → Générer une nouvelle clé
+   privée** : un fichier JSON se télécharge. **Secret** : jamais dans un dépôt.
+4. Sur le Mac : `base64 -i ~/Downloads/<fichier>.json | pbcopy`, puis sur
+   Render, variable `FIREBASE_SERVICE_ACCOUNT_JSON` = coller. **Supprimer
+   `PUSH_ENABLED`** si elle vaut `false`. Après redéploiement, le journal
+   affiche `[Push] FCM initialisé (project: runex-…)`.
+5. Recompiler l'APK (`versionCode` déjà augmenté) et le réinstaller ; à la
+   connexion, accepter « Autoriser RUNEX Driver à envoyer des notifications ».
+
 ## 6. Mises à jour
 
 | Changement | Action |
@@ -178,8 +210,9 @@ Administration → Livreurs (téléphone, matricule, code livreur ou email).
   Eco, Vercel Pro) ne demande aucune modification du code.
 - E-mail de réinitialisation du mot de passe non branché : un administrateur
   réinitialise le mot de passe depuis Administration → Utilisateurs.
-- Notifications push mobiles désactivées tant que Firebase n'est pas configuré
-  (`PUSH_ENABLED`, voir `.env.example`).
+- Notifications sur les téléphones : uniquement avec `FIREBASE_SERVICE_ACCOUNT_JSON`
+  (§ 5.1). Certains fabricants (Xiaomi, Huawei, Oppo…) retardent les applications
+  en arrière-plan : réglages du téléphone → Batterie → RUNEX Driver → « Aucune restriction ».
 
 ## 9. Audit de sécurité final (octobre 2026)
 
