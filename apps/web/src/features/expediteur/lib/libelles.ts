@@ -130,20 +130,34 @@ export const VARIANTE_STATUT_BORDEREAU: Record<PaymentVoucherStatus, BadgeVarian
  * clés du dictionnaire, évite d'avoir à les resynchroniser à la main le jour où
  * un gouvernorat change de nom côté serveur.
  */
+/**
+ * Les 24 gouvernorats, orthographe officielle — la même que la configuration
+ * partagée (`@logixpress/config`) et que les clés `gou.*` du dictionnaire,
+ * pour que la traduction arabe les retrouve tous.
+ */
 export const GOUVERNORATS = [
   'Ariana',
+  'Béja',
   'Ben Arous',
   'Bizerte',
+  'Gabès',
+  'Gafsa',
+  'Jendouba',
   'Kairouan',
   'Kasserine',
-  'Manouba',
-  'Medenine',
+  'Kébili',
+  'Le Kef',
+  'Mahdia',
+  'La Manouba',
+  'Médenine',
   'Monastir',
   'Nabeul',
   'Sfax',
   'Sidi Bouzid',
   'Siliana',
   'Sousse',
+  'Tataouine',
+  'Tozeur',
   'Tunis',
   'Zaghouan',
 ] as const;

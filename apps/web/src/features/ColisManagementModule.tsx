@@ -6,7 +6,7 @@
  * imports et l'origine des requêtes ont changé (client API RUNEX).
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useDifferee } from '@logixpress/ui';
 import {
   Package,
@@ -94,7 +94,9 @@ import {
   type DeliveryAttempt,
   type AuditModificationLog,
 } from '@logixpress/types';
-import { colisApi, createApiFetch, runsheetsApi, searchApi, shippersApi } from '@/lib/api';
+import { colisApi, createApiFetch, runsheetsApi, searchApi, shippersApi, zonesApi, type DriverSuggestions, type ZoneDto } from '@/lib/api';
+import { GOUVERNORATS } from '@/features/expediteur/lib/libelles';
+import { estZoneConnue, useDelegationsConnues } from '@/features/zones/useDelegationsConnues';
 import { imprimerBonsLivraison } from '@/features/colis/bonLivraison';
 
 // Les requêtes de ce module passent par le client API commun : aucune URL
@@ -184,6 +186,8 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [cityFilter, setCityFilter] = useState('ALL');
+  const [zoneFilter, setZoneFilter] = useState('ALL');
+  const [zonesOptions, setZonesOptions] = useState<ZoneDto[]>([]);
   const [driverFilter, setDriverFilter] = useState('ALL');
   const [typeFilter, setTypeFilter] = useState('ALL');
   const [paymentStatusFilter, setPaymentStatusFilter] = useState('ALL');
@@ -197,6 +201,7 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
 
   // Modales d'actions opérationnelles
   const [showAssignModal, setShowAssignModal] = useState(false);
+  const [suggestionsZone, setSuggestionsZone] = useState<DriverSuggestions | null>(null);
   const [showDeliverModal, setShowDeliverModal] = useState(false);
   const [showPartialModal, setShowPartialModal] = useState(false);
   const [showExchangeModal, setShowExchangeModal] = useState(false);
@@ -227,6 +232,7 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
     Boolean(searchTerm) ||
     statusFilter !== 'ALL' ||
     cityFilter !== 'ALL' ||
+    zoneFilter !== 'ALL' ||
     driverFilter !== 'ALL' ||
     typeFilter !== 'ALL' ||
     paymentStatusFilter !== 'ALL' ||
@@ -236,6 +242,7 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
     setSearchTerm('');
     setStatusFilter('ALL');
     setCityFilter('ALL');
+    setZoneFilter('ALL');
     setDriverFilter('ALL');
     setTypeFilter('ALL');
     setPaymentStatusFilter('ALL');
@@ -254,6 +261,7 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
     searchTerm ? `recherche « ${searchTerm} »` : null,
     statusFilter !== 'ALL' ? `statut ${LIBELLE_STATUT[statusFilter] ?? statusFilter}` : null,
     cityFilter !== 'ALL' ? `gouvernorat ${cityFilter}` : null,
+    zoneFilter !== 'ALL' ? `zone ${zonesOptions.find((z) => z.id === zoneFilter)?.name ?? ''}` : null,
     driverFilter !== 'ALL' ? `livreur ${driverFilter}` : null,
     typeFilter !== 'ALL' ? `type ${typeFilter}` : null,
     paymentStatusFilter !== 'ALL' ? `paiement ${paymentStatusFilter}` : null,
@@ -293,6 +301,7 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
     // est créé. Ignoré par l'API pour un compte expéditeur.
     shipperId: '',
   });
+  const delegationsConnues = useDelegationsConnues(newColisForm.governorate);
 
   // Un compte sans expéditeur (exploitation) doit en désigner un.
   const saisiePourExpediteur = !currentUser.shipperId;
@@ -337,8 +346,16 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
   // l'écran relisible par un lien, et ce qui permet aux autres écrans d'y mener
   // par « ouvrir ce colis » au lieu d'une route qui n'existe pas.
   useEffect(() => {
-    const depuisUrl = new URLSearchParams(window.location.search).get('tracking');
+    const query = new URLSearchParams(window.location.search);
+    const depuisUrl = query.get('tracking');
     if (depuisUrl) setSearchTerm(depuisUrl);
+    // `/colis?zone=<id>` : ouvert depuis l'écran des zones.
+    const zone = query.get('zone');
+    if (zone) setZoneFilter(zone);
+    void zonesApi
+      .list({ active: 'true' })
+      .then(setZonesOptions)
+      .catch(() => setZonesOptions([]));
   }, []);
 
   /*
@@ -400,8 +417,14 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
     };
   }, [actionPayload.driverId]);
 
-  // Chargement des colis
+  // Chargement des colis. Chaque appel porte un numéro : seule la réponse du
+  // dernier est affichée. Sans cela, une réponse lente d'un filtre précédent
+  // (ex. ouverture par `/colis?zone=…`, où le filtre arrive juste après le
+  // premier chargement) écrasait la liste filtrée.
+  const derniereRequete = useRef(0);
   const loadPackages = async () => {
+    const numero = ++derniereRequete.current;
+    const perimee = () => numero !== derniereRequete.current;
     setIsLoading(true);
     try {
       const params = new URLSearchParams({
@@ -411,6 +434,7 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
       if (searchTermApplique) params.append('search', searchTermApplique);
       if (statusFilter !== 'ALL') params.append('status', statusFilter);
       if (cityFilter !== 'ALL') params.append('city', cityFilter);
+      if (zoneFilter !== 'ALL') params.append('zone', zoneFilter);
       if (driverFilter !== 'ALL') params.append('driver', driverFilter);
       if (typeFilter !== 'ALL') params.append('type', typeFilter);
       if (paymentStatusFilter !== 'ALL') params.append('paymentStatus', paymentStatusFilter);
@@ -420,6 +444,7 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
+      if (perimee()) return;
       if (!res.ok || !data.success) {
         // Une réponse 401 ou 500 n'est pas un cas muet : sans ce contrôle, le
         // squelette disparaissait, aucun message n'apparaissait, et l'opérateur
@@ -436,12 +461,13 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
       }
       setError(null);
       setPackages(data.data);
-      setTotalPackages(data.meta?.total || data.data.length);
+      setTotalPackages(data.meta?.total ?? data.data.length);
     } catch {
+      if (perimee()) return;
       setPackages([]);
       setError('Impossible de joindre le serveur RUNEX. Vérifiez votre connexion.');
     } finally {
-      setIsLoading(false);
+      if (!perimee()) setIsLoading(false);
     }
   };
 
@@ -482,6 +508,7 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
     pageSize,
     statusFilter,
     cityFilter,
+    zoneFilter,
     driverFilter,
     typeFilter,
     paymentStatusFilter,
@@ -498,6 +525,22 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
       loadColisDetails(selectedColisId);
     }
   }, [selectedColisId]);
+
+  // Fenêtre d'affectation : livreurs de la zone du colis.
+  useEffect(() => {
+    if (!showAssignModal || !colis) {
+      setSuggestionsZone(null);
+      return;
+    }
+    let actif = true;
+    zonesApi
+      .driverSuggestions(colis.id)
+      .then((r) => actif && setSuggestionsZone(r))
+      .catch(() => actif && setSuggestionsZone(null));
+    return () => {
+      actif = false;
+    };
+  }, [showAssignModal, colis]);
 
   // Action Générique sur le colis
   const executeColisAction = async (endpoint: string, body: any, successMsg: string) => {
@@ -707,12 +750,21 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
                   setCityFilter(val);
                   setCurrentPage(1);
                 }}
+                options={[{ label: 'Tous', value: 'ALL' }, ...GOUVERNORATS.map((g) => ({ label: g, value: g }))]}
+              />
+
+              <FilterSelect
+                label="Zone"
+                selectedValue={zoneFilter}
+                onChange={(val) => {
+                  setZoneFilter(val);
+                  setCurrentPage(1);
+                }}
                 options={[
-                  { label: 'Tous', value: 'ALL' },
-                  { label: 'Zaghouan', value: 'Zaghouan' },
-                  { label: 'Ben Arous', value: 'Ben Arous' },
-                  { label: 'Tunis', value: 'Tunis' },
-                  { label: 'Sousse', value: 'Sousse' },
+                  { label: 'Toutes', value: 'ALL' },
+                  ...zonesOptions
+                    .filter((z) => cityFilter === 'ALL' || z.governorate === cityFilter)
+                    .map((z) => ({ label: `${z.name} (${z.governorate})`, value: z.id })),
                 ]}
               />
 
@@ -1000,23 +1052,34 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
                       value={newColisForm.governorate}
                       onChange={(e) => setNewColisForm({ ...newColisForm, governorate: e.target.value })}
                     >
-                      <option value="Ben Arous">Ben Arous</option>
-                      <option value="Zaghouan">Zaghouan</option>
-                      <option value="Tunis">Tunis</option>
-                      <option value="Ariana">Ariana</option>
-                      <option value="Sousse">Sousse</option>
-                      <option value="Sfax">Sfax</option>
-                      <option value="Nabeul">Nabeul</option>
+                      {GOUVERNORATS.map((g) => (
+                        <option key={g} value={g}>
+                          {g}
+                        </option>
+                      ))}
                     </Select>
                   </FormField>
 
                   <FormField label="Délégation / Cité *" required>
                     <Input
                       required
+                      list="delegations-connues-ops"
                       value={newColisForm.delegation}
                       onChange={(e) => setNewColisForm({ ...newColisForm, delegation: e.target.value })}
                       placeholder="Ex: Hammam Lif, Ennadhour..."
                     />
+                    <datalist id="delegations-connues-ops">
+                      {delegationsConnues.map((d) => (
+                        <option key={d} value={d} />
+                      ))}
+                    </datalist>
+                    {newColisForm.delegation.trim() !== '' &&
+                      !estZoneConnue(delegationsConnues, newColisForm.delegation) && (
+                        <p className="mt-1 text-[11px] text-sky-700">
+                          Nouvelle zone : « {newColisForm.delegation.trim()} » sera ajoutée à la liste des zones à
+                          l’enregistrement.
+                        </p>
+                      )}
                   </FormField>
 
                   <div className="sm:col-span-2">
@@ -1418,6 +1481,17 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
                   <span className="text-slate-500 block text-[11px]">Gouvernorat & Délégation :</span>
                   <span className="font-semibold text-slate-800">{colis.governorate}, {colis.delegation}</span>
                 </div>
+                {colis.zoneName && (
+                  <div>
+                    <span className="text-slate-500 block text-[11px]">Zone de livraison :</span>
+                    <a
+                      href={`/colis?zone=${colis.zoneId}`}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-sky-50 border border-sky-200 text-sky-800 text-xs font-semibold hover:bg-sky-100"
+                    >
+                      {colis.zoneName}
+                    </a>
+                  </div>
+                )}
                 <div>
                   <span className="text-slate-500 block text-[11px]">Adresse exacte de livraison :</span>
                   <p className="p-2.5 bg-slate-50 rounded border border-slate-200 text-slate-700 leading-relaxed font-medium">
@@ -1692,6 +1766,54 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
           }
         >
           <div className="space-y-4 text-xs">
+            {/* Livreurs qui couvrent la zone du colis : proposés en premier. */}
+            {suggestionsZone && (
+              <div className="rounded-md border border-sky-200 bg-sky-50 p-3">
+                <p className="font-semibold text-sky-900">
+                  {suggestionsZone.zone
+                    ? `Livreurs de la zone ${suggestionsZone.zone.name}`
+                    : 'Ce colis n’a pas encore de zone'}
+                </p>
+                {suggestionsZone.zone && suggestionsZone.drivers.filter((d) => d.coversZone).length === 0 ? (
+                  <p className="mt-1 text-[11px] text-sky-800">
+                    Aucun livreur ne couvre cette zone pour l’instant. Rattachez-en un dans « Zones de livraison »,
+                    ou cherchez ci-dessous.
+                  </p>
+                ) : (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {suggestionsZone.drivers
+                      .filter((d) => d.coversZone)
+                      .map((d) => {
+                        const choisi = actionPayload.driverId === d.id;
+                        return (
+                          <button
+                            key={d.id}
+                            type="button"
+                            aria-pressed={choisi}
+                            onClick={() => {
+                              setActionPayload({
+                                ...actionPayload,
+                                driverId: d.id,
+                                driverName: d.fullName,
+                                runsheetNumber: undefined,
+                              });
+                              setRechercheLivreur(d.fullName);
+                              setLivreursTrouves([]);
+                            }}
+                            className={`px-2.5 py-1 rounded-full border text-[11px] font-semibold transition ${
+                              choisi
+                                ? 'bg-slate-900 border-slate-900 text-white'
+                                : 'bg-white border-sky-300 text-sky-900 hover:bg-sky-100'
+                            }`}
+                          >
+                            {d.fullName} · {d.driverCode}
+                          </button>
+                        );
+                      })}
+                  </div>
+                )}
+              </div>
+            )}
             {/* Le livreur se choisit dans la flotte réelle. Aucune valeur n'est
                 pré-remplie : ouvrir la fenêtre puis confirmer sans choisir
                 affectait le colis au premier nom d'une liste inventée. */}

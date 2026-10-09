@@ -3,11 +3,11 @@
 /**
  * Profil du compte expéditeur.
  *
- * L'écran est en lecture seule, et ce n'est pas un oubli : l'API n'expose pas
- * d'écriture sur le profil de l'utilisateur. `POST /auth/password-reset/request`
- * accepte un courriel et envoie un lien — un expéditeur peut donc réinitialiser
- * son mot de passe sans que le portail n'ait à le faire à sa place, et sans que
- * le formulaire du portail ne transforme une identité en champ éditable.
+ * L'identité (nom, adresse, téléphone) est en lecture seule : l'API n'expose
+ * pas d'écriture sur le profil. Le mot de passe, lui, se change ici
+ * (`POST /auth/change-password`, mot de passe actuel exigé) ; s'il est oublié,
+ * un lien de réinitialisation part par courriel
+ * (`POST /auth/password-reset/request`).
  *
  * `GET /auth/me` est rappelé à l'ouverture : la session en cours peut venir du
  * jeton de stockage, plus ancien que la fiche en base. L'écran montre ce que dit
@@ -31,9 +31,10 @@ import { useRouter } from 'next/navigation';
 import { Check, Copy, LogOut, Mail, Phone, ShieldCheck, User } from 'lucide-react';
 import { RoleType, type AuthUser } from '@logixpress/types';
 import { Card, ErrorBanner } from '@logixpress/ui';
-import { requestData } from '@/lib/api';
+import { ApiError, authApi, requestData } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/i18n';
+import { FormulaireChangementMotDePasse } from '@/features/motdepasse/FormulaireChangement';
 
 export function VueProfil() {
   const router = useRouter();
@@ -87,18 +88,18 @@ export function VueProfil() {
     if (!affiche?.email) return;
     setReinitialisation({ enCours: true, message: null });
     try {
-      await requestData<{ message?: string }>('/auth/password-reset/request', {
-        method: 'POST',
-        body: { email: affiche.email },
-      });
+      await authApi.requestPasswordReset(affiche.email);
       setReinitialisation({
         enCours: false,
-        message: t('profil.reinitialiserEnvoye', { email: affiche.email }),
+        message: t('mdp.lienEnvoye', { email: affiche.email }),
       });
     } catch (err: unknown) {
       setReinitialisation({
         enCours: false,
-        message: err instanceof Error ? err.message : t('profil.reinitialiserEchec'),
+        message:
+          err instanceof ApiError && err.status === 429
+            ? t('mdp.tropDeTentatives')
+            : t('profil.reinitialiserEchec'),
       });
     }
   };
@@ -195,19 +196,26 @@ export function VueProfil() {
       </Card>
 
       <Card>
-        <h2 className="text-sm font-semibold text-slate-900">{t('profil.motDePasse')}</h2>
-        <p className="text-[11px] text-slate-500 mt-0.5">{t('profil.motDePasseAide')}</p>
-        <button
-          type="button"
-          onClick={() => void demanderReinitialisation()}
-          disabled={reinitialisation.enCours || !affiche?.email}
-          className="mt-3 px-3.5 py-2 bg-white border border-slate-300 hover:bg-slate-50 disabled:opacity-60 rounded-md text-xs font-semibold text-slate-800 transition cursor-pointer"
-        >
-          {reinitialisation.enCours ? t('profil.reinitialiserEnvoi') : t('profil.reinitialiser')}
-        </button>
-        {reinitialisation.message && (
-          <p className="mt-2 text-[11px] text-slate-600">{reinitialisation.message}</p>
-        )}
+        <h2 className="text-sm font-semibold text-slate-900">{t('mdp.changerTitre')}</h2>
+        <p className="text-[11px] text-slate-500 mt-0.5 mb-3">{t('mdp.changerAide')}</p>
+        <FormulaireChangementMotDePasse />
+        <div className="mt-4 pt-4 border-t border-slate-100">
+          <p className="text-[11px] text-slate-500">{t('mdp.oublieActuel')}</p>
+          <button
+            type="button"
+            onClick={() => void demanderReinitialisation()}
+            disabled={reinitialisation.enCours || !affiche?.email}
+            data-testid="envoyer-lien-reinitialisation"
+            className="mt-2 px-3.5 py-2 bg-white border border-slate-300 hover:bg-slate-50 disabled:opacity-60 rounded-md text-xs font-semibold text-slate-800 transition cursor-pointer"
+          >
+            {reinitialisation.enCours ? t('profil.reinitialiserEnvoi') : t('profil.reinitialiser')}
+          </button>
+          {reinitialisation.message && (
+            <p role="status" className="mt-2 text-[11px] text-slate-600">
+              {reinitialisation.message}
+            </p>
+          )}
+        </div>
       </Card>
 
       <Card>

@@ -27,7 +27,9 @@ import {
   signPasswordResetToken,
   verifyPasswordResetToken,
   passwordFingerprint,
+  RESET_TTL_SECONDS,
 } from '../../common/auth/jwt.util';
+import { passwordResetEmail, sendMail, webAppUrl } from '../../common/mail/mail.service';
 import { getPermissionsForRole } from '../../common/auth/permissions.map';
 import { msSinceRotation, sessionService, type SessionMeta } from '../../common/auth/session.service';
 import { getPrisma } from '../../common/database/prisma-context';
@@ -375,22 +377,61 @@ export class AuthService {
    * énumérer les comptes enregistrés. Le jeton est signé et sans état : aucun
    * stockage mémoire qui grossirait sans fin ni disparaîtrait au redémarrage.
    *
-   * L'envoi par e-mail n'est pas encore branché (aucun service SMTP configuré).
-   * En développement uniquement, `PASSWORD_RESET_LOG_TOKEN=true` affiche le lien
-   * dans le journal du serveur pour permettre les tests manuels.
+   * Le lien part par courriel (voir `common/mail/mail.service.ts`). L'envoi
+   * n'est pas attendu : le temps de réponse ne trahit pas l'existence du compte.
+   * En développement, `PASSWORD_RESET_LOG_TOKEN=true` écrit aussi le lien dans
+   * le journal du serveur.
    */
   async requestPasswordReset(email: string) {
     const user = await this.findUser(String(email), true);
     if (user && user.isActive && !user.deletedAt) {
       const token = signPasswordResetToken(user.id, user.passwordHash);
+      const isDriver = Boolean(user.driverProfile);
+      const espace = user.shipperUser ? 'expediteur' : isDriver ? 'livreur' : 'equipe';
+      const link = `${webAppUrl()}/reinitialisation?token=${encodeURIComponent(token)}&espace=${espace}`;
       if (process.env.NODE_ENV !== 'production' && process.env.PASSWORD_RESET_LOG_TOKEN === 'true') {
-        console.info(`[Auth] Lien de réinitialisation (dev) : /reinitialisation?token=${token}`);
+        console.info(`[Auth] Lien de réinitialisation (dev) : ${link}`);
       }
+      const mail = passwordResetEmail({
+        name: user.fullName,
+        link,
+        minutes: Math.round(RESET_TTL_SECONDS / 60),
+        isDriver,
+      });
+      void sendMail({ to: { email: user.email, name: user.fullName }, ...mail }).catch(() => undefined);
     }
     return {
       success: true,
       message:
         "Si un compte est associé à cette adresse, un lien de réinitialisation vient d'être envoyé.",
+    };
+  }
+
+  /**
+   * Changement de mot de passe par l'utilisateur connecté.
+   *
+   * L'ancien mot de passe est exigé. Les autres sessions du compte sont
+   * fermées ; celle qui fait la demande reste ouverte.
+   */
+  async changePassword(userId: string, sessionId: string | undefined, currentPassword: string, newPassword: string) {
+    const next = String(newPassword);
+    if (next.length < 8) throw authError('Le mot de passe doit contenir au moins 8 caractères.', 400);
+    if (next.length > 128) throw authError('Le mot de passe est trop long (128 caractères au plus).', 400);
+    const prisma = getPrisma();
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user || !user.isActive || user.deletedAt) throw authError('Utilisateur introuvable.', 404);
+    if (!(await verifyPasswordAsync(String(currentPassword), user.passwordHash))) {
+      throw authError('Le mot de passe actuel est incorrect.', 400);
+    }
+    if (await verifyPasswordAsync(next, user.passwordHash)) {
+      throw authError("Le nouveau mot de passe doit être différent de l'actuel.", 400);
+    }
+    await prisma.user.update({ where: { id: user.id }, data: { passwordHash: await hashPasswordAsync(next) } });
+    const closed = await sessionService.revokeOthersForUser(user.id, sessionId);
+    return {
+      success: true,
+      message: 'Mot de passe modifié.',
+      data: { otherSessionsClosed: closed },
     };
   }
 

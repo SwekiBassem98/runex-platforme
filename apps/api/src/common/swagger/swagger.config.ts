@@ -367,6 +367,33 @@ export const openApiSpecification = {
         },
       },
     },
+    '/auth/change-password': {
+      post: {
+        tags: ['Auth'],
+        summary: 'Changer son mot de passe (utilisateur connecté)',
+        description: "Exige le mot de passe actuel. Les autres sessions du compte sont fermées.",
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  currentPassword: { type: 'string' },
+                  newPassword: { type: 'string', minLength: 8 },
+                },
+                required: ['currentPassword', 'newPassword'],
+              },
+            },
+          },
+        },
+        responses: {
+          '200': ok('Mot de passe modifié'),
+          '400': failure('Mot de passe actuel incorrect ou nouveau mot de passe trop court'),
+          '401': failure('Non authentifié'),
+        },
+      },
+    },
     '/auth/me': {
       get: {
         tags: ['Auth'],

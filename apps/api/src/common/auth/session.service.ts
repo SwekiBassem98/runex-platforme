@@ -117,6 +117,15 @@ export class SessionService {
     return result.count;
   }
 
+  /** Révoque les sessions d'un utilisateur, sauf `keepSid` (changement de mot de passe). */
+  async revokeOthersForUser(userId: string, keepSid?: string): Promise<number> {
+    const result = await this.prisma.session.updateMany({
+      where: { userId, revokedAt: null, ...(keepSid ? { NOT: { id: keepSid } } : {}) },
+      data: { revokedAt: new Date() },
+    });
+    return result.count;
+  }
+
   /** Révoque les sessions de tous les comptes rattachés à un expéditeur. */
   async revokeAllForShipper(shipperId: string): Promise<void> {
     const links = await this.prisma.shipperUser.findMany({

@@ -56,6 +56,7 @@ import { periode } from '../../common/dates/periode';
 import { nextCustomerCode, nextReturnNumber } from '../../common/database/numbering';
 import { toPackageDto, PACKAGE_INCLUDE, type PackageWithRelations } from '../../common/database/mappers';
 import { auditService } from '../../common/audit/audit.service';
+import { zonesService } from '../zones/zones.service';
 import { notificationService } from '../../common/notifications/notification.service';
 import { notificationDispatcher } from '../notifications/notification.dispatcher';
 import { BusinessRuleError } from '../../common/errors/api-error';
@@ -75,6 +76,8 @@ export interface ColisFilterParams {
   search?: string;
   status?: string;
   city?: string;
+  /** Zone de livraison (identifiant). */
+  zone?: string;
   driver?: string;
   type?: string;
   paymentStatus?: string;
@@ -299,6 +302,14 @@ export class ColisService {
     }
     if (params.city && params.city !== 'ALL') {
       and.push({ customerAddress: { governorate: params.city } });
+    }
+    if (params.zone && params.zone !== 'ALL') {
+      // Identifiant non UUID : aucun résultat plutôt qu'une erreur SQL.
+      and.push(
+        /^[0-9a-f-]{36}$/i.test(params.zone)
+          ? { customerAddress: { zoneId: params.zone } }
+          : { id: '00000000-0000-0000-0000-000000000000' }
+      );
     }
     if (params.driver && params.driver !== 'ALL') {
       and.push({ assignedDriver: { driverCode: params.driver } });
@@ -637,6 +648,9 @@ export class ColisService {
     const locality = payload.locality ? String(payload.locality).trim().slice(0, 100) : null;
     const streetAddress =
       String(payload.address ?? '').trim().slice(0, 255) || 'Adresse de livraison';
+    // Zone de l'adresse, créée à la volée si elle est nouvelle (voir zones.service).
+    const zone = await zonesService.ensureZone(tx, governorate, delegation);
+    const zoneId = zone?.id ?? null;
 
     // Un destinataire est reconnu par son téléphone ET son nom : deux
     // expéditeurs qui livrent le même numéro sous deux noms différents ne
@@ -657,9 +671,14 @@ export class ColisService {
           a.delegation.trim().toLowerCase() === delegation.toLowerCase() &&
           (a.locality ?? '').trim().toLowerCase() === (locality ?? '').toLowerCase()
       );
-      if (same) return { customerId: existing.id, addressId: same.id };
+      if (same) {
+        if (zoneId && same.zoneId !== zoneId) {
+          await tx.customerAddress.update({ where: { id: same.id }, data: { zoneId } });
+        }
+        return { customerId: existing.id, addressId: same.id };
+      }
       const address = await tx.customerAddress.create({
-        data: { customerId: existing.id, governorate, delegation, locality, streetAddress, isDefault: false },
+        data: { customerId: existing.id, zoneId, governorate, delegation, locality, streetAddress, isDefault: false },
       });
       return { customerId: existing.id, addressId: address.id };
     }
@@ -673,7 +692,7 @@ export class ColisService {
       },
     });
     const address = await tx.customerAddress.create({
-      data: { customerId: created.id, governorate, delegation, locality, streetAddress, isDefault: true },
+      data: { customerId: created.id, zoneId, governorate, delegation, locality, streetAddress, isDefault: true },
     });
 
     return { customerId: created.id, addressId: address.id };

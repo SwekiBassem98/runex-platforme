@@ -423,6 +423,9 @@ export interface PackageDto {
   customerPhone: string;
   governorate: string;
   delegation: string;
+  /** Zone de livraison de l'adresse (créée automatiquement à la saisie). */
+  zoneId?: string;
+  zoneName?: string;
   address: string;
   packageType: PackageType;
   status: PackageStatus;

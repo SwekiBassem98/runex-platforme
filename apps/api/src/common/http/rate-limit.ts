@@ -129,6 +129,17 @@ export const passwordResetLimiter = rateLimit({
   key: ip,
 });
 
+/** Changement de mot de passe : 10 essais par quart d'heure et par utilisateur. */
+export const changePasswordLimiter = rateLimit({
+  name: 'change-password',
+  windowMs: 15 * MIN,
+  max: 10,
+  key: (req) => {
+    const user = (req as Request & { user?: { id?: string } }).user;
+    return user?.id ?? ip(req);
+  },
+});
+
 /** Code secret de bordereau : 5 échecs par quart d'heure et par utilisateur. */
 export const voucherSecretLimiter = rateLimit({
   name: 'voucher-secret',

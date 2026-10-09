@@ -576,6 +576,12 @@ export const authApi = {
   requestPasswordReset: (email: string) =>
     request<unknown>('/auth/password-reset/request', { method: 'POST', body: { email } }),
 
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<{ otherSessionsClosed: number }>(
+      '/auth/change-password',
+      { method: 'POST', body: { currentPassword, newPassword } }
+    ),
+
   confirmPasswordReset: (token: string, newPassword: string) =>
     request<unknown>('/auth/password-reset/confirm', {
       method: 'POST',
@@ -1185,6 +1191,48 @@ export const driversApi = {
       method: 'PATCH',
       body: { isActive, reason },
     }),
+};
+
+/* ------------------------------------------------------------------ */
+/* Zones de livraison                                                   */
+/* ------------------------------------------------------------------ */
+
+export interface ZoneDto {
+  id: string;
+  code: string;
+  name: string;
+  governorate: string;
+  delegation: string;
+  depositId: string;
+  depositName: string | null;
+  baseDeliveryFee: number;
+  isActive: boolean;
+  autoCreated: boolean;
+  createdAt: string;
+  openPackages?: number;
+  totalPackages?: number;
+  drivers?: { id: string; driverCode: string; fullName: string; isActive: boolean }[];
+}
+
+export interface DriverSuggestions {
+  zone: { id: string; name: string; governorate: string } | null;
+  drivers: { id: string; driverCode: string; fullName: string; coversZone: boolean; vehicleType: string }[];
+}
+
+export const zonesApi = {
+  list: (params?: { search?: string; governorate?: string; active?: string }) =>
+    requestData<ZoneDto[]>('/zones', { query: params }),
+  suggestions: (governorate?: string) =>
+    requestData<{ governorate: string; delegation: string }[]>('/zones/suggestions', {
+      query: { governorate },
+    }),
+  update: (id: string, corps: Record<string, unknown>) =>
+    requestData<ZoneDto>(`/zones/${id}`, { method: 'PATCH', body: corps }),
+  driverZones: (driverId: string) => requestData<ZoneDto[]>(`/drivers/${driverId}/zones`),
+  setDriverZones: (driverId: string, zoneIds: string[]) =>
+    requestData<ZoneDto[]>(`/drivers/${driverId}/zones`, { method: 'PUT', body: { zoneIds } }),
+  driverSuggestions: (colisId: string) =>
+    requestData<DriverSuggestions>(`/colis/${encodeURIComponent(colisId)}/driver-suggestions`),
 };
 
 /* ------------------------------------------------------------------ */

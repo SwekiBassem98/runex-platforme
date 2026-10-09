@@ -11,6 +11,7 @@ import React from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useNotifications, PREVIEW_SIZE } from '@/lib/notification-provider';
 import { SoundSettingsButton } from '@/components/SoundSettingsButton';
+import { PasswordSettingsButton } from './PasswordSettingsButton';
 import {
   Activity,
   Archive,
@@ -18,6 +19,7 @@ import {
   Barcode,
   BarChart3,
   Bike,
+  MapPinned,
   Building2,
   Calendar,
   CreditCard,
@@ -63,6 +65,7 @@ const NAV_ROUTES: Record<string, string> = {
   'admin-utilisateurs': '/admin/utilisateurs',
   'admin-expediteurs': '/admin/expediteurs',
   'admin-livreurs': '/admin/livreurs',
+  'admin-zones': '/admin/zones',
   'design-system': '/design-system',
 };
 
@@ -205,6 +208,11 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             label: 'Livreurs',
             icon: <Bike className="w-4 h-4" />,
           },
+          {
+            id: 'admin-zones',
+            label: 'Zones de livraison',
+            icon: <MapPinned className="w-4 h-4" />,
+          },
         ]
       : []),
     // Inventaire et recherche se placent en fin de liste : ce sont des écrans de
@@ -262,7 +270,12 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       }}
       onOpenNotificationCenter={() => router.push('/notifications')}
       onMarkAllRead={() => void markAllRead()}
-      actionsSupplementaires={<SoundSettingsButton />}
+      actionsSupplementaires={
+        <>
+          <PasswordSettingsButton />
+          <SoundSettingsButton />
+        </>
+      }
     >
       {children}
     </AppShell>
@@ -296,6 +309,7 @@ const ACCES_ECRANS: { prefix: string; roles?: RoleType[]; permission?: Permissio
   { prefix: '/admin/utilisateurs', permission: PermissionCode.USER_READ },
   { prefix: '/admin/expediteurs', permission: PermissionCode.EXPEDITEUR_READ },
   { prefix: '/admin/livreurs', permission: PermissionCode.LIVREUR_READ },
+  { prefix: '/admin/zones', permission: PermissionCode.LIVREUR_READ },
   { prefix: '/design-system', roles: [RoleType.ADMIN] },
 ];
 

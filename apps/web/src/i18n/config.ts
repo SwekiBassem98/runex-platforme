@@ -77,6 +77,9 @@ export function estLangue(valeur: unknown): valeur is Langue {
  * back-office se souvenir de ce choix, alors que ses écrans ne savent pas le
  * rendre.
  *
+ * `/mot-de-passe-oublie` et `/reinitialisation` en font partie : un expéditeur
+ * y arrive depuis son portail ou depuis le courriel, dans sa langue.
+ *
  * `/connexion` est volontairement absent : c'est la porte d'entrée de l'équipe
  * interne, sur le même modèle que le back-office.
  *
@@ -86,7 +89,7 @@ export function estLangue(valeur: unknown): valeur is Langue {
  * langue. Les deux doivent décider pareil — d'où une fonction, et non deux
  * listes comparées à la main.
  */
-export const SURFACES_I18N: readonly string[] = ['/expediteur'];
+export const SURFACES_I18N: readonly string[] = ['/expediteur', '/mot-de-passe-oublie', '/reinitialisation'];
 
 /** Le chemin appartient-il à une surface traduite ? */
 export function estSurfaceI18n(chemin: string): boolean {

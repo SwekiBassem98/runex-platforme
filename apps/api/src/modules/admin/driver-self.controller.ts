@@ -2,6 +2,7 @@ import type { Response } from 'express';
 import { RoleType } from '@logixpress/types';
 import type { AuthenticatedRequest } from '../../common/auth/auth.middleware';
 import { getPrisma } from '../../common/database/prisma-context';
+import { zonesService } from '../zones/zones.service';
 
 /**
  * `GET /drivers/me` — la fiche du livreur connecté, pour l'écran Profil de
@@ -40,6 +41,12 @@ export async function getOwnDriverProfile(req: AuthenticatedRequest, res: Respon
       depositId: driver.user.deposit?.id,
       depositName: driver.user.deposit?.name,
       governorate: driver.user.deposit?.governorate,
+      zones: (await zonesService.driverZones(driver.id)).map((z) => ({
+        id: z.id,
+        name: z.name,
+        code: z.code,
+        governorate: z.governorate,
+      })),
     },
   });
 }

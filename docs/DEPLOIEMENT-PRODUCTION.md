@@ -110,6 +110,10 @@ créent ensuite depuis le web (Administration). Relançable sans effet ;
 | `REDIS_REQUIRED` | `false` |
 | `FIREBASE_SERVICE_ACCOUNT_JSON` 🔒 | compte de service Firebase en base64 (§ 5.1) — sans lui, pas de notification sur les téléphones |
 | `NODE_OPTIONS` | `--max-old-space-size=384` (instance de 512 Mo) |
+| `BREVO_API_KEY` 🔒 | clé API Brevo (§ 3.1) — sans elle, aucun courriel de réinitialisation ne part |
+| `MAIL_FROM_EMAIL` | adresse d'expédition **vérifiée** dans Brevo (§ 3.1) |
+| `MAIL_FROM_NAME` | `RUNEX` (nom affiché dans la boîte de réception) |
+| `WEB_APP_URL` | `https://<projet>.vercel.app` (adresse des liens envoyés par courriel ; par défaut, la première origine HTTPS de `CORS_ORIGIN`) |
 
    Koyeb fournit `PORT` (8000) ; l'API le lit en priorité. Derrière la passerelle
    Koyeb, 1 relais est approuvé par défaut en production (`TRUST_PROXY`), ce
@@ -119,6 +123,30 @@ créent ensuite depuis le web (Administration). Relançable sans effet ;
    - `https://<service>.koyeb.app/api/v1/health` → `"status":"ok"`, `database: up` (`redis: down`, non requis, est normal) ;
    - `https://<service>.koyeb.app/api/v1/docs` → 404 (documentation masquée en production) ;
    - `https://<service>/api/v1/health/ip` dans un navigateur : le `verdict` doit être « OK ». Sinon, il indique la valeur de `TRUST_PROXY_HOPS` à mettre (Render place plusieurs relais devant l'API).
+
+### 3.1 Courriels (réinitialisation du mot de passe) — Brevo
+
+Render (offre gratuite) bloque les ports SMTP : l'API envoie donc les courriels
+par l'API HTTPS de Brevo, gratuite jusqu'à 300 courriels par jour, sans nom de
+domaine.
+
+1. brevo.com → créer un compte gratuit.
+2. **Senders, Domains & Dedicated IPs → Senders → Add a sender** : nom
+   `RUNEX`, adresse que vous lisez (ex. une adresse Gmail de l'entreprise).
+   Ouvrir le courriel de Brevo et cliquer sur le lien de vérification.
+3. **SMTP & API → API Keys → Generate a new API key** (nom : `runex-render`).
+   Copier la clé (elle commence par `xkeysib-`) : elle n'est affichée qu'une fois.
+4. Render → service API → **Environment** : `BREVO_API_KEY` = la clé,
+   `MAIL_FROM_EMAIL` = l'adresse vérifiée, `MAIL_FROM_NAME` = `RUNEX`,
+   `WEB_APP_URL` = `https://<projet>.vercel.app`. Enregistrer (redéploiement).
+5. Essai : portail expéditeur → « Mot de passe oublié ? » → saisir une adresse
+   de compte → le courriel arrive (vérifier aussi les indésirables) → le lien
+   ouvre `/reinitialisation` (valable 15 minutes, une seule fois).
+
+Sans ces variables, l'API démarre normalement mais écrit dans le journal
+« BREVO_API_KEY / MAIL_FROM_EMAIL absents » et aucun courriel ne part. Un
+utilisateur connecté peut toujours changer son mot de passe (profil du portail,
+icône 🔑 de l'exploitation, Profil → Sécurité dans l'application livreur).
 
 **Ne jamais définir en production** : `ENABLE_DEMO_ACCOUNTS`, `ENABLE_API_DOCS`,
 `SEED_ALLOW_PRODUCTION`, `RATE_LIMIT_DISABLED`, `PASSWORD_RESET_LOG_TOKEN`.
@@ -197,6 +225,8 @@ Mise en place (une fois) :
 - [ ] `runex_app` sans `superuser` / `createrole` / `neon_superuser` (sortie de `db:app-role`)
 - [ ] connexion administrateur depuis `https://<projet>.vercel.app` sur téléphone ; cloche de notifications active
 - [ ] 10 mauvais mots de passe → 429 (limitation de débit active)
+- [ ] « Mot de passe oublié ? » : courriel reçu, lien `/reinitialisation` fonctionnel (§ 3.1)
+- [ ] Administration → Zones de livraison : une zone apparaît à la création d'un colis vers une nouvelle délégation
 - [ ] livreur : installation de l'APK, connexion, tournée, scan, livraison
 - [ ] secrets saisis uniquement dans Koyeb / GitHub Secrets, jamais dans le dépôt
 
@@ -208,8 +238,13 @@ Mise en place (une fois) :
   travail de ~8 h sur 22 jours ouvrés avec la veille automatique ; surveiller
   le tableau de bord Neon. Le passage aux offres payantes (Neon Launch, Koyeb
   Eco, Vercel Pro) ne demande aucune modification du code.
-- E-mail de réinitialisation du mot de passe non branché : un administrateur
-  réinitialise le mot de passe depuis Administration → Utilisateurs.
+- Réinitialisation du mot de passe par courriel : Brevo (§ 3.1), 300 courriels
+  par jour sur l'offre gratuite. Sans Brevo, un administrateur réinitialise le
+  mot de passe depuis Administration → Utilisateurs.
+- Journal Render « Error in PostgreSQL connection: Closed » : Neon ferme les
+  connexions inactives quand la base se met en veille. L'API ferme désormais
+  elle-même ses connexions inactives après 60 s (`max_idle_connection_lifetime`)
+  et n'affiche plus qu'une ligne d'information ; la reconnexion est automatique.
 - Notifications sur les téléphones : uniquement avec `FIREBASE_SERVICE_ACCOUNT_JSON`
   (§ 5.1). Certains fabricants (Xiaomi, Huawei, Oppo…) retardent les applications
   en arrière-plan : réglages du téléphone → Batterie → RUNEX Driver → « Aucune restriction ».
