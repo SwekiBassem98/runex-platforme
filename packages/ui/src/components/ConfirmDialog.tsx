@@ -14,6 +14,8 @@ interface ConfirmDialogProps {
   cancelText?: string;
   type?: 'danger' | 'warning' | 'info';
   isLoading?: boolean;
+  /** Précision affichée à côté de l'icône (ex. le compte concerné). */
+  details?: React.ReactNode;
 }
 
 export function ConfirmDialog({
@@ -26,6 +28,7 @@ export function ConfirmDialog({
   cancelText = 'Annuler',
   type = 'danger',
   isLoading = false,
+  details,
 }: ConfirmDialogProps) {
   const icon = {
     danger: <AlertCircle className="w-5 h-5 text-red-600 shrink-0" aria-hidden="true" />,
@@ -78,7 +81,10 @@ export function ConfirmDialog({
         </>
       }
     >
-      <div className="flex items-start gap-3">{icon}</div>
+      <div className="flex items-start gap-3">
+        {icon}
+        {details && <div className="min-w-0 flex-1 text-sm text-slate-700">{details}</div>}
+      </div>
     </Modal>
   );
 }

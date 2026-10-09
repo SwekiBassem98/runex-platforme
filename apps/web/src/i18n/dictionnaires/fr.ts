@@ -644,6 +644,26 @@ export const fr = {
   'tdb.argent.regle': 'Déjà réglé par RUNEX',
   'tdb.erreur': 'Les indicateurs sont indisponibles pour le moment. Réessayez dans un instant.',
 
+  // ------------------------------------------------- son et déconnexion
+  'deconnexion.titre': 'Se déconnecter ?',
+  'deconnexion.message': 'Vous devrez saisir à nouveau votre adresse et votre mot de passe pour revenir.',
+  'deconnexion.confirmer': 'Se déconnecter',
+  'deconnexion.compte': 'Compte connecté',
+  'deconnexion.annuler': 'Rester connecté',
+  'son.titre': 'Retour sonore',
+  'son.aide': 'Un son confirme chaque scan, réussite ou refus. Réglage propre à cet appareil.',
+  'son.sons': 'Sons',
+  'son.volume': 'Volume',
+  'son.vibration': 'Vibration',
+  'son.succes': 'Succès',
+  'son.scan': 'Scan',
+  'son.erreur': 'Erreur',
+  'son.essayer': 'Essayer un son :',
+  'son.iphone': 'Sur iPhone, le bouton « silencieux » coupe aussi ces sons.',
+  'son.actives': 'Sons activés — réglages',
+  'son.coupes': 'Sons désactivés — réglages',
+  'son.fermer': 'Fermer',
+
   // ------------------------------------------------------------ mot de passe
   'mdp.oublie': 'Mot de passe oublié ?',
   'mdp.oublieTitre': 'Mot de passe oublié',

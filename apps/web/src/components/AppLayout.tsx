@@ -11,6 +11,7 @@ import React from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useNotifications, PREVIEW_SIZE } from '@/lib/notification-provider';
 import { SoundSettingsButton } from '@/components/SoundSettingsButton';
+import { useDeconnexionConfirmee } from '@/components/useDeconnexionConfirmee';
 import { PasswordSettingsButton } from './PasswordSettingsButton';
 import {
   Activity,
@@ -87,7 +88,8 @@ function navIdForPath(pathname: string): string {
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
+  const { demanderDeconnexion, dialogueDeconnexion } = useDeconnexionConfirmee();
   const { items, unread, isConnected, markRead, markAllRead } = useNotifications();
 
   // La barre supérieure ne montre qu'un aperçu : charger tout l'historique
@@ -255,7 +257,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       activeDepositName="Hub Central — Ben Arous"
       userName={user?.fullName}
       userRole={user?.role}
-      onLogout={() => void logout()}
+      onLogout={demanderDeconnexion}
       onSearchClick={() => router.push('/colis')}
       onGlobalSearch={(term) => router.push(`/recherche?q=${encodeURIComponent(term)}`)}
       notifications={preview}
@@ -278,6 +280,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       }
     >
       {children}
+      {dialogueDeconnexion}
     </AppShell>
   );
 }
@@ -335,7 +338,8 @@ function ecranAutorise(
  *  - écran non autorisé pour le profil : écran « accès refusé ».
  */
 export function RequireAuth({ children }: { children: React.ReactNode }) {
-  const { user, isLoading, logout } = useAuth();
+  const { user, isLoading } = useAuth();
+  const { demanderDeconnexion, dialogueDeconnexion } = useDeconnexionConfirmee();
   const router = useRouter();
   const pathname = usePathname() ?? '/';
 
@@ -365,8 +369,10 @@ export function RequireAuth({ children }: { children: React.ReactNode }) {
         titre="Accès refusé — espace livreur sur mobile"
         message="Les livreurs utilisent l'application mobile RUNEX. L'espace web d'exploitation ne leur est pas ouvert."
         action="Se déconnecter"
-        onAction={() => void logout()}
-      />
+        onAction={demanderDeconnexion}
+      >
+        {dialogueDeconnexion}
+      </AccesRefuse>
     );
   }
 
@@ -384,7 +390,13 @@ export function RequireAuth({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-function AccesRefuse(props: { titre: string; message: string; action: string; onAction: () => void }) {
+function AccesRefuse(props: {
+  titre: string;
+  message: string;
+  action: string;
+  onAction: () => void;
+  children?: React.ReactNode;
+}) {
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
       <div className="w-full max-w-md bg-white border border-slate-200 rounded-2xl shadow-sm p-8 text-center space-y-4">
@@ -405,6 +417,7 @@ function AccesRefuse(props: { titre: string; message: string; action: string; on
           {props.action}
         </button>
       </div>
+      {props.children}
     </div>
   );
 }

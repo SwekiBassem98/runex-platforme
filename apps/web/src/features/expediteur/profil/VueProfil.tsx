@@ -33,6 +33,7 @@ import { RoleType, type AuthUser } from '@logixpress/types';
 import { Card, ErrorBanner } from '@logixpress/ui';
 import { ApiError, authApi, requestData } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { useDeconnexionConfirmee } from '@/components/useDeconnexionConfirmee';
 import { useI18n, type Cle } from '@/i18n';
 
 /** Droits d'un expéditeur qui ont un libellé lisible dans le dictionnaire. */
@@ -50,7 +51,8 @@ import { FormulaireChangementMotDePasse } from '@/features/motdepasse/Formulaire
 
 export function VueProfil() {
   const router = useRouter();
-  const { user: session, logout, refresh } = useAuth();
+  const { user: session, refresh } = useAuth();
+  const { demanderDeconnexion, dialogueDeconnexion } = useDeconnexionConfirmee();
   const { t, formatDateTime } = useI18n();
 
   const [profil, setProfil] = React.useState<AuthUser | null>(null);
@@ -246,7 +248,7 @@ export function VueProfil() {
           </button>
           <button
             type="button"
-            onClick={() => void logout()}
+            onClick={demanderDeconnexion}
             className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-md text-xs font-semibold transition cursor-pointer"
           >
             {/* La sortie se fait vers la droite en français, vers la gauche en arabe. */}
@@ -261,6 +263,7 @@ export function VueProfil() {
           {t('profil.verifieLe', { date: formatDateTime(verifieLe) })}
         </p>
       )}
+      {dialogueDeconnexion}
     </div>
   );
 }
