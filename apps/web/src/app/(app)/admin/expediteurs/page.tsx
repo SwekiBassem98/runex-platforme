@@ -17,6 +17,7 @@
  * l'entreprise, et l'opération est journalisée.
  */
 
+import { BoutonSupprimer, SuppressionDefinitive, usePeutSupprimer } from '@/components/admin/SuppressionDefinitive';
 import { useFeedbackOn } from '@/lib/useFeedbackOn';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Building2, Pencil, Plus, RotateCcw, ShieldCheck, UserPlus, UserX } from 'lucide-react';
@@ -86,6 +87,8 @@ export default function AdminExpediteursPage() {
   const [erreur, setErreur] = useState<string | null>(null);
   const [enFiches, setEnFiches] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const peutSupprimer = usePeutSupprimer();
+  const [aSupprimer, setASupprimer] = useState<ShipperDto | null>(null);
 
   const [formulaireOuvert, setFormulaireOuvert] = useState(false);
   const [enEdition, setEnEdition] = useState<ShipperDto | null>(null);
@@ -490,13 +493,16 @@ export default function AdminExpediteursPage() {
                   },
                 ]}
                 action={
-                  <button
-                    type="button"
-                    onClick={() => void ouvrirDetail(s)}
-                    className="px-2.5 py-1.5 text-xs font-medium border border-slate-200 rounded-md hover:bg-slate-50 cursor-pointer"
-                  >
-                    Ouvrir
-                  </button>
+                  <div className="flex gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => void ouvrirDetail(s)}
+                      className="px-2.5 py-1.5 text-xs font-medium border border-slate-200 rounded-md hover:bg-slate-50 cursor-pointer"
+                    >
+                      Ouvrir
+                    </button>
+                    {peutSupprimer && <BoutonSupprimer nom={s.companyName} onClick={() => setASupprimer(s)} compact={false} />}
+                  </div>
                 }
               />
             ))}
@@ -564,6 +570,7 @@ export default function AdminExpediteursPage() {
                       >
                         {s.isActive ? 'Désactiver' : 'Activer'}
                       </button>
+                      {peutSupprimer && <BoutonSupprimer nom={s.companyName} onClick={() => setASupprimer(s)} />}
                     </div>
                   </Td>
                 </Tr>
@@ -934,6 +941,27 @@ export default function AdminExpediteursPage() {
           </div>
         ) : null}
       </Modal>
+      {aSupprimer && (
+        <SuppressionDefinitive
+          ressource="shippers"
+          id={aSupprimer.id}
+          onClose={() => setASupprimer(null)}
+          onSupprime={(texte) => {
+            setASupprimer(null);
+            setMessage(texte);
+            void charger();
+          }}
+          onDesactiver={
+            aSupprimer.isActive
+              ? () => {
+                  const cible = aSupprimer;
+                  setASupprimer(null);
+                  void basculerStatut(cible);
+                }
+              : undefined
+          }
+        />
+      )}
     </div>
   );
 }

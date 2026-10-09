@@ -19,6 +19,7 @@ import { badRequest } from '../../common/errors/api-error';
 import { usersService, ROLES_SCHEMA, type RoleSchema } from './users.service';
 import { shippersService } from './shippers.service';
 import { driversService } from './drivers.service';
+import { accountDeletionService } from './account-deletion.service';
 import { getPrisma } from '../../common/database/prisma-context';
 
 /** Lit un paramètre de requête en chaîne, ou `undefined`. Jamais un tableau. */
@@ -42,6 +43,35 @@ function booleen(valeur: unknown): boolean | undefined {
 
 function acteur(req: AuthenticatedRequest) {
   return { id: req.user?.id ?? null };
+}
+
+/**
+ * Suppression définitive (administration seulement, voir le routeur) :
+ * `GET …/suppression` décrit ce qui serait supprimé ou ce qui l'empêche ;
+ * `DELETE …` supprime, avec `{ confirmation: "SUPPRIMER" }` dans le corps.
+ */
+export class AccountDeletionController {
+  async apercuUtilisateur(req: AuthenticatedRequest, res: Response): Promise<void> {
+    res.json({ success: true, data: await accountDeletionService.apercuUtilisateur(req.params.id!, acteur(req)) });
+  }
+  async supprimerUtilisateur(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const a = await accountDeletionService.supprimerUtilisateur(req.params.id!, req.body?.confirmation, acteur(req));
+    res.json({ success: true, data: { id: a.id }, message: `Compte « ${a.nom} » supprimé définitivement.` });
+  }
+  async apercuLivreur(req: AuthenticatedRequest, res: Response): Promise<void> {
+    res.json({ success: true, data: await accountDeletionService.apercuLivreur(req.params.id!, acteur(req)) });
+  }
+  async supprimerLivreur(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const a = await accountDeletionService.supprimerLivreur(req.params.id!, req.body?.confirmation, acteur(req));
+    res.json({ success: true, data: { id: a.id }, message: `Livreur « ${a.nom} » supprimé définitivement.` });
+  }
+  async apercuExpediteur(req: AuthenticatedRequest, res: Response): Promise<void> {
+    res.json({ success: true, data: await accountDeletionService.apercuExpediteur(req.params.id!, acteur(req)) });
+  }
+  async supprimerExpediteur(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const a = await accountDeletionService.supprimerExpediteur(req.params.id!, req.body?.confirmation, acteur(req));
+    res.json({ success: true, data: { id: a.id }, message: `Expéditeur « ${a.nom} » supprimé définitivement.` });
+  }
 }
 
 export class UsersController {
@@ -293,3 +323,4 @@ export class DriversController {
 export const usersController = new UsersController();
 export const shippersController = new ShippersController();
 export const driversController = new DriversController();
+export const accountDeletionController = new AccountDeletionController();

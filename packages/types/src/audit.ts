@@ -280,6 +280,11 @@ export const AUDIT_ACTIONS: Readonly<Record<string, AuditActionDefinition>> = {
     requiresReason: true,
   },
   DRIVER_ACTIVE: { label: 'Livreur activé', category: 'PARAMETRAGE' },
+  // Suppressions définitives : l'entrée garde, dans `previousValues`, l'état
+  // du compte supprimé — c'est la seule trace qui en reste.
+  USER_SUPPRIME: { label: 'Compte utilisateur supprimé définitivement', category: 'PARAMETRAGE', critical: true },
+  DRIVER_SUPPRIME: { label: 'Livreur supprimé définitivement', category: 'PARAMETRAGE', critical: true },
+  SHIPPER_SUPPRIME: { label: 'Expéditeur supprimé définitivement', category: 'PARAMETRAGE', critical: true },
   DRIVER_DESACTIVE: {
     label: 'Livreur désactivé',
     category: 'PARAMETRAGE',
@@ -463,6 +468,7 @@ const ROLES: Readonly<Record<string, string>> = {
   CAISSIER: 'Caissier',
   EXPEDITEUR_ADMIN: 'Expéditeur — administrateur',
   EXPEDITEUR_USER: 'Expéditeur — utilisateur',
+  LIVREUR: 'Livreur',
 };
 
 function libelleStatut(code: string, table: Readonly<Record<string, string>>): string {
