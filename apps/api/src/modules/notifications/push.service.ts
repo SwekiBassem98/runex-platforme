@@ -16,6 +16,7 @@
 
 import { getPrisma } from '../../common/database/prisma-context';
 import type { NotificationDto } from '@logixpress/types';
+import type { Message } from 'firebase-admin/messaging';
 
 let admin: any | null = null;
 let initialised = false;
@@ -53,7 +54,8 @@ export function pushInitStatus(): { enabled: boolean; initialised: boolean; erro
  * Initialise `firebase-admin` si les variables d'environnement fournissent une
  * configuration complète. Appelé une fois au démarrage du serveur (main.ts).
  *
- * Variables attendues :
+ * Variables attendues : FIREBASE_SERVICE_ACCOUNT_JSON (fichier JSON du compte de
+ * service, brut ou base64), ou bien les trois variables séparées :
  * - FIREBASE_PROJECT_ID
  * - FIREBASE_CLIENT_EMAIL
  * - FIREBASE_PRIVATE_KEY (avec `\n` échappés, comme fourni par la console Firebase)
@@ -72,9 +74,19 @@ export async function initPush(): Promise<void> {
     return;
   }
 
-  const projectId = env('FIREBASE_PROJECT_ID');
-  const clientEmail = env('FIREBASE_CLIENT_EMAIL');
-  const privateKeyRaw = env('FIREBASE_PRIVATE_KEY');
+  // Le plus simple à configurer : le fichier JSON du compte de service
+  // (console Firebase → Paramètres → Comptes de service → Générer une clé),
+  // collé tel quel ou encodé en base64 dans FIREBASE_SERVICE_ACCOUNT_JSON.
+  const fromJson = readServiceAccountJson(env('FIREBASE_SERVICE_ACCOUNT_JSON'));
+  if (fromJson === 'invalid') {
+    enabled = false;
+    initError = 'FIREBASE_SERVICE_ACCOUNT_JSON illisible (JSON du compte de service attendu)';
+    console.warn('[Push]', initError);
+    return;
+  }
+  const projectId = fromJson?.project_id ?? env('FIREBASE_PROJECT_ID');
+  const clientEmail = fromJson?.client_email ?? env('FIREBASE_CLIENT_EMAIL');
+  const privateKeyRaw = fromJson?.private_key ?? env('FIREBASE_PRIVATE_KEY');
 
   if (!projectId || !clientEmail || !privateKeyRaw) {
     enabled = false;
@@ -109,6 +121,26 @@ export async function initPush(): Promise<void> {
     console.warn('[Push] Initialisation FCM échouée :', initError);
   }
 }
+
+function readServiceAccountJson(
+  raw: string | undefined
+): { project_id?: string; client_email?: string; private_key?: string } | null | 'invalid' {
+  if (!raw) return null;
+  const text = raw.startsWith('{') ? raw : Buffer.from(raw, 'base64').toString('utf8');
+  try {
+    const parsed = JSON.parse(text) as { project_id?: string; client_email?: string; private_key?: string };
+    return parsed.project_id && parsed.client_email && parsed.private_key ? parsed : 'invalid';
+  } catch {
+    return 'invalid';
+  }
+}
+
+/**
+ * Canal Android des alertes livreur, créé par l'application au premier
+ * lancement (importance maximale, son RUNEX). Doit rester identique des deux
+ * côtés : un canal inconnu du téléphone retombe sur le canal par défaut.
+ */
+export const ANDROID_CHANNEL_ID = 'runex-alerts';
 
 export interface PushPayload {
   title: string;
@@ -167,11 +199,28 @@ export async function sendToTokens(
   // Envoi en lots de 500 (limite FCM multicast). Pour l'instant un seul lot suffit.
   for (const token of tokens) {
     try {
-      const message = {
+      const message: Message = {
         token,
         notification: { title: payload.title, body: payload.body },
         data: payload.data,
-        android: { priority: 'high' as const },
+        android: {
+          // Livraison immédiate même téléphone en veille (Doze).
+          priority: 'high' as const,
+          // Au-delà d'une journée, l'information est périmée.
+          ttl: 24 * 3600 * 1000,
+          notification: {
+            channelId: ANDROID_CHANNEL_ID,
+            sound: 'runex_alert',
+            defaultVibrateTimings: true,
+            priority: 'max' as const,
+            visibility: 'public' as const,
+            // Une même tournée ne remplit pas la barre de notifications :
+            // la plus récente remplace la précédente.
+            ...(payload.data.relatedEntityId
+              ? { tag: `${payload.data.relatedEntity}:${payload.data.relatedEntityId}` }
+              : {}),
+          },
+        },
         apns: { payload: { aps: { sound: 'default' as const, badge: 1 } } },
       };
       const id = await admin.messaging().send(message);
