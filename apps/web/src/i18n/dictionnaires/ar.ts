@@ -623,6 +623,26 @@ export const ar: Dictionnaire = {
   'tdb.argent.regle': 'دفعته RUNEX',
   'tdb.erreur': 'المؤشرات غير متاحة حاليًا. أعد المحاولة بعد قليل.',
 
+  // ------------------------------------------------- son et déconnexion
+  'deconnexion.titre': 'تسجيل الخروج؟',
+  'deconnexion.message': 'ستحتاج إلى إدخال بريدك الإلكتروني وكلمة المرور من جديد للعودة.',
+  'deconnexion.confirmer': 'تسجيل الخروج',
+  'deconnexion.compte': 'الحساب المتصل',
+  'deconnexion.annuler': 'البقاء متصلًا',
+  'son.titre': 'التنبيهات الصوتية',
+  'son.aide': 'يؤكّد صوتٌ كلَّ مسح أو نجاح أو رفض. هذا الإعداد خاص بهذا الجهاز.',
+  'son.sons': 'الأصوات',
+  'son.volume': 'مستوى الصوت',
+  'son.vibration': 'الاهتزاز',
+  'son.succes': 'نجاح',
+  'son.scan': 'مسح',
+  'son.erreur': 'خطأ',
+  'son.essayer': 'جرّب صوتًا:',
+  'son.iphone': 'على iPhone، يكتم زرّ «الوضع الصامت» هذه الأصوات أيضًا.',
+  'son.actives': 'الأصوات مفعّلة — الإعدادات',
+  'son.coupes': 'الأصوات معطّلة — الإعدادات',
+  'son.fermer': 'إغلاق',
+
   // ------------------------------------------------------------ mot de passe
   'mdp.oublie': 'نسيت كلمة المرور؟',
   'mdp.oublieTitre': 'نسيت كلمة المرور',

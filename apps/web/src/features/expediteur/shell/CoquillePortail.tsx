@@ -23,6 +23,7 @@
  */
 
 import { SoundSettingsButton } from '@/components/SoundSettingsButton';
+import { useDeconnexionConfirmee } from '@/components/useDeconnexionConfirmee';
 import React from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
@@ -154,7 +155,8 @@ export function CoquillePortail({ children }: { children: React.ReactNode }) {
 }
 
 function CoquilleInterieur({ children }: { children: React.ReactNode }) {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
+  const { demanderDeconnexion, dialogueDeconnexion } = useDeconnexionConfirmee();
   const { unread } = useNotifications();
   const { t } = useI18n();
   const router = useRouter();
@@ -206,9 +208,6 @@ function CoquilleInterieur({ children }: { children: React.ReactNode }) {
     ...(e.id === 'notifications' && unread > 0 ? { count: unread, badgeVariant: 'danger' as const } : {}),
   }));
 
-  async function seDeconnecter() {
-    await logout();
-  }
 
   return (
     <div className="h-dvh bg-slate-100 flex text-slate-900 font-sans antialiased overflow-hidden">
@@ -238,7 +237,7 @@ function CoquilleInterieur({ children }: { children: React.ReactNode }) {
         contexte={{ libelle: t('coque.entreprise'), valeur: entreprise }}
         userName={user.fullName || user.email}
         userRole={t('coque.roleExpediteur')}
-        onLogout={seDeconnecter}
+        onLogout={demanderDeconnexion}
         idNavigation="navigation-portail"
       />
 
@@ -342,6 +341,7 @@ function CoquilleInterieur({ children }: { children: React.ReactNode }) {
           </footer>
         </main>
       </div>
+      {dialogueDeconnexion}
     </div>
   );
 }
