@@ -66,6 +66,8 @@ export interface TransferItemDto {
   customerName: string;
   destination: string;
   pieceCount: number;
+  /** Taille déclarée (LEGERE, MOYENNE, LOURDE, VOLUMINEUSE) : colonne « Type pièce ». */
+  sizeCategory: string;
   receivedPieces: number;
   receivedPieceNumbers: number[];
   /** `EN_ROUTE`, `PARTIEL`, `RECU`. */
@@ -189,6 +191,7 @@ const TRANSFER_INCLUDE = {
           barcode: true,
           status: true,
           pieceCount: true,
+          sizeCategory: true,
           customer: { select: { fullName: true } },
           customerAddress: { select: { governorate: true, delegation: true } },
           shipper: { select: { companyName: true, brandName: true } },
@@ -1089,6 +1092,7 @@ export class InterDepotsService {
         customerName: i.package.customer.fullName,
         destination: [i.package.customerAddress.delegation, i.package.customerAddress.governorate].filter(Boolean).join(', '),
         pieceCount: i.pieceCount,
+        sizeCategory: i.package.sizeCategory,
         receivedPieces: i.receivedPieces,
         receivedPieceNumbers: received,
         receptionState: state,

@@ -702,7 +702,10 @@ export function VueColis() {
                         </span>
                       </Td>
                       <Td priorite="secondaire">
-                        <span className="text-xs text-slate-700 block">{voc.gouvernorat(c.governorate)}</span>
+                        <span className="text-xs text-slate-700 block">
+                          {voc.gouvernorat(c.governorate)}
+                          {c.delegation ? ` · ${c.delegation}` : ''}
+                        </span>
                         <span className="text-[11px] text-slate-500 truncate block max-w-[180px]">
                           {c.address}
                         </span>

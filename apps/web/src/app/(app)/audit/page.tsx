@@ -30,6 +30,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ErrorBanner, formatDateTime } from '@logixpress/ui';
+import { rendreCodesLisibles } from '@logixpress/types';
 import {
   ChevronDown,
   ChevronRight,
@@ -121,7 +122,7 @@ function Detail({ entree }: { entree: AuditEntry }): React.ReactElement {
     <div className="px-3 py-2.5 bg-slate-50 border-t border-slate-100 space-y-3">
       {entree.reason && (
         <p className="text-[11px] text-slate-700">
-          <span className="font-semibold text-slate-500">Motif —</span> {entree.reason}
+          <span className="font-semibold text-slate-500">Motif —</span> {rendreCodesLisibles(entree.reason)}
         </p>
       )}
 
@@ -231,8 +232,8 @@ function Ligne({ entree }: { entree: AuditEntry }): React.ReactElement {
             </span>
           )}
           {entree.reason && (
-            <span className="block text-[11px] text-slate-500 line-clamp-1" title={entree.reason}>
-              {entree.reason}
+            <span className="block text-[11px] text-slate-500 line-clamp-1" title={rendreCodesLisibles(entree.reason)}>
+              {rendreCodesLisibles(entree.reason)}
             </span>
           )}
         </td>
@@ -243,7 +244,9 @@ function Ligne({ entree }: { entree: AuditEntry }): React.ReactElement {
             <span className="block font-mono text-[11px] text-slate-500">{entree.userIp}</span>
           )}
         </td>
-        <td className="px-2.5 py-2 text-[11px] text-slate-600 whitespace-nowrap">
+        {/* Même visibilité que l'en-tête « Catégorie » : sinon, sous 1280 px, la
+            catégorie glissait dans la colonne suivante. */}
+        <td className="px-2.5 py-2 text-[11px] text-slate-600 whitespace-nowrap hidden xl:table-cell">
           {entree.categoryLabel}
         </td>
         <td className="px-2.5 py-2 w-10 text-right">

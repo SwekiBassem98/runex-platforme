@@ -28,6 +28,8 @@
  */
 
 /** Types d'entités suivi dans le journal. */
+import { PACKAGE_STATUS_LABELS } from './package-status';
+
 export const AUDIT_ENTITY_TYPES = {
   PACKAGE: 'Colis',
   RUNSHEET: 'Tournée',
@@ -334,13 +336,13 @@ export const AUDIT_ACTION_FAMILIES: ReadonlyArray<{
     // `PACKAGE_STATUS_RECU_DEPOT` et consorts : la machine à états est la
     // source de vérité, le catalogue ne fait que la traduire.
     pattern: /^PACKAGE_STATUS_(.+)$/,
-    label: (statut) => `Statut du colis : ${humaniser(statut)}`,
+    label: (statut) => `Statut du colis : ${libelleStatut(statut, PACKAGE_STATUS_LABELS)}`,
     category: 'COLIS',
   },
-  { pattern: /^TRANSFERT_(.+)$/, label: (statut) => `Transfert : ${humaniser(statut)}`, category: 'TRANSFERT' },
-  { pattern: /^TRANSFER_STEP_(.+)$/, label: (statut) => `Étape du transfert : ${humaniser(statut)}`, category: 'TRANSFERT' },
-  { pattern: /^RAMASSAGE_(.+)$/, label: (statut) => `Ramassage : ${humaniser(statut)}`, category: 'RAMASSAGE' },
-  { pattern: /^RUNSHEET_(.+)$/, label: (statut) => `Tournée : ${humaniser(statut)}`, category: 'TOURNEE' },
+  { pattern: /^TRANSFERT_(.+)$/, label: (statut) => `Transfert : ${libelleStatut(statut, TRANSFERT)}`, category: 'TRANSFERT' },
+  { pattern: /^TRANSFER_STEP_(.+)$/, label: (statut) => `Étape du transfert : ${libelleStatut(statut, TRANSFERT)}`, category: 'TRANSFERT' },
+  { pattern: /^RAMASSAGE_(.+)$/, label: (statut) => `Ramassage : ${libelleStatut(statut, RAMASSAGE)}`, category: 'RAMASSAGE' },
+  { pattern: /^RUNSHEET_(.+)$/, label: (statut) => `Tournée : ${libelleStatut(statut, TOURNEE)}`, category: 'TOURNEE' },
 ];
 
 /** Ce que l'interface a besoin d'afficher une ligne du journal. */
@@ -419,6 +421,69 @@ export function auditEntityLabel(entityType: string): string {
 function humaniser(statut: string): string {
   const mots = statut.toLowerCase().replace(/_/g, ' ').trim();
   return mots.charAt(0).toUpperCase() + mots.slice(1);
+}
+
+/*
+ * Libellés des états, avec leurs accents : « EFFECTUE » doit se lire
+ * « Effectué », pas « Effectue ». Un code absent retombe sur `humaniser`.
+ */
+const RAMASSAGE: Readonly<Record<string, string>> = {
+  A_CONFIRMER: 'À confirmer',
+  EN_ATTENTE: 'En attente',
+  ASSIGNE: 'Assigné',
+  EN_COURS: 'En cours',
+  EFFECTUE: 'Effectué',
+  ANNULE: 'Annulé',
+};
+const TOURNEE: Readonly<Record<string, string>> = {
+  BROUILLON: 'Brouillon',
+  EN_ATTENTE: 'En attente',
+  VALIDEE_DEPART: 'Validée au départ',
+  EN_COURS: 'En cours',
+  RETOUR_DEPOT: 'Retour au dépôt',
+  CLOTUREE_CONFORME: 'Clôturée conforme',
+  CLOTUREE_DEFICIT: 'Clôturée avec déficit',
+  ANNULEE: 'Annulée',
+};
+const TRANSFERT: Readonly<Record<string, string>> = {
+  CRE: 'En attente',
+  PREPARE: 'Préparé',
+  EN_TRANSIT: 'En transit',
+  RECU: 'Reçu',
+  RECU_PARTIEL: 'Reçu partiellement',
+  ANNULE: 'Annulé',
+};
+
+/** Rôles du schéma, tels qu'ils apparaissent dans les motifs (« rôle : EXPEDITEUR_USER »). */
+const ROLES: Readonly<Record<string, string>> = {
+  SUPER_ADMIN: 'Super administrateur',
+  ADMIN_GENERAL: 'Administrateur général',
+  DISPATCHER: 'Dispatcheur',
+  MAGASINIER: 'Magasinier',
+  CAISSIER: 'Caissier',
+  EXPEDITEUR_ADMIN: 'Expéditeur — administrateur',
+  EXPEDITEUR_USER: 'Expéditeur — utilisateur',
+};
+
+function libelleStatut(code: string, table: Readonly<Record<string, string>>): string {
+  return table[code] ?? humaniser(code);
+}
+
+/**
+ * Remplace, dans une phrase du journal (« Ramassage RDV-… : EN_COURS →
+ * EFFECTUE. »), les codes d'état par leur libellé. Les autres mots en
+ * majuscules (références, sigles) restent tels quels.
+ */
+export function rendreCodesLisibles(texte: string): string {
+  return texte.replace(/\b[A-Z][A-Z_]{2,}\b/g, (code) => {
+    return (
+      (PACKAGE_STATUS_LABELS as Readonly<Record<string, string>>)[code] ??
+      RAMASSAGE[code] ??
+      TOURNEE[code] ??
+      ROLES[code] ??
+      code
+    );
+  });
 }
 
 /**

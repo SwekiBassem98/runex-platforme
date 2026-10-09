@@ -144,7 +144,7 @@ export function InterDepotAcceptation({ type }: { type: InterDepotType }) {
                           <span className="block text-[10px] text-slate-400 font-sans">{i.transferNumber} · {i.sourceDeposit}</span>
                         </td>
                         <td className="py-1.5 text-center">{i.receivedPieces}/{i.pieceCount}</td>
-                        <td className="py-1.5">{i.pieceCount} pièce(s)</td>
+                        <td className="py-1.5">{i.pieceCount} {i.sizeCategory ? (TAILLE[i.sizeCategory] ?? i.sizeCategory) : 'pièce(s)'}</td>
                       </tr>
                     ))}
                   </tbody>

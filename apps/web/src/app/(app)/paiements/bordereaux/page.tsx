@@ -10,6 +10,14 @@ import { Card, PageHeader, Table, Tbody, Td, Th, Thead, Tr, Badge, formatTND } f
 import { paymentsApi } from '@/lib/api';
 import type { PaymentVoucherDto } from '@logixpress/types';
 
+/** État d'un bordereau : libellé lisible (et non le code de l'API) et couleur. */
+const ETAT_BORDEREAU: Record<string, { libelle: string; variante: 'warning' | 'primary' | 'success' | 'danger' }> = {
+  EN_ATTENTE: { libelle: 'En attente', variante: 'warning' },
+  CONFIRME: { libelle: 'Confirmé', variante: 'primary' },
+  PAYE: { libelle: 'Réglé', variante: 'success' },
+  ANNULE: { libelle: 'Annulé', variante: 'danger' },
+};
+
 export default function PaiementsPage() {
   const [vouchers, setVouchers] = useState<PaymentVoucherDto[]>([]);
   const [meta, setMeta] = useState<Record<string, unknown> | null>(null);
@@ -90,7 +98,9 @@ export default function PaiementsPage() {
                       {formatTND(v.netPayable)}
                     </Td>
                     <Td align="center">
-                      <Badge variant={v.status === 'PAYE' ? 'success' : 'primary'}>{v.status}</Badge>
+                      <Badge variant={ETAT_BORDEREAU[v.status]?.variante ?? 'primary'}>
+                        {ETAT_BORDEREAU[v.status]?.libelle ?? v.status}
+                      </Badge>
                     </Td>
                   </Tr>
                 ))
