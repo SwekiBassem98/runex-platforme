@@ -118,7 +118,7 @@ créent ensuite depuis le web (Administration). Relançable sans effet ;
 6. **Deploy**. Le build prend quelques minutes. Contrôles :
    - `https://<service>.koyeb.app/api/v1/health` → `"status":"ok"`, `database: up` (`redis: down`, non requis, est normal) ;
    - `https://<service>.koyeb.app/api/v1/docs` → 404 (documentation masquée en production) ;
-   - connecté en administrateur, `GET /api/v1/health/network` (avec le jeton) : `ip` doit être l'adresse publique de votre connexion. Si c'est une adresse interne de Koyeb, ajouter `TRUST_PROXY_HOPS=2`.
+   - `https://<service>/api/v1/health/ip` dans un navigateur : le `verdict` doit être « OK ». Sinon, il indique la valeur de `TRUST_PROXY_HOPS` à mettre (Render place plusieurs relais devant l'API).
 
 **Ne jamais définir en production** : `ENABLE_DEMO_ACCOUNTS`, `ENABLE_API_DOCS`,
 `SEED_ALLOW_PRODUCTION`, `RATE_LIMIT_DISABLED`, `PASSWORD_RESET_LOG_TOKEN`.
