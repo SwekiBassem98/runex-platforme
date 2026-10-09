@@ -1,0 +1,50 @@
+/** QA 32 — écrans de suppression définitive (administrateur, téléphone, gestionnaire). Web :3000, API :4000. */
+const S='/tmp/claude-0/-home-claude/35f819eb-4d88-570b-807e-fc35cd52813c/scratchpad';
+const puppeteer=(await import(S+'/e2e/node_modules/puppeteer-core/lib/esm/puppeteer/puppeteer-core.js')).default;
+const W='http://localhost:3000', B='http://127.0.0.1:4000/api/v1'; const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+let pass=0,fail=0; const ok=(c,l,d='')=>{ if(c){pass++;console.log('  ✔',l)} else {fail++;console.log('  ✘',l,d)} };
+const j=async(t,m,p,b)=>{const r=await fetch(B+p,{method:m,headers:{'Content-Type':'application/json',...(t?{Authorization:'Bearer '+t}:{})},body:b?JSON.stringify(b):undefined});let x=null;try{x=await r.json()}catch{};return {s:r.status,d:x?.data,m:x?.message}};
+const admin=(await j(null,'POST','/auth/login',{identifier:'admin@logixpress.tn',password:'Admin123!'})).d.accessToken;
+const sfx=Date.now().toString(36);
+const u=await j(admin,'POST','/users',{fullName:'Zz Supprimable '+sfx,email:`zz.${sfx}@runex.test`,phone:'26'+String(Date.now()).slice(-6),password:'Motdepasse-2026',role:'CAISSIER'});
+const b=await puppeteer.launch({executablePath:'/opt/pw-browsers/chromium-1194/chrome-linux/chrome',headless:'new',args:['--no-sandbox']});
+const errs=[];
+async function page(email,pw,w,h,mobile=false){const c=await b.createBrowserContext();const p=await c.newPage();await p.setViewport({width:w,height:h,isMobile:mobile,hasTouch:mobile});p.on('pageerror',e=>errs.push(e.message));
+ await p.goto(W+'/connexion',{waitUntil:'networkidle2'});await p.type('input[type=email]',email);await p.type('input[type=password]',pw);await Promise.all([p.waitForNavigation({waitUntil:'networkidle2'}).catch(()=>{}),p.click('button[type=submit]')]);return p;}
+const txt=p=>p.evaluate(()=>document.body.innerText);
+console.log('1. Administrateur, ordinateur : utilisateur sans historique');
+let p=await page('admin@logixpress.tn','Admin123!',1440,900);
+await p.goto(W+'/admin/utilisateurs?search='+encodeURIComponent('Zz Supprimable'),{waitUntil:'networkidle2'}); await sleep(1500);
+let btn=await p.$(`[aria-label="Supprimer définitivement Zz Supprimable ${sfx}"]`);
+if(!btn){ await p.type('input[type=search], input[placeholder*="echerch"]','Zz Supprimable '+sfx); await sleep(1500); btn=await p.$(`[aria-label="Supprimer définitivement Zz Supprimable ${sfx}"]`);}
+ok(!!btn,'bouton corbeille visible pour l’administrateur');
+await btn.click(); await p.waitForSelector('[data-testid=saisie-confirmation]',{timeout:8000});
+let t=await txt(p);
+ok(/Supprimer définitivement « Zz Supprimable/.test(t)&&/Action irréversible/.test(t)&&/ne pourra pas être restauré/.test(t),'avertissement clair');
+ok(await p.$eval('[data-testid=confirmer-suppression]',e=>e.disabled),'bouton désactivé tant que « SUPPRIMER » n’est pas saisi');
+await p.type('[data-testid=saisie-confirmation]','supprim'); ok(await p.$eval('[data-testid=confirmer-suppression]',e=>e.disabled),'saisie incomplète : toujours désactivé');
+await p.type('[data-testid=saisie-confirmation]','er');
+await p.screenshot({path:S+'/del-user.png'});
+await p.click('[data-testid=confirmer-suppression]'); await sleep(2000);
+t=await txt(p); ok(/supprimé définitivement/.test(t),'message de succès'); ok(!(await p.$(`[aria-label="Supprimer définitivement Zz Supprimable ${sfx}"]`)),'disparu de la liste');
+ok((await j(admin,'GET','/users/'+u.d.id)).s===404,'supprimé côté API');
+console.log('2. Expéditeur avec historique');
+await p.goto(W+'/admin/expediteurs',{waitUntil:'networkidle2'}); await sleep(1500);
+const bs=await p.$$('[data-testid=supprimer-compte]'); let target=null;
+for(const x of bs){ if(/BlueStar/.test(await x.evaluate(e=>e.getAttribute('aria-label')))) {target=x;break;} }
+await target.click(); await p.waitForSelector('[data-testid=suppression-impossible]',{timeout:8000});
+t=await txt(p); ok(/Suppression impossible/.test(t)&&/colis/.test(t)&&/Désactiver plutôt/.test(t),'raisons + « Désactiver plutôt »');
+ok(!(await p.$('[data-testid=confirmer-suppression]')),'aucun bouton de suppression');
+await p.screenshot({path:S+'/del-shipper-blocked.png'});
+console.log('3. Téléphone : fiches');
+let m=await page('admin@logixpress.tn','Admin123!',390,844,true);
+await m.goto(W+'/admin/livreurs',{waitUntil:'networkidle2'}); await sleep(1500);
+const fb=await m.$$('[data-testid=supprimer-compte]'); ok(fb.length>0,'bouton « Supprimer » sur les fiches');
+await fb[0].click(); await m.waitForSelector('[data-testid=suppression-fenetre]'); await sleep(1500);
+const r=await m.$eval('[role=dialog]',e=>{const b=e.getBoundingClientRect();return b.left>=0&&b.right<=innerWidth;}); ok(r,'fenêtre dans l’écran');
+await m.screenshot({path:S+'/del-mobile.png'});
+console.log('4. Gestionnaire');
+let g=await page('gestionnaire@logixpress.tn','Gest123!',1440,900);
+await g.goto(W+'/admin/livreurs',{waitUntil:'networkidle2'}); await sleep(1500);
+ok((await g.$$('[data-testid=supprimer-compte]')).length===0,'pas de bouton de suppression pour un non-administrateur', g.url());
+console.log('Erreurs JS',errs); console.log(`${pass} réussis, ${fail} échoués`); await b.close();

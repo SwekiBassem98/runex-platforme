@@ -304,7 +304,6 @@ model User {
   sessions          Session[]
   shipperUser       ShipperUser?
   driverProfile     Driver?
-  auditLogs         AuditLog[]           @relation("UserAuditLogs")
   validatedPayments Payment[]            @relation("PaymentValidators")
   notifications     Notification[]
   pushDevices       PushDevice[]
@@ -1307,7 +1306,10 @@ model AuditLog {
   userAgent      String?  @db.VarChar(255)
   timestamp      DateTime @default(now()) @db.Timestamptz(6)
 
-  user User? @relation("UserAuditLogs", fields: [userId], references: [id], onDelete: SetNull)
+  // Pas de clé étrangère vers User : le journal est immuable (déclencheur
+  // audit_log_immutable), une suppression de compte ne doit ni le modifier
+  // (ON DELETE SET NULL serait un UPDATE refusé) ni être bloquée par lui. Le
+  // nom d'un compte supprimé reste lisible grâce à l'entrée *_SUPPRIME.
 
   @@index([entityType, entityId])
   @@index([action])

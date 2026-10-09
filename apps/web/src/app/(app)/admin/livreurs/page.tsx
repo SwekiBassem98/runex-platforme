@@ -16,6 +16,7 @@
  * au lieu d'afficher une ligne vide qui laisserait croire à une donnée manquante.
  */
 
+import { BoutonSupprimer, SuppressionDefinitive, usePeutSupprimer } from '@/components/admin/SuppressionDefinitive';
 import { useFeedbackOn } from '@/lib/useFeedbackOn';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Pencil, Plus, RotateCcw, ShieldCheck } from 'lucide-react';
@@ -125,6 +126,8 @@ export default function AdminLivreursPage() {
   const [erreur, setErreur] = useState<string | null>(null);
   const [enFiches, setEnFiches] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const peutSupprimer = usePeutSupprimer();
+  const [aSupprimer, setASupprimer] = useState<DriverDto | null>(null);
 
   const [formulaireOuvert, setFormulaireOuvert] = useState(false);
   const [enEdition, setEnEdition] = useState<DriverDto | null>(null);
@@ -482,13 +485,16 @@ export default function AdminLivreursPage() {
                   },
                 ]}
                 action={
-                  <button
-                    type="button"
-                    onClick={() => void basculerStatut(d)}
-                    className="px-2.5 py-1.5 text-xs font-medium border border-slate-200 rounded-md hover:bg-slate-50 cursor-pointer"
-                  >
-                    {d.isActive ? 'Désactiver' : 'Activer'}
-                  </button>
+                  <div className="flex gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => void basculerStatut(d)}
+                      className="px-2.5 py-1.5 text-xs font-medium border border-slate-200 rounded-md hover:bg-slate-50 cursor-pointer"
+                    >
+                      {d.isActive ? 'Désactiver' : 'Activer'}
+                    </button>
+                    {peutSupprimer && <BoutonSupprimer nom={d.driverCode} onClick={() => setASupprimer(d)} compact={false} />}
+                  </div>
                 }
               />
             ))}
@@ -579,6 +585,7 @@ export default function AdminLivreursPage() {
                       >
                         {d.isActive ? 'Désactiver' : 'Activer'}
                       </button>
+                      {peutSupprimer && <BoutonSupprimer nom={d.driverCode} onClick={() => setASupprimer(d)} />}
                     </div>
                   </Td>
                 </Tr>
@@ -828,6 +835,27 @@ export default function AdminLivreursPage() {
           />
         </FormField>
       </Modal>
+      {aSupprimer && (
+        <SuppressionDefinitive
+          ressource="drivers"
+          id={aSupprimer.id}
+          onClose={() => setASupprimer(null)}
+          onSupprime={(texte) => {
+            setASupprimer(null);
+            setMessage(texte);
+            void charger();
+          }}
+          onDesactiver={
+            aSupprimer.isActive
+              ? () => {
+                  const cible = aSupprimer;
+                  setASupprimer(null);
+                  void basculerStatut(cible);
+                }
+              : undefined
+          }
+        />
+      )}
     </div>
   );
 }

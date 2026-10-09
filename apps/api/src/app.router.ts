@@ -24,6 +24,7 @@ import {
   usersController,
   shippersController,
   driversController,
+  accountDeletionController,
 } from './modules/admin/admin.controller';
 import { openApiSpecification } from './common/swagger/swagger.config';
 import { asyncHandler } from './common/http/async-handler';
@@ -1032,6 +1033,29 @@ export function createApiRouter(): Router {
     requirePermissions(PermissionCode.USER_READ),
     asyncHandler((req, res) => usersController.referentiels(req, res))
   );
+
+  // Suppression définitive des comptes : administrateurs seulement (rôle ET
+  // permission). L'aperçu dit ce qui serait effacé, ou ce qui l'empêche.
+  for (const [chemin, apercu, supprimer, lecture, ecriture] of [
+    ['/users', 'apercuUtilisateur', 'supprimerUtilisateur', PermissionCode.USER_READ, PermissionCode.USER_UPDATE],
+    ['/drivers', 'apercuLivreur', 'supprimerLivreur', PermissionCode.LIVREUR_READ, PermissionCode.LIVREUR_UPDATE],
+    ['/shippers', 'apercuExpediteur', 'supprimerExpediteur', PermissionCode.EXPEDITEUR_READ, PermissionCode.EXPEDITEUR_UPDATE],
+  ] as const) {
+    router.get(
+      `${chemin}/:id/suppression`,
+      authenticateToken,
+      requireRoles(RoleType.ADMIN),
+      requirePermissions(lecture),
+      asyncHandler((req, res) => accountDeletionController[apercu](req, res))
+    );
+    router.delete(
+      `${chemin}/:id`,
+      authenticateToken,
+      requireRoles(RoleType.ADMIN),
+      requirePermissions(ecriture),
+      asyncHandler((req, res) => accountDeletionController[supprimer](req, res))
+    );
+  }
 
   router.get(
     '/users',

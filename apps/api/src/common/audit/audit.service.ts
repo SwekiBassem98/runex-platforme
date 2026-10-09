@@ -130,12 +130,17 @@ export class AuditWriteError extends Error {
   }
 }
 
-/** Ligne brute, enrichie du nom et du rôle de l'utilisateur. */
-type RawEntry = Prisma.AuditLogGetPayload<{
-  include: {
-    user: { select: { fullName: true; userRoles: { select: { role: { select: { name: true } } } } } };
-  };
-}>;
+/** Ligne brute du journal. */
+type RawEntry = Prisma.AuditLogGetPayload<object>;
+
+/** Auteur d'une ligne : compte existant, ou compte supprimé depuis. */
+interface Auteur {
+  fullName: string;
+  role: string | null;
+}
+
+/** Actions qui suppriment un compte : leur `previousValues` garde son nom. */
+const ACTIONS_SUPPRESSION = ['USER_SUPPRIME', 'DRIVER_SUPPRIME', 'SHIPPER_SUPPRIME'];
 
 export class AuditService {
   /**
@@ -225,9 +230,6 @@ export class AuditService {
     const [lignes, total] = await prisma.$transaction([
       prisma.auditLog.findMany({
         where,
-        include: {
-          user: { select: { fullName: true, userRoles: { select: { role: { select: { name: true } } } } } },
-        },
         orderBy: [{ timestamp: 'desc' }, { id: 'desc' }],
         take: limit,
         skip: offset,
@@ -235,8 +237,9 @@ export class AuditService {
       prisma.auditLog.count({ where }),
     ]);
 
+    const auteurs = await this.auteurs(lignes.map((l) => l.userId));
     return {
-      entries: lignes.map((ligne) => this.versEntree(ligne)),
+      entries: lignes.map((ligne) => this.versEntree(ligne, auteurs)),
       total,
       limit,
       offset,
@@ -377,7 +380,43 @@ export class AuditService {
   }
 
   /** Enveloppe une ligne brute pour l'interface. */
-  private versEntree(ligne: RawEntry): AuditEntry {
+  /**
+   * Noms des auteurs. Le journal n'a pas de clé étrangère vers `User` (un
+   * compte supprimé ne doit pas toucher à l'historique) : les comptes existants
+   * sont lus en une requête, et ceux supprimés depuis retrouvent leur nom dans
+   * l'entrée de suppression (`previousValues.fullName`).
+   */
+  private async auteurs(ids: Array<string | null>): Promise<Map<string, Auteur>> {
+    const uniques = [...new Set(ids.filter((id): id is string => Boolean(id)))];
+    const resultat = new Map<string, Auteur>();
+    if (uniques.length === 0) return resultat;
+    const prisma = getPrisma();
+    const comptes = await prisma.user.findMany({
+      where: { id: { in: uniques } },
+      select: { id: true, fullName: true, userRoles: { select: { role: { select: { name: true } } }, take: 1 } },
+    });
+    for (const c of comptes) resultat.set(c.id, { fullName: c.fullName, role: c.userRoles[0]?.role.name ?? null });
+    const manquants = uniques.filter((id) => !resultat.has(id));
+    if (manquants.length > 0) {
+      const suppressions = await prisma.auditLog.findMany({
+        where: { action: { in: ACTIONS_SUPPRESSION }, entityType: 'USER', entityId: { in: manquants } },
+        select: { entityId: true, previousValues: true },
+      });
+      for (const s of suppressions) {
+        const avant = (s.previousValues ?? {}) as { fullName?: unknown; role?: unknown };
+        if (typeof avant.fullName === 'string') {
+          resultat.set(s.entityId, {
+            fullName: `${avant.fullName} (compte supprimé)`,
+            role: typeof avant.role === 'string' ? avant.role : null,
+          });
+        }
+      }
+    }
+    return resultat;
+  }
+
+  private versEntree(ligne: RawEntry, auteurs: Map<string, Auteur>): AuditEntry {
+    const auteur = ligne.userId ? auteurs.get(ligne.userId) : undefined;
     const action = describeAuditAction(ligne.action);
     // Le motif est obligatoire quand le catalogue le dit.
     const exigeMotif = AUDIT_ACTIONS[ligne.action]?.requiresReason;
@@ -398,8 +437,8 @@ export class AuditService {
       previousValues: ligne.previousValues ?? null,
       newValues: ligne.newValues ?? null,
       userId: ligne.userId,
-      userName: ligne.user?.fullName ?? null,
-      userRole: ligne.user?.userRoles[0]?.role.name ?? null,
+      userName: auteur?.fullName ?? (ligne.userId ? 'Compte supprimé' : null),
+      userRole: auteur?.role ?? null,
       userIp: ligne.userIp,
       userAgent: ligne.userAgent,
       timestamp: ligne.timestamp.toISOString(),
