@@ -115,6 +115,28 @@ export function createApiRouter(): Router {
   router.get('/health/live', (_req, res) => {
     res.set('Cache-Control', 'no-store').json({ status: 'ok' });
   });
+  // Réglage du nombre de relais, vérifiable depuis un simple navigateur.
+  // Chaque relais de l'hébergeur ajoute une adresse à X-Forwarded-For ; un
+  // navigateur n'en envoie aucune. Le nombre d'adresses reçues est donc le
+  // nombre de relais à approuver. Ne renvoie que l'adresse de l'appelant et
+  // ce compte (jamais la chaîne, qui contient des adresses internes).
+  router.get('/health/ip', (req, res) => {
+    const header = req.headers['x-forwarded-for'];
+    const raw = Array.isArray(header) ? header.join(',') : header ?? '';
+    const received = raw.split(',').map((x) => x.trim()).filter(Boolean).length;
+    const trusted = Number(req.app.get('trust proxy') || 0);
+    const ip = req.ip ?? '';
+    const privee = /^(::ffff:)?(10\.|127\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.)|^::1$|^f[cd]/i.test(ip);
+    res.set('Cache-Control', 'no-store').json({
+      votreAdresse: ip,
+      relaisRecus: received,
+      relaisApprouves: trusted,
+      verdict:
+        received === trusted && !privee
+          ? 'OK : réglage correct.'
+          : `À corriger : mettre TRUST_PROXY_HOPS=${received} dans les variables de l'API puis redéployer.`,
+    });
+  });
   // Diagnostic de déploiement (administrateur) : l'adresse vue par l'API,
   // pour vérifier le réglage TRUST_PROXY_HOPS derrière l'hébergeur.
   router.get(
