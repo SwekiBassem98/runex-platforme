@@ -159,3 +159,31 @@ export async function listerBordereaux(): Promise<PaymentVoucherDto[]> {
 
 export type { NotificationDto };
 export { notificationsApi };
+/** Indicateurs du tableau de bord (`GET /shipper/dashboard`), calculés en base. */
+export interface TableauDeBordExpediteur {
+  generatedAt: string;
+  periodDays: number;
+  totals: { all: number; active: number; delivered: number; returned: number; cancelled: number };
+  byStatus: Record<string, number>;
+  pipeline: Record<'preparation' | 'collecte' | 'depot' | 'livraison' | 'livre' | 'retour', number>;
+  period: {
+    created: number;
+    delivered: number;
+    failed: number;
+    successRate: number | null;
+    avgDeliveryHours: number | null;
+    collected: number;
+    fees: number;
+  };
+  previous: { created: number; delivered: number };
+  today: { created: number; delivered: number; outForDelivery: number };
+  daily: { date: string; created: number; delivered: number }[];
+  zones: { zoneId: string | null; name: string; governorate: string; total: number; delivered: number; active: number }[];
+  governorates: { governorate: string; total: number }[];
+  money: { codInProgress: number; codInProgressCount: number };
+  nextPickup: { id: string; scheduledDate: string; startHour: number; endHour: number; status: string } | null;
+}
+
+export async function lireTableauDeBord(jours: number): Promise<TableauDeBordExpediteur> {
+  return requestData<TableauDeBordExpediteur>('/shipper/dashboard', { query: { days: jours } });
+}

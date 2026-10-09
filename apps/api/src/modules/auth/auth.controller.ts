@@ -99,6 +99,24 @@ export class AuthController {
     res.json(result);
   }
 
+  /** `POST /auth/change-password` — `{ currentPassword, newPassword }`. */
+  async changePassword(req: AuthenticatedRequest, res: Response): Promise<void> {
+    if (!req.user) {
+      res.status(401).json({ success: false, message: 'Non authentifié' });
+      return;
+    }
+    const { currentPassword, newPassword } = req.body ?? {};
+    if (!isNonEmptyString(currentPassword) || !isNonEmptyString(newPassword)) {
+      res.status(400).json({ success: false, message: 'Mot de passe actuel et nouveau mot de passe requis.' });
+      return;
+    }
+    try {
+      res.json(await authService.changePassword(req.user.id, req.user.sessionId, currentPassword, newPassword));
+    } catch (err: unknown) {
+      respondError(res, err, 'Changement de mot de passe impossible.');
+    }
+  }
+
   async confirmPasswordReset(req: Request, res: Response): Promise<void> {
     const { token, newPassword } = req.body ?? {};
     if (!isNonEmptyString(token) || !isNonEmptyString(newPassword)) {

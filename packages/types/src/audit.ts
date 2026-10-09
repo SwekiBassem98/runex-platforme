@@ -42,6 +42,7 @@ export const AUDIT_ENTITY_TYPES = {
   USER: 'Utilisateur',
   CUSTOMER: 'Client',
   REPORT: 'Rapport',
+  ZONE: 'Zone de livraison',
 } as const;
 
 export type AuditEntityType = keyof typeof AUDIT_ENTITY_TYPES;
@@ -303,6 +304,11 @@ export const AUDIT_ACTIONS: Readonly<Record<string, AuditActionDefinition>> = {
     category: 'PARAMETRAGE',
     critical: true,
   },
+
+  // --- Zones -----------------------------------------------------------
+  ZONE_CREEE: { label: 'Zone de livraison créée', category: 'PARAMETRAGE' },
+  ZONE_MODIFIEE: { label: 'Zone de livraison modifiée', category: 'PARAMETRAGE' },
+  DRIVER_ZONES_MODIFIEES: { label: 'Zones du livreur modifiées', category: 'PARAMETRAGE' },
 
   // --- Génériques -------------------------------------------------------
   UPDATE: { label: 'Modification', category: 'PARAMETRAGE' },

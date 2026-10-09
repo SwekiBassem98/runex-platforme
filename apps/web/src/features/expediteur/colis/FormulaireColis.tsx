@@ -38,6 +38,7 @@ import {
 import { useAuth } from '@/lib/auth';
 import { creerColis } from '@/features/expediteur/lib/client';
 import { GOUVERNORATS, useVocabulaire } from '@/features/expediteur/lib/libelles';
+import { estZoneConnue, useDelegationsConnues } from '@/features/zones/useDelegationsConnues';
 import { useI18n } from '@/i18n';
 
 interface EtatFormulaire {
@@ -80,6 +81,7 @@ export function FormulaireColis() {
   const { addToast } = useToast();
 
   const [form, setForm] = React.useState<EtatFormulaire>(VIDE);
+  const delegationsConnues = useDelegationsConnues(form.governorate);
   const [envoi, setEnvoi] = React.useState(false);
   const [erreur, setErreur] = React.useState<string | null>(null);
 
@@ -219,12 +221,25 @@ export function FormulaireColis() {
             <FormField
               label={t('colis.formulaire.delegation')}
               helpText={t('colis.formulaire.delegationAide')}
+              required
             >
               <Input
+                required
+                list="delegations-connues"
                 value={form.delegation}
                 onChange={(e) => modifier('delegation', e.target.value)}
                 placeholder="El Menzah"
               />
+              <datalist id="delegations-connues">
+                {delegationsConnues.map((d) => (
+                  <option key={d} value={d} />
+                ))}
+              </datalist>
+              {form.delegation.trim() !== '' && !estZoneConnue(delegationsConnues, form.delegation) && (
+                <p className="mt-1 text-[11px] text-sky-700" data-testid="nouvelle-zone">
+                  {t('colis.formulaire.nouvelleZone', { nom: form.delegation.trim() })}
+                </p>
+              )}
             </FormField>
           </div>
 

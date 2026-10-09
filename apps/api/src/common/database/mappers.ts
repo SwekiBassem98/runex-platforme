@@ -20,7 +20,7 @@ import { PackageStatus as SharedStatus } from '@logixpress/types';
  */
 export const PACKAGE_INCLUDE = {
   customer: true,
-  customerAddress: true,
+  customerAddress: { include: { zone: { select: { id: true, name: true } } } },
   shipper: true,
   assignedDriver: { include: { user: true } },
   currentDeposit: true,
@@ -107,6 +107,8 @@ export function toPackageDto(record: PackageWithRelations): PackageDto {
     customerPhone: record.customer.primaryPhone,
     governorate: address.governorate,
     delegation: address.delegation,
+    zoneId: address.zone?.id ?? undefined,
+    zoneName: address.zone?.name ?? undefined,
     address: address.streetAddress,
     packageType: record.packageType as unknown as PackageDto['packageType'],
     status: record.status as unknown as PackageDto['status'],

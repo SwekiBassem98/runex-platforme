@@ -15,6 +15,7 @@ import { inventoryExceptionsController } from './modules/inventory/inventory-exc
 import { devicesController } from './modules/devices/devices.controller';
 import { presenceController } from './modules/presence/presence.controller';
 import { getOwnDriverProfile } from './modules/admin/driver-self.controller';
+import { zonesController } from './modules/zones/zones.controller';
 import { searchController } from './modules/search/search.controller';
 import { auditController } from './modules/audit/audit.controller';
 import { reportsController } from './modules/reports/reports.controller';
@@ -31,6 +32,7 @@ import {
   loginIpLimiter,
   refreshLimiter,
   passwordResetLimiter,
+  changePasswordLimiter,
   voucherSecretLimiter,
 } from './common/http/rate-limit';
 import {
@@ -230,6 +232,12 @@ export function createApiRouter(): Router {
   // Profil et session courante
   router.get('/auth/me', authenticateToken, asyncHandler((req, res) => authController.getMe(req, res)));
   router.post('/auth/logout', authenticateToken, asyncHandler((req, res) => authController.logout(req, res)));
+  router.post(
+    '/auth/change-password',
+    authenticateToken,
+    changePasswordLimiter,
+    asyncHandler((req, res) => authController.changePassword(req, res))
+  );
 
   // Colis (Filtrage automatique par DataScope selon le périmètre du jeton)
   router.get(
@@ -985,6 +993,14 @@ export function createApiRouter(): Router {
   // des requêtes cloisonnées sur son entreprise. La porte est ici, et non dans
   // le service : un garde de rôle se lit sur la route, une rectification
   // silencieuse des chiffres ne se lirait nulle part.
+  // Tableau de bord de l'expéditeur : ses colis seulement (shipperId du jeton).
+  router.get(
+    '/shipper/dashboard',
+    authenticateToken,
+    requireRoles(RoleType.EXPEDITEUR),
+    asyncHandler((req, res) => dashboardController.getShipperDashboard(req, res))
+  );
+
   router.get(
     '/dashboard',
     authenticateToken,
@@ -1114,6 +1130,50 @@ export function createApiRouter(): Router {
     authenticateToken,
     requirePermissions(PermissionCode.LIVREUR_READ),
     asyncHandler((req, res) => presenceController.getOne(req, res))
+  );
+
+  // --- Zones de livraison -------------------------------------------------
+  router.get(
+    '/zones/suggestions',
+    authenticateToken,
+    asyncHandler((req, res) => zonesController.suggestions(req, res))
+  );
+  router.get('/zones', authenticateToken, asyncHandler((req, res) => zonesController.list(req, res)));
+  router.patch(
+    '/zones/:id',
+    authenticateToken,
+    requireRoles(RoleType.ADMIN, RoleType.GESTIONNAIRE),
+    asyncHandler((req, res) => zonesController.update(req, res))
+  );
+  router.get(
+    '/drivers/me/zones',
+    authenticateToken,
+    requireRoles(RoleType.LIVREUR),
+    asyncHandler((req, res) => zonesController.driverZones(req, res))
+  );
+  router.put(
+    '/drivers/me/zones',
+    authenticateToken,
+    requireRoles(RoleType.LIVREUR),
+    asyncHandler((req, res) => zonesController.setDriverZones(req, res))
+  );
+  router.get(
+    '/drivers/:id/zones',
+    authenticateToken,
+    requirePermissions(PermissionCode.LIVREUR_READ),
+    asyncHandler((req, res) => zonesController.driverZones(req, res))
+  );
+  router.put(
+    '/drivers/:id/zones',
+    authenticateToken,
+    requirePermissions(PermissionCode.LIVREUR_UPDATE),
+    asyncHandler((req, res) => zonesController.setDriverZones(req, res))
+  );
+  router.get(
+    ['/colis/:id/driver-suggestions', '/packages/:id/driver-suggestions'],
+    authenticateToken,
+    requirePermissions(PermissionCode.COLIS_ASSIGN),
+    asyncHandler((req, res) => zonesController.driverSuggestions(req, res))
   );
 
   // Fiche du livreur connecté (application mobile) : déclarée avant `/:id`.

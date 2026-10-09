@@ -218,6 +218,16 @@ function Ecran() {
               </div>
             </label>
 
+            <div className="flex justify-end -mt-1">
+              <Link
+                href={`/mot-de-passe-oublie?espace=expediteur${email.trim() ? `&email=${encodeURIComponent(email.trim())}` : ''}`}
+                className="text-xs font-medium text-slate-500 hover:text-slate-900 underline-offset-2 hover:underline"
+                data-testid="lien-mdp-oublie"
+              >
+                {t('mdp.oublie')}
+              </Link>
+            </div>
+
             <button
               type="submit"
               disabled={isSubmitting}

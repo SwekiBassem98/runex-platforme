@@ -312,7 +312,7 @@ export function passwordFingerprint(passwordHash: string): string {
   return crypto.createHash('sha256').update(passwordHash).digest('hex').slice(0, 24);
 }
 
-const RESET_TTL_SECONDS = 15 * 60;
+export const RESET_TTL_SECONDS = 15 * 60;
 const RESET_SECRET_SUFFIX = ':pwd-reset';
 
 /**

@@ -525,11 +525,32 @@ model DeliveryZone {
   isActive        Boolean  @default(true)
   createdAt       DateTime @default(now()) @db.Timestamptz(6)
 
+  /// Vrai si la zone a été créée automatiquement à la saisie d'un colis
+  /// (adresse jamais vue). L'exploitation peut ensuite la renommer, changer
+  /// son agence ou la désactiver.
+  autoCreated     Boolean  @default(false)
+  updatedAt       DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
   deposit   Deposit           @relation(fields: [depositId], references: [id], onDelete: Restrict)
   addresses CustomerAddress[]
+  drivers   DriverZone[]
 
   @@index([depositId])
   @@index([governorate, delegation])
+}
+
+/// Zones couvertes par un livreur : sert aux suggestions d'affectation et à
+/// l'écran « Mes zones » de l'application livreur.
+model DriverZone {
+  driverId  String   @db.Uuid
+  zoneId    String   @db.Uuid
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  driver Driver       @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  zone   DeliveryZone @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+
+  @@id([driverId, zoneId])
+  @@index([zoneId])
 }
 
 // ==============================================================================
@@ -687,6 +708,7 @@ model Driver {
   returnRecords    ReturnRecord[]
   payments         Payment[]
   exchangeRecords  ExchangeRecord[]
+  zones            DriverZone[]
 
   @@index([driverCode])
 }

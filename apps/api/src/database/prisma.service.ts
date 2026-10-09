@@ -13,12 +13,54 @@ const PRISMA_GLOBAL_KEY = Symbol.for('logixpress.prisma.client');
 
 type PrismaGlobalStore = { [PRISMA_GLOBAL_KEY]?: PrismaClient };
 
+/**
+ * Adresse de la base, complétée pour une base serverless.
+ *
+ * Neon met le calcul en veille après 5 minutes d'inactivité et ferme alors
+ * les connexions ouvertes. Prisma gardait les siennes inactives jusqu'à
+ * 300 s (`max_idle_connection_lifetime` par défaut) : la base les coupait
+ * d'abord, et chaque veille écrivait une rafale de
+ * « Error in PostgreSQL connection: Error { kind: Closed } » dans les journaux
+ * (sans gravité : Prisma rouvre une connexion à la requête suivante). En les
+ * fermant lui-même après 60 s, Prisma ne laisse plus rien à couper.
+ * Un paramètre déjà présent dans DATABASE_URL est respecté.
+ */
+export function withServerlessDefaults(url: string | undefined): string | undefined {
+  if (!url || !/^postgres(ql)?:\/\//.test(url)) return url;
+  if (/[?&]max_idle_connection_lifetime=/.test(url)) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}max_idle_connection_lifetime=60`;
+}
+
+/** Fermeture d'une connexion inactive par le serveur : prévue, pas une panne. */
+function isIdleClose(message: string): boolean {
+  return /Error in PostgreSQL connection/i.test(message) && /kind:\s*Closed/i.test(message);
+}
+
 function createClient(): PrismaClient {
-  return new PrismaClient({
+  const url = withServerlessDefaults(process.env.DATABASE_URL);
+  const client = new PrismaClient({
+    ...(url ? { datasources: { db: { url } } } : {}),
     // Le log `query` est très bruyant : activé uniquement sur demande via
     // PRISMA_LOG_QUERIES=true pour.debuguer une requête précise.
-    log: process.env.PRISMA_LOG_QUERIES === 'true' ? ['query', 'warn', 'error'] : ['warn', 'error'],
+    log: [
+      ...(process.env.PRISMA_LOG_QUERIES === 'true' ? [{ emit: 'stdout' as const, level: 'query' as const }] : []),
+      { emit: 'stdout' as const, level: 'warn' as const },
+      { emit: 'event' as const, level: 'error' as const },
+    ],
   });
+  let lastIdleNotice = 0;
+  client.$on('error', (event: { message: string }) => {
+    if (isIdleClose(event.message)) {
+      // Une ligne d'information au plus par minute, au lieu d'une erreur par connexion.
+      if (Date.now() - lastIdleNotice > 60_000) {
+        lastIdleNotice = Date.now();
+        console.info('[Prisma] Connexion inactive fermée par la base (veille) — reconnexion automatique.');
+      }
+      return;
+    }
+    console.error(`prisma:error ${event.message || JSON.stringify(event)}`);
+  });
+  return client;
 }
 
 /**

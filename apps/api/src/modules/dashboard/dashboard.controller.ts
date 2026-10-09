@@ -2,6 +2,8 @@ import { dashboardService } from './dashboard.service';
 import type { Response } from 'express';
 import type { AuthenticatedRequest } from '../../common/auth/auth.middleware';
 import { RoleType } from '@logixpress/types';
+import { getShipperDashboard } from './shipper-dashboard.service';
+import { respondError } from '../../common/errors/respond-error';
 
 export class DashboardController {
   async getMetrics(req: AuthenticatedRequest, res: Response): Promise<void> {
@@ -22,6 +24,21 @@ export class DashboardController {
       success: true,
       data,
     });
+  }
+
+  /** `GET /shipper/dashboard?days=7|14|30|90` — indicateurs de l'expéditeur connecté. */
+  async getShipperDashboard(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const shipperId = req.dataScope?.shipperId;
+    if (req.user?.role !== RoleType.EXPEDITEUR || !shipperId) {
+      res.status(403).json({ success: false, message: 'Réservé aux expéditeurs.' });
+      return;
+    }
+    try {
+      const days = Number.parseInt(String(req.query.days ?? '14'), 10);
+      res.json({ success: true, data: await getShipperDashboard(shipperId, days) });
+    } catch (error) {
+      respondError(res, error, 'Tableau de bord indisponible.');
+    }
   }
 }
 

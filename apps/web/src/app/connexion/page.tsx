@@ -192,6 +192,16 @@ export default function LoginPage() {
             </div>
           </label>
 
+          <div className="flex justify-end -mt-1">
+            <Link
+              href={`/mot-de-passe-oublie?espace=equipe${email.trim() ? `&email=${encodeURIComponent(email.trim())}` : ''}`}
+              className="text-xs font-medium text-slate-400 hover:text-white underline-offset-2 hover:underline"
+              data-testid="lien-mdp-oublie"
+            >
+              Mot de passe oublié ?
+            </Link>
+          </div>
+
           <button
             type="submit"
             disabled={isSubmitting}
