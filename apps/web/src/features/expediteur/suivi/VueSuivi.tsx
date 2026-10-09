@@ -32,7 +32,7 @@ import { useVocabulaire } from '@/features/expediteur/lib/libelles';
 import { useI18n } from '@/i18n';
 
 export function VueSuivi() {
-  const { t, formatDateTime, formatTND } = useI18n();
+  const { t, formatDateTime, formatTND, traduireServeur } = useI18n();
   const voc = useVocabulaire();
   const params = useSearchParams();
   const initial = params.get('q') ?? '';
@@ -204,7 +204,7 @@ export function VueSuivi() {
                     {evenements.slice(0, 3).map((evenement, index) => (
                       <li key={`${evenement.timestamp}-${index}`} className="flex items-baseline gap-2 text-xs">
                         <span className="font-medium text-slate-800 shrink-0">
-                          {evenement.label ?? voc.statutColis(evenement.status).label}
+                          {evenement.label ? traduireServeur(evenement.label) : voc.statutColis(evenement.status).label}
                         </span>
                         <span className="text-slate-400">·</span>
                         <span className="text-slate-500 font-mono text-[11px]">

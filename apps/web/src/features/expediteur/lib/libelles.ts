@@ -191,9 +191,9 @@ export interface HabillageStatut {
  * quel par `titreNotification` : c'est exactement le comportement actuel, et une
  * phrase française vaut mieux qu'un trou dans la liste.
  *
- * Le corps de la notification (`content`) n'est volontairement pas traduit : il
- * assemble numéros de suivi, noms et montants côté serveur. Le reformuler ici
- * reviendrait à réécrire des données.
+ * Le corps de la notification (`content`) est traduit à l'affichage par
+ * `traduireServeur` (i18n/textes-serveur.ts), qui garde numéros, noms et
+ * montants tels quels.
  */
 type CleTitreNotification = Extract<Cle, `notif.titre.${string}`>;
 

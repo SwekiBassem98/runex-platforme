@@ -63,7 +63,7 @@ import { useI18n } from '@/i18n';
 type Compteurs = Record<string, number | null>;
 
 export function VueTableauDeBord() {
-  const { t, formatDelai, formatTND } = useI18n();
+  const { t, formatDelai, formatTND, traduireServeur } = useI18n();
   const voc = useVocabulaire();
   const { user } = useAuth();
 
@@ -406,8 +406,8 @@ export function VueTableauDeBord() {
                     aria-hidden="true"
                   />
                   <div className="min-w-0 flex-1">
-                    <p className="text-xs font-semibold text-slate-900 leading-snug">{n.title}</p>
-                    <p className="text-[11px] text-slate-500 leading-snug line-clamp-2">{n.content}</p>
+                    <p className="text-xs font-semibold text-slate-900 leading-snug">{traduireServeur(n.title)}</p>
+                    <p className="text-[11px] text-slate-500 leading-snug line-clamp-2">{traduireServeur(n.content)}</p>
                     <p className="text-[10px] text-slate-400 mt-0.5">{formatDelai(n.createdAt)}</p>
                   </div>
                 </li>

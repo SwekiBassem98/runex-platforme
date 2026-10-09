@@ -87,7 +87,7 @@ interface EntreeAudit {
 export function VueColisDetail({ identifiant }: { identifiant: string }) {
   const router = useRouter();
   const { addToast } = useToast();
-  const { t, formatDate, formatDateTime, formatTND, traduireValeur } = useI18n();
+  const { t, formatDate, formatDateTime, formatTND, traduireValeur, traduireServeur, libelleAudit } = useI18n();
   const voc = useVocabulaire();
 
   const [colis, setColis] = React.useState<PackageDto | null>(null);
@@ -412,7 +412,7 @@ export function VueColisDetail({ identifiant }: { identifiant: string }) {
                       aria-hidden="true"
                     />
                     <p className="text-xs font-semibold text-slate-900">
-                      {evenement.label ?? voc.statutColis(evenement.status ?? '').label}
+                      {evenement.label ? traduireServeur(evenement.label) : voc.statutColis(evenement.status ?? '').label}
                     </p>
                     <p className="text-[11px] text-slate-500">
                       {formatDateTime(evenement.timestamp)}
@@ -430,7 +430,7 @@ export function VueColisDetail({ identifiant }: { identifiant: string }) {
                       </p>
                     )}
                     {evenement.notes && (
-                      <p className="text-[11px] text-slate-600 mt-1 italic">{evenement.notes}</p>
+                      <p className="text-[11px] text-slate-600 mt-1 italic">{traduireServeur(evenement.notes)}</p>
                     )}
                   </li>
                 ))}
@@ -472,7 +472,7 @@ export function VueColisDetail({ identifiant }: { identifiant: string }) {
                         {tentative.driverName ? ` · ${tentative.driverName}` : ''}
                       </p>
                       {tentative.notes && (
-                        <p className="text-[11px] text-slate-600 italic mt-0.5">{tentative.notes}</p>
+                        <p className="text-[11px] text-slate-600 italic mt-0.5">{traduireServeur(tentative.notes)}</p>
                       )}
                     </div>
                   </li>
@@ -496,14 +496,14 @@ export function VueColisDetail({ identifiant }: { identifiant: string }) {
                 {audit.map((entree) => (
                   <li key={entree.id} className="text-xs">
                     <p className="font-medium text-slate-800">
-                      {entree.actionLabel ?? entree.action}
+                      {libelleAudit(entree.action, entree.actionLabel)}
                     </p>
                     <p className="text-[11px] text-slate-500">
                       <span dir="ltr">{formatDateTime(entree.timestamp)}</span>
                       {entree.userName ? ` · ${entree.userName}` : ''}
                     </p>
                     {entree.reason && (
-                      <p className="text-[11px] text-slate-600 mt-0.5">{entree.reason}</p>
+                      <p className="text-[11px] text-slate-600 mt-0.5">{traduireServeur(entree.reason)}</p>
                     )}
                   </li>
                 ))}
@@ -643,7 +643,7 @@ export function VueColisDetail({ identifiant }: { identifiant: string }) {
                       <span dir="ltr">{formatDateTime(retour.createdAt)}</span>
                     </p>
                     {retour.reason && (
-                      <p className="text-[11px] text-slate-600 mt-0.5">{retour.reason}</p>
+                      <p className="text-[11px] text-slate-600 mt-0.5">{traduireServeur(retour.reason)}</p>
                     )}
                     <p className="text-[11px] text-slate-500 mt-0.5">
                       {t('colis.detail.champ.depot')} {retour.returnDepositName ?? '—'}
@@ -668,11 +668,11 @@ export function VueColisDetail({ identifiant }: { identifiant: string }) {
               <dl className="space-y-2.5 text-sm">
                 <Ligne
                   libelle={t('colis.detail.champ.livre')}
-                  valeur={colis.partialDelivery.deliveredDescription ?? '—'}
+                  valeur={traduireServeur(colis.partialDelivery.deliveredDescription) || '—'}
                 />
                 <Ligne
                   libelle={t('colis.detail.champ.retourne')}
-                  valeur={colis.partialDelivery.returnedDescription ?? '—'}
+                  valeur={traduireServeur(colis.partialDelivery.returnedDescription) || '—'}
                 />
                 <Ligne
                   libelle={t('colis.detail.champ.piecesLivrees')}
@@ -684,7 +684,7 @@ export function VueColisDetail({ identifiant }: { identifiant: string }) {
                 />
                 <Ligne
                   libelle={t('colis.detail.champ.motif')}
-                  valeur={colis.partialDelivery.reason ?? '—'}
+                  valeur={traduireServeur(colis.partialDelivery.reason) || '—'}
                 />
               </dl>
             </Card>

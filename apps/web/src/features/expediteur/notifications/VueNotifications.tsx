@@ -84,7 +84,7 @@ function routePortail(notification: NotificationDto): string | null {
 
 export function VueNotifications() {
   const router = useRouter();
-  const { t, traduireValeur, formatDelai, formatDateTime } = useI18n();
+  const { t, traduireValeur, formatDelai, formatDateTime, traduireServeur } = useI18n();
   // L'intitulé vient du serveur, écrit en français dans `Notification.title` :
   // le vocabulaire le rend dans la langue courante quand il le reconnaît.
   const voc = useVocabulaire();
@@ -216,7 +216,7 @@ export function VueNotifications() {
                   {traduireValeur('notif.categorie', notification.category)}
                 </span>
               </div>
-              <p className="text-xs text-slate-600 mt-1">{notification.content}</p>
+              <p className="text-xs text-slate-600 mt-1">{traduireServeur(notification.content)}</p>
               <div className="flex items-center gap-3 mt-1.5">
                 {/*
                   L'ancienneté et la date exacte disent deux choses différentes :

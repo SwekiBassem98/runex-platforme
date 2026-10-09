@@ -57,6 +57,7 @@ import {
   type Langue,
 } from './config';
 import { ar } from './dictionnaires/ar';
+import { libelleActionAudit, traduireTexteServeur } from './textes-serveur';
 import { fr, type Cle, type Dictionnaire } from './dictionnaires/fr';
 
 export type { Cle, Langue };
@@ -113,6 +114,14 @@ export interface I18n {
    * rien pour elle : un statut nouveau côté API reste lisible plutôt que vide.
    */
   traduireValeur: (famille: FamilleValeur, valeur: string | null | undefined) => string;
+  /**
+   * Texte rédigé par l'API en français (chronologie, motif, phrase d'audit,
+   * titre de notification), rendu dans la langue courante. Le texte libre d'un
+   * utilisateur reste tel quel. Voir `textes-serveur.ts`.
+   */
+  traduireServeur: (texte: string | null | undefined) => string;
+  /** Libellé d'une action d'audit, à partir de son code. */
+  libelleAudit: (code: string, libelleServeur?: string) => string;
   formatDate: (valeur: string | number | Date | null | undefined) => string;
   formatDateTime: (valeur: string | number | Date | null | undefined) => string;
   formatTND: (montant: number | string | null | undefined) => string;
@@ -135,6 +144,8 @@ const CONTEXTE_PAR_DEFAUT: I18n = {
   setLangue: () => undefined,
   t: (cle, valeurs) => appliquer(fr, cle, valeurs),
   traduireValeur: (famille, valeur) => valeur ?? '',
+  traduireServeur: (texte) => texte ?? '',
+  libelleAudit: (code, libelleServeur) => libelleServeur ?? code,
   formatDate: formatDateBase,
   formatDateTime: formatDateTimeBase,
   formatTND,
@@ -242,6 +253,7 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
 
   const valeur = useMemo<I18n>(() => {
     const dictionnaire = DICTIONNAIRES[langue];
+    const statut = (code: string) => libelleValeur(dictionnaire, 'statut', code);
     return {
       langue,
       dir: DIR_PAR_LANGUE[langue],
@@ -250,6 +262,8 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
       setLangue,
       t: (cle, valeurs) => appliquer(dictionnaire, cle, valeurs),
       traduireValeur: (famille, valeur) => libelleValeur(dictionnaire, famille, valeur ?? ''),
+      traduireServeur: (texte) => traduireTexteServeur(texte, langue, statut),
+      libelleAudit: (code, libelleServeur) => libelleActionAudit(code, libelleServeur, langue, statut),
       formatDate: formatDateBase,
       formatDateTime: formatDateTimeBase,
       formatTND,

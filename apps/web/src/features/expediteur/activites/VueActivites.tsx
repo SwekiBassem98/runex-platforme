@@ -46,7 +46,7 @@ import { useI18n, type I18n } from '@/i18n';
 const LIMITE_SERVEUR = 50;
 
 export function VueActivites() {
-  const { t, formatDateTime } = useI18n();
+  const { t, formatDateTime, traduireServeur, libelleAudit } = useI18n();
   const voc = useVocabulaire();
   const params = useSearchParams();
 
@@ -258,7 +258,7 @@ export function VueActivites() {
                 <div className="flex items-start justify-between gap-3 flex-wrap">
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-slate-900">
-                      {entree.actionLabel}
+                      {libelleAudit(entree.action, entree.actionLabel)}
                       {entree.critical && (
                         <span className="ms-2 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase bg-red-50 text-red-700 border border-red-200">
                           {t('activites.engagement')}
@@ -283,7 +283,7 @@ export function VueActivites() {
                 {entree.reason && (
                   <p className="mt-2 text-xs text-slate-700">
                     <span className="text-slate-400">{t('colis.detail.motif')} : </span>
-                    {entree.reason}
+                    {traduireServeur(entree.reason)}
                   </p>
                 )}
 
