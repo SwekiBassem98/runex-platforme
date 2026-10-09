@@ -459,6 +459,7 @@ function LigneRamassage({
 }) {
   const { t, formatDate } = useI18n();
   const voc = useVocabulaire();
+  const collecte = rdv.status === 'EFFECTUE';
   const ecart = rdv.actualPickedCount - rdv.packageEstimate;
   return (
     <Tr
@@ -486,13 +487,16 @@ function LigneRamassage({
       <Td align="center">
         <span className="font-mono text-xs font-semibold">{rdv.packageEstimate}</span>
         <span className="text-slate-400 mx-1">/</span>
-        <span className="font-mono text-xs text-slate-600">{rdv.actualPickedCount}</span>
-        {ecart !== 0 && (
+        {/* Le nombre collecté n'existe qu'une fois le ramassage effectué : avant,
+            « 0 » et « −6 manquants » laissaient croire à des colis perdus. */}
+        <span className="font-mono text-xs text-slate-600">{collecte ? rdv.actualPickedCount : '—'}</span>
+        {collecte && ecart !== 0 && (
           <span
             className={`block text-[10px] ${ecart > 0 ? 'text-emerald-600' : 'text-amber-600'}`}
           >
-            {/* « manquants » n'a pas d'entrée dans le dictionnaire : le mot reste français. */}
-            {ecart > 0 ? `+${ecart} ${t('etape.ramasse')}` : `${ecart} manquants`}
+            {ecart > 0
+              ? t('ramassages.enPlus', { n: ecart })
+              : t('ramassages.manquants', { n: Math.abs(ecart) })}
           </span>
         )}
       </Td>

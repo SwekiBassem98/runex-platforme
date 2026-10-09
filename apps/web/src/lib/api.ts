@@ -348,6 +348,7 @@ export interface InterDepotItemDto {
   customerName: string;
   destination: string;
   pieceCount: number;
+  sizeCategory?: string;
   receivedPieces: number;
   receivedPieceNumbers: number[];
   receptionState: 'EN_ROUTE' | 'PARTIEL' | 'RECU';

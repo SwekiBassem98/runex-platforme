@@ -29,6 +29,7 @@ import {
   Th,
   Thead,
   Tr,
+  formatDate,
   useToast,
 } from '@logixpress/ui';
 import { ApiError, interDepotsApi, ramassagesApi, shippersApi, type InterDepotFormOptions, type ShipperDto } from '@/lib/api';
@@ -313,8 +314,8 @@ export default function RamassagesPage() {
                       const ouvertP = p.status !== 'EFFECTUE' && p.status !== 'ANNULE';
                       return (
                         <Tr key={p.id}>
-                          <Td>{p.timeSlotStartHour} - {p.timeSlotEndHour}</Td>
-                          <Td>{p.scheduledDate.slice(0, 10)}</Td>
+                          <Td>{p.timeSlotStartHour}h – {p.timeSlotEndHour}h</Td>
+                          <Td>{formatDate(p.scheduledDate)}</Td>
                           <Td>{p.pickupAddress}</Td>
                           <Td><span className="font-mono">{p.contactPhone}</span></Td>
                           <Td>{p.assignedDriverName ?? '—'}</Td>

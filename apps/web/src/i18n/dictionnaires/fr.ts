@@ -379,6 +379,8 @@ export const fr = {
   'ramassages.colonne.date': 'Date et créneau',
   'ramassages.colonne.adresse': 'Adresse de collecte',
   'ramassages.colonne.colis': 'Colis annoncés / collectés',
+  'ramassages.manquants': '{n} manquant(s)',
+  'ramassages.enPlus': '{n} collecté(s) en plus',
   'ramassages.colonne.chauffeur': 'Chauffeur',
   'ramassages.colonne.statut': 'Statut',
   'ramassages.colonne.action': 'Action',
@@ -559,6 +561,14 @@ export const fr = {
   'profil.droitsAide':
     'Liste renvoyée par l’API pour ce compte. Elle décrit le rôle, pas les écrans de ce portail.',
   'profil.aucunDroit': 'Aucun droit retourné.',
+  'droit.COLIS_READ': 'Consulter vos colis',
+  'droit.COLIS_CREATE': 'Déclarer des colis',
+  'droit.COLIS_UPDATE': 'Modifier vos colis avant leur prise en charge',
+  'droit.COLIS_CANCEL': 'Annuler un colis',
+  'droit.PAYMENT_READ': 'Consulter vos bordereaux et paiements',
+  'droit.REPORT_READ': 'Consulter vos statistiques',
+  'droit.RAMASSAGE_READ': 'Consulter vos ramassages',
+  'droit.RAMASSAGE_DEMANDE': 'Demander un ramassage',
   'profil.motDePasse': 'Mot de passe',
   'profil.motDePasseAide':
     'Changez votre mot de passe ici, ou recevez un lien de réinitialisation par courriel.',

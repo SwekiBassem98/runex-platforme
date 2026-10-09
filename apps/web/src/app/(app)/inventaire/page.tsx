@@ -10,6 +10,7 @@
  *    raisons, dernier événement, âge. Filtrage serveur, pagination, scoping dépôt.
  */
 
+import { GOUVERNORATS } from '@/features/expediteur/lib/libelles';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
@@ -518,7 +519,7 @@ export default function InventairePage() {
               {selecteurEx('status', 'Statut', (facetsEx?.statuses ?? []).map((s) => ({ value: s.value, label: s.label, count: s.count })))}
               {selecteurEx('depositId', 'Dépôt', (facetsEx?.deposits ?? []).map((d) => ({ value: d.id, label: d.label })))}
               {selecteurEx('driverId', 'Livreur', (facetsEx?.drivers ?? []).map((d) => ({ value: d.id, label: d.label })))}
-              <label className="flex flex-col gap-1"><span className="text-[11px] uppercase font-semibold text-slate-500">Gouvernorat</span><input value={filtresEx.governorate ?? ''} placeholder="Tous" onChange={(e) => majFiltreEx({ governorate: e.target.value })} className="px-2 py-1.5 text-[11px] border border-slate-200 rounded-md" /></label>
+              <label className="flex flex-col gap-1"><span className="text-[11px] uppercase font-semibold text-slate-500">Gouvernorat</span><select value={filtresEx.governorate || 'ALL'} onChange={(e) => majFiltreEx({ governorate: e.target.value })} className="px-2 py-1.5 text-[11px] border border-slate-200 rounded-md bg-white"><option value="ALL">Tous</option>{GOUVERNORATS.map((g) => <option key={g} value={g}>{g}</option>)}</select></label>
             </div>
             {aFiltresEx && (
               <div className="flex items-center gap-1.5 flex-wrap pt-1 border-t border-slate-100">

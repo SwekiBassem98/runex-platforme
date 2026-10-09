@@ -948,10 +948,6 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
                               {pkg.customerPhone}
                             </span>
                           </Td>
-                          <Td priorite="tertiaire">
-                            <span className="font-semibold text-slate-800 block">{pkg.governorate}</span>
-                            <span className="text-slate-500 text-[11px] truncate max-w-xs block">{pkg.address}</span>
-                          </Td>
                           <Td priorite="secondaire">
                             <span className="font-medium text-slate-800">{pkg.shipperName}</span>
                           </Td>
@@ -969,6 +965,14 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
                             <span className={`px-2 py-0.5 rounded text-[11px] font-semibold border ${badge.bg} ${badge.text} ${badge.border}`}>
                               {badge.label}
                             </span>
+                          </Td>
+                          {/* Même ordre que l'en-tête : la destination est la dernière colonne. */}
+                          <Td priorite="tertiaire">
+                            <span className="font-semibold text-slate-800 block">
+                              {pkg.governorate}
+                              {pkg.delegation ? ` · ${pkg.delegation}` : ''}
+                            </span>
+                            <span className="text-slate-500 text-[11px] truncate max-w-xs block">{pkg.address}</span>
                           </Td>
                         </Tr>
                       );

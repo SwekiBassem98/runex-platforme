@@ -33,7 +33,19 @@ import { RoleType, type AuthUser } from '@logixpress/types';
 import { Card, ErrorBanner } from '@logixpress/ui';
 import { ApiError, authApi, requestData } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { useI18n } from '@/i18n';
+import { useI18n, type Cle } from '@/i18n';
+
+/** Droits d'un expéditeur qui ont un libellé lisible dans le dictionnaire. */
+const DROITS_CONNUS = new Set([
+  'COLIS_READ',
+  'COLIS_CREATE',
+  'COLIS_UPDATE',
+  'COLIS_CANCEL',
+  'PAYMENT_READ',
+  'REPORT_READ',
+  'RAMASSAGE_READ',
+  'RAMASSAGE_DEMANDE',
+]);
 import { FormulaireChangementMotDePasse } from '@/features/motdepasse/FormulaireChangement';
 
 export function VueProfil() {
@@ -184,9 +196,10 @@ export function VueProfil() {
           {(affiche?.permissions ?? []).map((permission) => (
             <li
               key={permission}
-              className="px-2 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono text-[10px] text-slate-700"
+              className="px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-[11px] text-slate-700"
+              title={permission}
             >
-              {permission}
+              {DROITS_CONNUS.has(permission) ? t(`droit.${permission}` as Cle) : permission}
             </li>
           ))}
           {(affiche?.permissions?.length ?? 0) === 0 && (

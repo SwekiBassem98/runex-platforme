@@ -365,6 +365,8 @@ export const ar: Dictionnaire = {
   'ramassages.colonne.date': 'التاريخ والفترة',
   'ramassages.colonne.adresse': 'عنوان الاستلام',
   'ramassages.colonne.colis': 'الطرود المعلنة / المستلَمة',
+  'ramassages.manquants': '{n} ناقص',
+  'ramassages.enPlus': '{n} إضافي',
   'ramassages.colonne.chauffeur': 'السائق',
   'ramassages.colonne.statut': 'الحالة',
   'ramassages.colonne.action': 'إجراء',
@@ -538,6 +540,14 @@ export const ar: Dictionnaire = {
   'profil.droitsAide':
     'قائمة تُعيدها الواجهة لهذا الحساب. هي تصف الدور، لا شاشات هذه البوابة.',
   'profil.aucunDroit': 'لم تُعادة أي صلاحية.',
+  'droit.COLIS_READ': 'الاطلاع على طرودك',
+  'droit.COLIS_CREATE': 'تسجيل الطرود',
+  'droit.COLIS_UPDATE': 'تعديل طرودك قبل استلامها',
+  'droit.COLIS_CANCEL': 'إلغاء طرد',
+  'droit.PAYMENT_READ': 'الاطلاع على كشوفك ومدفوعاتك',
+  'droit.REPORT_READ': 'الاطلاع على إحصائياتك',
+  'droit.RAMASSAGE_READ': 'الاطلاع على عمليات الاستلام',
+  'droit.RAMASSAGE_DEMANDE': 'طلب استلام',
   'profil.motDePasse': 'كلمة المرور',
   'profil.motDePasseAide':
     'غيّر كلمة المرور هنا، أو استلم رابط إعادة التعيين عبر البريد الإلكتروني.',
