@@ -48,3 +48,9 @@ BEGIN
   UPDATE "Deposit" SET name = 'Hub Central Ben Arous', "updatedAt" = now() WHERE "isMainHub" = true;
 END
 $$;
+
+-- Frais de livraison standard : 8 DT, ajoutés automatiquement au prix du colis.
+-- Les tarifs restés à l'ancien défaut (7 DT) passent à 8 DT ; un tarif négocié
+-- différent est conservé.
+ALTER TABLE "ShipperConfig" ALTER COLUMN "defaultDeliveryFee" SET DEFAULT 8.000;
+UPDATE "ShipperConfig" SET "defaultDeliveryFee" = 8.000 WHERE "defaultDeliveryFee" = 7.000;

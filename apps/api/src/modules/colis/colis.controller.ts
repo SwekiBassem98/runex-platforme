@@ -1,4 +1,6 @@
-import { colisService } from './colis.service';
+import { colisService, DEFAULT_DELIVERY_FEE } from './colis.service';
+import { getPrisma } from '../../common/database/prisma-context';
+import { resolveDestinationDepositId } from '../../common/routing/deposit-routing';
 import { auditService } from '../../common/audit/audit.service';
 import { receptionService } from '../depot/reception.service';
 import type { Response } from 'express';
@@ -71,6 +73,34 @@ export class ColisController {
     res.json({ success: true, data: pkg });
   }
 
+  /**
+   * `GET /colis/agences-livraison?governorate=&delegation=` — agences qui
+   * peuvent livrer (champ « Agence de sortie » du formulaire) et celle que le
+   * routage propose pour l'adresse saisie.
+   */
+  async agencesLivraison(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const prisma = getPrisma();
+    // Tarif de l'expéditeur : le sien (jeton) ou celui choisi par l'exploitation.
+    const shipperId =
+      req.user?.shipperId ??
+      (typeof req.query.shipperId === 'string' && /^[0-9a-f-]{36}$/i.test(req.query.shipperId) ? req.query.shipperId : null);
+    const config = shipperId
+      ? await prisma.shipperConfig.findUnique({ where: { shipperId }, select: { defaultDeliveryFee: true } })
+      : null;
+    const deliveryFee = config ? Number(config.defaultDeliveryFee) : DEFAULT_DELIVERY_FEE;
+    const [agences, suggestion] = await Promise.all([
+      prisma.deposit.findMany({
+        where: { isActive: true, status: { not: 'FERME' } },
+        select: { id: true, name: true, governorate: true, isMainHub: true },
+        orderBy: [{ isMainHub: 'desc' }, { name: 'asc' }],
+      }),
+      req.query.governorate
+        ? resolveDestinationDepositId(prisma, String(req.query.governorate), req.query.delegation ? String(req.query.delegation) : null)
+        : Promise.resolve(null),
+    ]);
+    res.json({ success: true, data: { agences, suggestion, deliveryFee } });
+  }
+
   async create(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       // Le client et l'adresse sont indispensables : on refuse une commande
@@ -81,6 +111,7 @@ export class ColisController {
       requireString(req.body, 'address', 'Adresse de livraison');
 
       optionalNumber(req.body, 'totalPrice', 'Montant à encaisser');
+      optionalNumber(req.body, 'goodsPrice', 'Prix du colis');
       optionalPositiveInt(req.body, 'pieceCount', 'Nombre de pièces');
 
       // Un expéditeur crée toujours pour son propre compte (le corps est

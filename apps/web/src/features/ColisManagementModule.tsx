@@ -97,6 +97,7 @@ import {
 import { colisApi, createApiFetch, runsheetsApi, searchApi, shippersApi, zonesApi, type DriverSuggestions, type ZoneDto } from '@/lib/api';
 import { GOUVERNORATS } from '@/features/expediteur/lib/libelles';
 import { estZoneConnue, useDelegationsConnues } from '@/features/zones/useDelegationsConnues';
+import { totalAEncaisser, useAgencesLivraison } from '@/features/colis/useAgencesLivraison';
 import { imprimerBonsLivraison } from '@/features/colis/bonLivraison';
 
 // Les requêtes de ce module passent par le client API commun : aucune URL
@@ -289,7 +290,9 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
     governorate: 'Ben Arous',
     delegation: 'Ben Arous',
     address: '',
-    totalPrice: 65.000,
+    // Prix de la marchandise : les frais de livraison s'y ajoutent (API).
+    goodsPrice: '' as string,
+    destinationDepositId: '',
     pieceCount: 1,
     sizeCategory: PackageSize.LEGERE,
     packageType: PackageType.NORMAL,
@@ -302,6 +305,14 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
     shipperId: '',
   });
   const delegationsConnues = useDelegationsConnues(newColisForm.governorate);
+  const livraison = useAgencesLivraison(
+    newColisForm.governorate,
+    newColisForm.delegation,
+    newColisForm.shipperId || null
+  );
+  const [agenceChoisie, setAgenceChoisie] = useState(false);
+  const agenceSortie = agenceChoisie ? newColisForm.destinationDepositId : (livraison.suggestion ?? '');
+  const totalNouveau = totalAEncaisser(newColisForm.goodsPrice, livraison.frais);
 
   // Un compte sans expéditeur (exploitation) doit en désigner un.
   const saisiePourExpediteur = !currentUser.shipperId;
@@ -593,7 +604,11 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify(newColisForm),
+        body: JSON.stringify({
+          ...newColisForm,
+          goodsPrice: Number(newColisForm.goodsPrice),
+          destinationDepositId: agenceSortie || undefined,
+        }),
       });
       const data = await res.json();
       if (data.success) {
@@ -1097,15 +1112,51 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
                     </FormField>
                   </div>
 
-                  <FormField label="Montant à encaisser (TND) *" required>
+                  <FormField
+                    label="Prix du colis (TND) *"
+                    required
+                    helpText={`Les frais de livraison (${livraison.frais.toFixed(3)} DT) s’ajoutent automatiquement.`}
+                  >
                     <Input
                       type="number"
                       step="0.001"
+                      min="0"
                       required
-                      value={newColisForm.totalPrice}
-                      onChange={(e) => setNewColisForm({ ...newColisForm, totalPrice: parseFloat(e.target.value) || 0 })}
-                      className="font-mono font-bold text-red-600"
+                      value={newColisForm.goodsPrice}
+                      onChange={(e) => setNewColisForm({ ...newColisForm, goodsPrice: e.target.value })}
+                      className="font-mono font-bold"
+                      data-testid="prix-colis"
                     />
+                  </FormField>
+
+                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs" data-testid="total-encaisser">
+                    <p className="flex justify-between text-red-900">
+                      <span>Frais de livraison</span>
+                      <span className="font-mono">+ {livraison.frais.toFixed(3)} DT</span>
+                    </p>
+                    <p className="flex justify-between font-bold text-red-700 mt-1 text-sm">
+                      <span>Montant à encaisser</span>
+                      <span className="font-mono">{totalNouveau === null ? '—' : `${totalNouveau.toFixed(3)} DT`}</span>
+                    </p>
+                  </div>
+
+                  <FormField label="Agence de sortie" helpText="Agence qui livrera le colis — proposée d’après l’adresse.">
+                    <Select
+                      value={agenceSortie}
+                      onChange={(e) => {
+                        setAgenceChoisie(true);
+                        setNewColisForm({ ...newColisForm, destinationDepositId: e.target.value });
+                      }}
+                      data-testid="agence-sortie"
+                    >
+                      {!agenceSortie && <option value="">—</option>}
+                      {livraison.agences.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.name}
+                          {a.id === livraison.suggestion ? ' (proposée)' : ''}
+                        </option>
+                      ))}
+                    </Select>
                   </FormField>
 
                   <FormField label="Nombre de pièces *" required>

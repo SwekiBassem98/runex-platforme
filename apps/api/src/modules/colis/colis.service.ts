@@ -59,7 +59,7 @@ import { auditService } from '../../common/audit/audit.service';
 import { zonesService } from '../zones/zones.service';
 import { notificationService } from '../../common/notifications/notification.service';
 import { notificationDispatcher } from '../notifications/notification.dispatcher';
-import { BusinessRuleError } from '../../common/errors/api-error';
+import { BusinessRuleError, asUuid } from '../../common/errors/api-error';
 import {
   packageWorkflowService,
   type TransitionCommand,
@@ -237,6 +237,42 @@ function assertDriverOwnsPackage(pkg: { assignedDriverId: string | null }, user:
   if (!user.driverId || !pkg.assignedDriverId || pkg.assignedDriverId !== user.driverId) {
     throw new BusinessRuleError("Ce colis n'est pas affecté à ce livreur.", 403);
   }
+}
+
+/** Frais de livraison ajoutés au prix d'un colis quand l'expéditeur n'a pas de tarif propre. */
+export const DEFAULT_DELIVERY_FEE = 8;
+
+/**
+ * Montants d'un colis. Avec `goodsPrice` (prix de la marchandise), le total à
+ * encaisser est `goodsPrice + frais`. Sans lui, `totalPrice` est le total déjà
+ * calculé (ancien contrat de l'API) et le prix de la marchandise s'en déduit.
+ */
+export function calculerTarif(
+  payload: Record<string, unknown>,
+  deliveryFee: number
+): { goodsPrice: number; deliveryFee: number; totalPrice: number } {
+  const fee = Number.isFinite(deliveryFee) && deliveryFee >= 0 ? deliveryFee : DEFAULT_DELIVERY_FEE;
+  const arrondi = (n: number) => Math.round(n * 1000) / 1000;
+  if (payload.goodsPrice !== undefined && payload.goodsPrice !== null && payload.goodsPrice !== '') {
+    const goods = Number(payload.goodsPrice);
+    if (!Number.isFinite(goods) || goods < 0) {
+      throw new BusinessRuleError('Le prix du colis doit être un nombre positif.', 400);
+    }
+    return { goodsPrice: arrondi(goods), deliveryFee: fee, totalPrice: arrondi(goods + fee) };
+  }
+  const total = Number(payload.totalPrice ?? 0);
+  const totalPrice = Number.isFinite(total) && total >= 0 ? arrondi(total) : 0;
+  return { goodsPrice: arrondi(Math.max(totalPrice - fee, 0)), deliveryFee: fee, totalPrice };
+}
+
+/** Agence de sortie demandée à la saisie : un dépôt actif, sinon refus explicite. */
+async function agenceDeSortieChoisie(tx: Prisma.TransactionClient, valeur: unknown): Promise<string | null> {
+  if (valeur === undefined || valeur === null || valeur === '') return null;
+  const id = asUuid(String(valeur));
+  if (!id) throw new BusinessRuleError('Agence de sortie invalide.', 400);
+  const depot = await tx.deposit.findFirst({ where: { id, isActive: true }, select: { id: true } });
+  if (!depot) throw new BusinessRuleError("L'agence de sortie choisie n'existe pas ou est fermée.", 400);
+  return depot.id;
 }
 
 export class ColisService {
@@ -744,7 +780,12 @@ export class ColisService {
     // laisser choisir une étiquette sans clé, illisible au premier scan.
     const barcode = barcodeFor(trackingNumber);
 
-    const totalPrice = Number(payload.totalPrice ?? 0);
+    // Tarif : l'expéditeur saisit le prix de sa marchandise (`goodsPrice`) ;
+    // les frais de livraison (8 DT par défaut, ou le tarif de l'expéditeur)
+    // s'y ajoutent automatiquement et le livreur encaisse le total. L'ancien
+    // champ `totalPrice` (montant à encaisser déjà calculé) reste accepté.
+    const deliveryFee = Number(shipper.config?.defaultDeliveryFee ?? DEFAULT_DELIVERY_FEE);
+    const tarif = calculerTarif(payload, deliveryFee);
     const pieceCount = Number(payload.pieceCount ?? 1);
 
     const packageTypes = Object.values(PackageType) as string[];
@@ -765,8 +806,12 @@ export class ColisService {
         select: { governorate: true, delegation: true },
       });
       const originId = (await resolveShipperDepositId(tx, shipper.governorate)) ?? deposit.id;
+      // Agence de sortie (celle qui livre) : choisie à la saisie, sinon déduite
+      // de l'adresse.
       const destinationId =
-        (await resolveDestinationDepositId(tx, address?.governorate, address?.delegation)) ?? deposit.id;
+        (await agenceDeSortieChoisie(tx, payload.destinationDepositId)) ??
+        (await resolveDestinationDepositId(tx, address?.governorate, address?.delegation)) ??
+        deposit.id;
       return tx.package.create({
         data: {
           trackingNumber,
@@ -784,8 +829,9 @@ export class ColisService {
           contentSummary: String(payload.contentSummary ?? 'Colis sans description'),
           allowOpen: payload.allowOpen === true,
           isFragile: payload.isFragile === true,
-          totalPrice: Number.isFinite(totalPrice) ? totalPrice : 0,
-          deliveryFee: shipper.config?.defaultDeliveryFee ?? 7,
+          declaredValue: tarif.goodsPrice,
+          totalPrice: tarif.totalPrice,
+          deliveryFee: tarif.deliveryFee,
           shipperNotes: payload.notes ? String(payload.notes) : null,
           items: {
             create: {

@@ -248,6 +248,14 @@ export function createApiRouter(): Router {
     asyncHandler((req, res) => colisController.getAll(req, res))
   );
 
+  // Agences de sortie proposées au formulaire de colis (avant `/colis/:id`).
+  router.get(
+    ['/colis/agences-livraison', '/packages/agences-livraison'],
+    authenticateToken,
+    requirePermissions(PermissionCode.COLIS_CREATE),
+    asyncHandler((req, res) => colisController.agencesLivraison(req, res))
+  );
+
   router.get(
     COLIS_ITEM,
     authenticateToken,

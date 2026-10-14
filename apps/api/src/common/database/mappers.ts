@@ -120,6 +120,7 @@ export function toPackageDto(record: PackageWithRelations): PackageDto {
     totalPrice: toNumber(record.totalPrice),
     collectedAmount: toNumber(record.collectedAmount),
     deliveryFee: toNumber(record.deliveryFee),
+    goodsPrice: toNumber(record.declaredValue),
     shipperId: record.shipperId,
     shipperName: record.shipper.brandName ?? record.shipper.companyName,
     assignedDriverId: record.assignedDriverId ?? undefined,

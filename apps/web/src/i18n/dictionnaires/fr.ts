@@ -200,6 +200,12 @@ export const fr = {
   'colis.formulaire.nouvelleZone': 'Nouvelle zone : « {nom} » sera ajoutée à la liste des zones à l’enregistrement.',
   'colis.formulaire.adresse': 'Adresse exacte',
   'colis.formulaire.adresseAide': '12, rue des Écoles, 1001',
+  'colis.formulaire.prix': 'Prix du colis',
+  'colis.formulaire.prixAide': 'Prix de la marchandise. Les frais de livraison ({frais} DT) s’ajoutent automatiquement.',
+  'colis.formulaire.fraisLivraison': 'Frais de livraison (automatiques)',
+  'colis.formulaire.agenceSortie': 'Agence de sortie',
+  'colis.formulaire.agenceSortieAide': 'Agence qui livrera le colis. Proposée d’après l’adresse ; vous pouvez la changer.',
+  'colis.formulaire.agenceProposee': 'proposée',
   'colis.formulaire.montant': 'Montant à encaisser',
   'colis.formulaire.nombrePieces': 'Nombre de pièces',
   'colis.formulaire.nombrePiecesAide':

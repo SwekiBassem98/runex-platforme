@@ -438,6 +438,8 @@ export interface PackageDto {
   totalPrice: number; // Montant TND
   collectedAmount: number;
   deliveryFee: number;
+  /** Prix de la marchandise (sans les frais de livraison). */
+  goodsPrice?: number;
   shipperId: string;
   shipperName: string;
   assignedDriverId?: string;
