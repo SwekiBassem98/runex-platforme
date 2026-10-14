@@ -79,6 +79,8 @@ export interface ColisFilterParams {
   /** Zone de livraison (identifiant). */
   zone?: string;
   driver?: string;
+  /** Expéditeur (identifiant). */
+  shipper?: string;
   type?: string;
   paymentStatus?: string;
   date?: string;
@@ -333,11 +335,17 @@ export class ColisService {
         and.push({ id: '00000000-0000-0000-0000-000000000000' });
       }
     }
+    const aucun: Prisma.PackageWhereInput = { id: '00000000-0000-0000-0000-000000000000' };
     if (params.type && params.type !== 'ALL') {
-      and.push({ packageType: params.type as PackageType });
+      // Valeur hors énumération : aucun résultat, jamais une erreur 500.
+      and.push((Object.values(PackageType) as string[]).includes(params.type) ? { packageType: params.type as PackageType } : aucun);
     }
     if (params.city && params.city !== 'ALL') {
-      and.push({ customerAddress: { governorate: params.city } });
+      // Insensible à la casse : « ben arous » et « Ben Arous » désignent le même gouvernorat.
+      and.push({ customerAddress: { governorate: { equals: params.city.trim(), mode: 'insensitive' } } });
+    }
+    if (params.shipper && params.shipper !== 'ALL') {
+      and.push(/^[0-9a-f-]{36}$/i.test(params.shipper) ? { shipperId: params.shipper } : aucun);
     }
     if (params.zone && params.zone !== 'ALL') {
       // Identifiant non UUID : aucun résultat plutôt qu'une erreur SQL.
@@ -348,7 +356,12 @@ export class ColisService {
       );
     }
     if (params.driver && params.driver !== 'ALL') {
-      and.push({ assignedDriver: { driverCode: params.driver } });
+      // Code livreur (LIV-BEN-001) ou identifiant de la fiche.
+      and.push(
+        /^[0-9a-f-]{36}$/i.test(params.driver)
+          ? { assignedDriverId: params.driver }
+          : { assignedDriver: { driverCode: { equals: params.driver, mode: 'insensitive' } } }
+      );
     }
     // Ce filtre était lu par le contrôleur puis ignoré : la liste affichait
     // tous les colis en laissant croire qu'elle était filtrée. Un filtre
@@ -356,6 +369,13 @@ export class ColisService {
     if (params.paymentStatus && params.paymentStatus !== 'ALL') {
       if (params.paymentStatus === 'TOUS') {
         and.push({ payment: { is: null } });
+      } else if (params.paymentStatus === 'NON_REGLE') {
+        // Règlement à l'expéditeur : pas encore dans un bordereau.
+        and.push({ paymentVoucherId: null });
+      } else if (params.paymentStatus === 'EN_BORDEREAU') {
+        and.push({ paymentVoucher: { is: { status: { in: ['EN_ATTENTE', 'CONFIRME'] } } } });
+      } else if (params.paymentStatus === 'PAYE') {
+        and.push({ paymentVoucher: { is: { status: 'PAYE' } } });
       } else if (Object.values(PaymentStatus).includes(params.paymentStatus as PaymentStatus)) {
         and.push({ payment: { is: { status: params.paymentStatus as PaymentStatus } } });
       } else {
