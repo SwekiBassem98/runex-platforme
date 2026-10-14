@@ -593,25 +593,8 @@ export class RunsheetsService {
       });
     }
 
-    // Tournée déjà partie : le colis part aussitôt en livraison avec elle.
-    if (runsheet.status === 'EN_COURS') {
-      await packageWorkflowService.transition({
-        packageId: pkg.id,
-        to: PackageStatus.EN_COURS_LIVRAISON,
-        actor: { id: user.id, fullName: user.fullName, role: RoleType.GESTIONNAIRE },
-        title: 'Ajouté à la tournée en cours',
-        note: `Tournée ${runsheet.runsheetNumber}`,
-        location: 'En tournée',
-        runsheetNumber: runsheet.runsheetNumber,
-        auditAction: 'RUNSHEET_DEPARTURE',
-        client: tx,
-      });
-      await tx.runsheetItem.updateMany({
-        where: { runsheetId: runsheet.id, packageId: pkg.id },
-        data: { scannedAtDeparture: new Date() },
-      });
-    }
-
+    // Tournée déjà partie : le colis y est ajouté « dans la tournée » ; le
+    // livreur le démarre (ou le livre) quand il l'a en main, comme les autres.
     await auditService.record(
       {
         entityType: 'RUNSHEET',
