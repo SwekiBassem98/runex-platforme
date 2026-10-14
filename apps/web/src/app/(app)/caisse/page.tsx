@@ -1,32 +1,25 @@
 'use client';
 
 /**
- * Caisse de la société.
+ * Caisse société & livreurs.
  *
- * Sur une période : tout ce qui a été encaissé, le net dû aux expéditeurs,
- * les frais de livraison gagnés, et — livreur par livreur — ce qu'il a gagné
- * (3 DT par colis livré ou ramassage effectué), ce qui lui a été payé et ce
- * qu'il reste à lui payer. Le bouton « Payer » enregistre le paiement.
+ * L'écran répond, dans cet ordre, à trois questions :
+ *  1. « Qu'est-ce que je dois faire maintenant ? » — l'argent qui attend une
+ *     action (espèces à valider, expéditeurs à payer, livreurs à payer) ;
+ *  2. « Combien la société a-t-elle gagné sur la période ? » — un calcul lu de
+ *     haut en bas : encaissé − part des expéditeurs = frais ; frais −
+ *     livreurs = bénéfice ;
+ *  3. « Combien dois-je à chaque livreur ? » — une ligne par livreur, avec le
+ *     bouton pour le payer.
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  Card,
-  MetricCard,
-  Modal,
-  PageHeader,
-  Table,
-  Tbody,
-  Td,
-  Th,
-  Thead,
-  Tr,
-  formatTND,
-  useToast,
-} from '@logixpress/ui';
+import Link from 'next/link';
+import { ArrowRight, Banknote, CheckCircle2, ChevronDown, ChevronUp, HandCoins, History, Store, Truck } from 'lucide-react';
+import { Card, Modal, PageHeader, formatTND, useToast } from '@logixpress/ui';
+import { PermissionCode } from '@logixpress/types';
 import { caisseApi, type LigneCaisseLivreur, type PaiementLivreur, type ResumeCaisse } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { PermissionCode } from '@logixpress/types';
 
 type Preset = 'jour' | 'semaine' | 'mois' | 'tout' | 'perso';
 
@@ -44,13 +37,18 @@ function bornesPreset(preset: Preset, perso: { from: string; to: string }): { fr
   return {};
 }
 
-const PRESETS: { id: Preset; libelle: string }[] = [
-  { id: 'jour', libelle: "Aujourd'hui" },
-  { id: 'semaine', libelle: '7 derniers jours' },
-  { id: 'mois', libelle: 'Ce mois' },
-  { id: 'tout', libelle: 'Depuis le début' },
-  { id: 'perso', libelle: 'Personnalisée' },
+const PRESETS: { id: Preset; libelle: string; phrase: string }[] = [
+  { id: 'jour', libelle: "Aujourd'hui", phrase: "aujourd'hui" },
+  { id: 'semaine', libelle: '7 jours', phrase: 'sur les 7 derniers jours' },
+  { id: 'mois', libelle: 'Ce mois', phrase: 'ce mois-ci' },
+  { id: 'tout', libelle: 'Depuis le début', phrase: 'depuis le début' },
+  { id: 'perso', libelle: 'Dates…', phrase: 'sur la période choisie' },
 ];
+
+/** Tarif livreur lisible : « 3 DT », pas « 3,000 DT ». */
+const tarif = (r: ResumeCaisse | null) => `${r ? Number(r.tarifLivreur.toFixed(3)) : 3} DT`;
+
+const dateCourte = (iso: string) => new Date(`${iso}T12:00:00`).toLocaleDateString('fr-TN', { day: 'numeric', month: 'short' });
 
 export default function CaissePage() {
   const { addToast } = useToast();
@@ -60,18 +58,20 @@ export default function CaissePage() {
   const [preset, setPreset] = useState<Preset>('mois');
   const [perso, setPerso] = useState({ from: '', to: '' });
   const bornes = useMemo(() => bornesPreset(preset, perso), [preset, perso]);
+  const phrase = PRESETS.find((p) => p.id === preset)?.phrase ?? '';
 
   const [resume, setResume] = useState<ResumeCaisse | null>(null);
   const [livreurs, setLivreurs] = useState<LigneCaisseLivreur[]>([]);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState<string | null>(null);
-  const [recherche, setRecherche] = useState('');
+  const [tous, setTous] = useState(false);
+  const [ouvert, setOuvert] = useState<string | null>(null);
 
   const [aPayer, setAPayer] = useState<LigneCaisseLivreur | null>(null);
   const [montant, setMontant] = useState('');
   const [note, setNote] = useState('');
   const [envoi, setEnvoi] = useState(false);
-  const [historique, setHistorique] = useState<{ livreur: LigneCaisseLivreur; lignes: PaiementLivreur[] } | null>(null);
+  const [historique, setHistorique] = useState<Record<string, PaiementLivreur[]>>({});
 
   const charger = useCallback(async () => {
     setChargement(true);
@@ -91,12 +91,12 @@ export default function CaissePage() {
     void charger();
   }, [charger]);
 
+  // Ceux à qui on doit de l'argent d'abord, puis ceux qui ont travaillé.
   const lignes = useMemo(() => {
-    const q = recherche.trim().toLowerCase();
-    return livreurs
-      .filter((l) => !q || l.fullName.toLowerCase().includes(q) || l.driverCode.toLowerCase().includes(q))
-      .sort((a, b) => b.resteAPayer - a.resteAPayer || b.livres - a.livres);
-  }, [livreurs, recherche]);
+    const triees = [...livreurs].sort((a, b) => b.resteAPayer - a.resteAPayer || b.livres + b.ramassages - (a.livres + a.ramassages));
+    return tous ? triees : triees.filter((l) => l.resteAPayer > 0 || l.livres + l.ramassages > 0);
+  }, [livreurs, tous]);
+  const masques = livreurs.length - lignes.length;
 
   const ouvrirPaiement = (l: LigneCaisseLivreur) => {
     setAPayer(l);
@@ -116,6 +116,11 @@ export default function CaissePage() {
       const r = await caisseApi.payer(aPayer.driverId, { amount: valeur, note: note.trim() || undefined });
       addToast({ type: 'success', title: 'Paiement enregistré', message: r.message ?? r.data?.reference });
       setAPayer(null);
+      setHistorique((h) => {
+        const copie = { ...h };
+        delete copie[aPayer.driverId];
+        return copie;
+      });
       await charger();
     } catch (e) {
       addToast({ type: 'error', title: 'Paiement refusé', message: e instanceof Error ? e.message : undefined });
@@ -124,216 +129,345 @@ export default function CaissePage() {
     }
   };
 
-  const voirHistorique = async (l: LigneCaisseLivreur) => {
-    try {
-      setHistorique({ livreur: l, lignes: await caisseApi.paiements(l.driverId) });
-    } catch (e) {
-      addToast({ type: 'error', title: 'Historique indisponible', message: e instanceof Error ? e.message : undefined });
+  const basculer = async (l: LigneCaisseLivreur) => {
+    if (ouvert === l.driverId) {
+      setOuvert(null);
+      return;
+    }
+    setOuvert(l.driverId);
+    if (!historique[l.driverId]) {
+      try {
+        const h = await caisseApi.paiements(l.driverId);
+        setHistorique((x) => ({ ...x, [l.driverId]: h }));
+      } catch {
+        setHistorique((x) => ({ ...x, [l.driverId]: [] }));
+      }
     }
   };
 
-  const m = (v: number | undefined) => (resume ? formatTND(v ?? 0) : '—');
+  const r = resume;
+  const libellePeriode =
+    preset === 'perso' && (perso.from || perso.to)
+      ? `du ${perso.from ? dateCourte(perso.from) : '…'} au ${perso.to ? dateCourte(perso.to) : '…'}`
+      : bornes.from && bornes.to && bornes.from !== bornes.to
+        ? `du ${dateCourte(bornes.from)} au ${dateCourte(bornes.to)}`
+        : bornes.from
+          ? `le ${dateCourte(bornes.from)}`
+          : 'depuis le début';
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Caisse"
-        description="Encaissements de la société, net expéditeurs, frais de livraison et paiement des livreurs."
+        title="Caisse société & livreurs"
+        description="Ce que la société a encaissé, ce qu'elle doit reverser, ce qu'elle gagne, et ce qu'elle doit à chaque livreur."
         breadcrumbs={[{ label: 'Finance' }, { label: 'Caisse', active: true }]}
       />
 
-      <div className="px-6 space-y-6">
-        <div className="flex flex-wrap items-end gap-2" data-testid="caisse-periode">
-          {PRESETS.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              onClick={() => setPreset(p.id)}
-              className={`px-3 py-1.5 rounded-md text-sm border ${
-                preset === p.id
-                  ? 'bg-slate-900 text-white border-slate-900'
-                  : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300'
-              }`}
-            >
-              {p.libelle}
-            </button>
-          ))}
-          {preset === 'perso' && (
-            <>
-              <label className="text-xs text-slate-500">
-                Du
-                <input
-                  type="date"
-                  value={perso.from}
-                  onChange={(e) => setPerso((x) => ({ ...x, from: e.target.value }))}
-                  className="ml-1 border border-slate-200 rounded-md px-2 py-1 text-sm"
-                />
-              </label>
-              <label className="text-xs text-slate-500">
-                au
-                <input
-                  type="date"
-                  value={perso.to}
-                  onChange={(e) => setPerso((x) => ({ ...x, to: e.target.value }))}
-                  className="ml-1 border border-slate-200 rounded-md px-2 py-1 text-sm"
-                />
-              </label>
-            </>
-          )}
-        </div>
+      <div className="px-6 space-y-8 pb-10">
+        {erreur && <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">{erreur}</p>}
 
-        {erreur && (
-          <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">{erreur}</p>
-        )}
-
-        <section aria-label="Encaissements" className="space-y-2">
-          <h2 className="text-sm font-semibold text-slate-700">Encaissements</h2>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3" data-testid="caisse-kpi">
-            <MetricCard title="Total encaissé" value={m(resume?.encaisse)} description="Espèces COD collectées" />
-            <MetricCard title="Validé en caisse" value={m(resume?.encaisseValide)} />
-            <MetricCard title="En attente de validation" value={m(resume?.encaisseEnAttente)} />
-            <MetricCard
-              title="Colis livrés / retournés"
-              value={resume ? `${resume.colisLivres} / ${resume.colisRetournes}` : '—'}
+        {/* ---------------------------------------------------- 1. À faire */}
+        <section aria-labelledby="titre-a-faire" className="space-y-3">
+          <div>
+            <h2 id="titre-a-faire" className="text-base font-semibold text-slate-900">
+              À faire maintenant
+            </h2>
+            <p className="text-sm text-slate-500">L&apos;argent qui attend une action, toutes dates confondues.</p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4" data-testid="caisse-a-faire">
+            <Action
+              icone={<Banknote className="w-5 h-5" aria-hidden="true" />}
+              titre="Espèces à valider"
+              montant={r?.especesAValider}
+              explication="Encaissé par les livreurs chez les clients, pas encore compté et validé en caisse."
+              lien="/paiements"
+              action="Valider les encaissements"
+              teinte="amber"
+            />
+            <Action
+              icone={<Store className="w-5 h-5" aria-hidden="true" />}
+              titre="À reverser aux expéditeurs"
+              montant={r?.resteExpediteurs}
+              explication="Argent des colis livrés qui appartient aux expéditeurs et ne leur a pas encore été payé."
+              lien="/paiements/bordereaux"
+              action="Préparer les bordereaux"
+              teinte="sky"
+            />
+            <Action
+              icone={<Truck className="w-5 h-5" aria-hidden="true" />}
+              titre="À payer aux livreurs"
+              montant={r?.resteLivreurs}
+              explication={`Rémunération due aux livreurs : ${tarif(r)} par colis livré ou ramassage effectué.`}
+              lien="#livreurs"
+              action="Voir les livreurs"
+              teinte="violet"
             />
           </div>
         </section>
 
-        <section aria-label="Société" className="space-y-2">
-          <h2 className="text-sm font-semibold text-slate-700">Société et expéditeurs</h2>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <MetricCard title="Frais de livraison" value={m(resume?.fraisLivraison)} description="Gagnés sur les colis livrés" />
-            <MetricCard title="Frais de retour" value={m(resume?.fraisRetour)} />
-            <MetricCard title="Net expéditeurs" value={m(resume?.netExpediteurs)} description="Encaissé − frais (colis livrés)" />
-            <MetricCard
-              title="Reste dû aux expéditeurs"
-              value={m(resume?.resteExpediteurs)}
-              description={resume ? `Déjà réglé sur la période : ${formatTND(resume.payeExpediteurs)}` : undefined}
-            />
+        {/* ------------------------------------------------- 2. Bilan */}
+        <section aria-labelledby="titre-bilan" className="space-y-3">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h2 id="titre-bilan" className="text-base font-semibold text-slate-900">
+                Bilan {phrase}
+              </h2>
+              <p className="text-sm text-slate-500">Colis livrés {libellePeriode} — le calcul se lit de haut en bas.</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5" role="radiogroup" aria-label="Période">
+                {PRESETS.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={preset === p.id}
+                    onClick={() => setPreset(p.id)}
+                    className={`px-3 py-1.5 rounded-md text-sm ${
+                      preset === p.id ? 'bg-slate-900 text-white' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {p.libelle}
+                  </button>
+                ))}
+              </div>
+              {preset === 'perso' && (
+                <div className="flex items-center gap-1.5 text-sm">
+                  <input
+                    type="date"
+                    aria-label="Du"
+                    value={perso.from}
+                    onChange={(e) => setPerso((x) => ({ ...x, from: e.target.value }))}
+                    className="border border-slate-200 rounded-md px-2 py-1.5"
+                  />
+                  <span className="text-slate-400">→</span>
+                  <input
+                    type="date"
+                    aria-label="Au"
+                    value={perso.to}
+                    onChange={(e) => setPerso((x) => ({ ...x, to: e.target.value }))}
+                    className="border border-slate-200 rounded-md px-2 py-1.5"
+                  />
+                </div>
+              )}
+            </div>
           </div>
+
+          <Card className="p-0 overflow-hidden">
+            {!r ? (
+              <p className="p-6 text-sm text-slate-500">{chargement ? 'Chargement…' : '—'}</p>
+            ) : r.colisLivres === 0 && r.colisRetournes === 0 ? (
+              <p className="p-6 text-sm text-slate-500">Aucun colis livré {phrase}.</p>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-5">
+                <div className="lg:col-span-3 p-5 sm:p-6" data-testid="caisse-bilan">
+                  <Ligne
+                    libelle="Encaissé pour les colis livrés"
+                    aide={`${r.colisLivres} colis livré${r.colisLivres > 1 ? 's' : ''} — ce que les clients ont payé`}
+                    montant={r.encaisseColisLivres}
+                  />
+                  <Ligne
+                    signe="−"
+                    libelle="Part des expéditeurs"
+                    aide="Prix des colis, à reverser aux expéditeurs"
+                    montant={r.netExpediteurs}
+                    couleur="text-sky-700"
+                  />
+                  <Ligne
+                    signe="="
+                    libelle="Frais de livraison gagnés"
+                    aide="La part de la société sur chaque colis livré"
+                    montant={r.fraisLivraison}
+                    total
+                  />
+                  {r.fraisRetour > 0 && (
+                    <Ligne
+                      signe="+"
+                      libelle="Frais de retour"
+                      aide={`${r.colisRetournes} colis rendu${r.colisRetournes > 1 ? 's' : ''} à l'expéditeur`}
+                      montant={r.fraisRetour}
+                    />
+                  )}
+                  <Ligne
+                    signe="−"
+                    libelle="Rémunération des livreurs"
+                    aide={`${tarif(r)} × ${Math.round(r.remunerationLivreurs / (r.tarifLivreur || 1))} colis livrés ou ramassages`}
+                    montant={r.remunerationLivreurs}
+                    couleur="text-violet-700"
+                  />
+                  <div className="mt-3 flex items-baseline justify-between gap-4 rounded-lg bg-emerald-50 px-4 py-3">
+                    <div>
+                      <p className="font-semibold text-emerald-900">= Bénéfice net</p>
+                      <p className="text-xs text-emerald-800/80">Ce que la société garde {phrase}</p>
+                    </div>
+                    <p className={`text-2xl font-bold tabular-nums ${r.margeNette < 0 ? 'text-red-700' : 'text-emerald-800'}`} data-testid="benefice-net">
+                      {formatTND(r.margeNette)}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Répartition visuelle de l'argent encaissé. */}
+                <div className="lg:col-span-2 border-t lg:border-t-0 lg:border-l border-slate-200 bg-slate-50/60 p-5 sm:p-6">
+                  <p className="text-sm font-semibold text-slate-800">Où va l&apos;argent encaissé ?</p>
+                  <Repartition
+                    total={r.encaisseColisLivres}
+                    parts={[
+                      { libelle: 'Expéditeurs', valeur: r.netExpediteurs, classe: 'bg-sky-500' },
+                      { libelle: 'Livreurs', valeur: Math.min(r.remunerationLivreurs, r.fraisLivraison), classe: 'bg-violet-500' },
+                      { libelle: 'Bénéfice', valeur: Math.max(r.fraisLivraison - r.remunerationLivreurs, 0), classe: 'bg-emerald-500' },
+                    ]}
+                  />
+                  <dl className="mt-5 space-y-2 border-t border-slate-200 pt-4 text-sm">
+                    <div className="flex justify-between gap-3">
+                      <dt className="text-slate-500">Payé aux expéditeurs {phrase}</dt>
+                      <dd className="font-medium tabular-nums text-slate-800">{formatTND(r.payeExpediteurs)}</dd>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <dt className="text-slate-500">Payé aux livreurs {phrase}</dt>
+                      <dd className="font-medium tabular-nums text-slate-800">{formatTND(r.payeLivreurs)}</dd>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <dt className="text-slate-500">Espèces reçues {phrase}</dt>
+                      <dd className="font-medium tabular-nums text-slate-800">
+                        {formatTND(r.encaisse)}
+                        <span className="block text-right text-xs font-normal text-slate-400">
+                          dont {formatTND(r.encaisseValide)} validées
+                        </span>
+                      </dd>
+                    </div>
+                  </dl>
+                </div>
+              </div>
+            )}
+          </Card>
         </section>
 
-        <section aria-label="Livreurs" className="space-y-2">
-          <h2 className="text-sm font-semibold text-slate-700">
-            Livreurs {resume ? `(${formatTND(resume.tarifLivreur)} par colis livré ou ramassage)` : ''}
-          </h2>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <MetricCard
-              title="Rémunération livreurs"
-              value={m(resume?.remunerationLivreurs)}
-              description={resume ? `${resume.ramassagesEffectues} ramassage(s) sur la période` : undefined}
-            />
-            <MetricCard title="Payé aux livreurs" value={m(resume?.payeLivreurs)} description="Sur la période" />
-            <MetricCard title="Reste à payer (total)" value={m(resume?.resteLivreurs)} />
-            <MetricCard title="Marge nette" value={m(resume?.margeNette)} description="Frais − rémunération livreurs" />
+        {/* ------------------------------------------------ 3. Livreurs */}
+        <section id="livreurs" aria-labelledby="titre-livreurs" className="space-y-3 scroll-mt-6">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h2 id="titre-livreurs" className="text-base font-semibold text-slate-900">
+                Paiement des livreurs
+              </h2>
+              <p className="text-sm text-slate-500">
+                Chaque livreur gagne {tarif(r)} par colis livré ou ramassage effectué. « Reste à payer »
+                = tout ce qu&apos;il a gagné − tout ce qui lui a déjà été payé.
+              </p>
+            </div>
+            {(masques > 0 || tous) && (
+              <button type="button" onClick={() => setTous((t) => !t)} className="text-sm text-slate-600 underline-offset-2 hover:underline">
+                {tous ? 'Masquer les livreurs sans activité' : `Afficher aussi ${masques} livreur${masques > 1 ? 's' : ''} sans activité`}
+              </button>
+            )}
           </div>
-        </section>
 
-        <Card className="p-0">
-          <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-b border-slate-200">
-            <h3 className="font-semibold text-slate-800">Paiement des livreurs</h3>
-            <input
-              type="search"
-              placeholder="Rechercher un livreur…"
-              value={recherche}
-              onChange={(e) => setRecherche(e.target.value)}
-              className="border border-slate-200 rounded-md px-3 py-1.5 text-sm w-60"
-            />
-          </div>
-          <div className="overflow-x-auto">
-            <Table>
-              <Thead>
-                <tr>
-                  <Th>Livreur</Th>
-                  <Th align="center">Livrés</Th>
-                  <Th align="center">Ramassages</Th>
-                  <Th align="right">Gagné (période)</Th>
-                  <Th align="right">Encaissé (période)</Th>
-                  <Th align="right">Espèces à valider</Th>
-                  <Th align="right">Gagné (total)</Th>
-                  <Th align="right">Payé (total)</Th>
-                  <Th align="right">Reste à payer</Th>
-                  <Th align="right">Actions</Th>
-                </tr>
-              </Thead>
-              <Tbody>
-                {chargement ? (
-                  <tr>
-                    <Td colSpan={10} align="center" className="text-slate-500 py-6">
-                      Chargement…
-                    </Td>
-                  </tr>
-                ) : lignes.length === 0 ? (
-                  <tr>
-                    <Td colSpan={10} align="center" className="text-slate-500 py-6">
-                      Aucun livreur.
-                    </Td>
-                  </tr>
-                ) : (
-                  lignes.map((l) => (
-                    <Tr key={l.driverId} data-testid={`caisse-livreur-${l.driverCode}`}>
-                      <Td>
-                        <div className="font-semibold text-slate-900">{l.fullName}</div>
-                        <div className="text-xs text-slate-500 font-mono">
-                          {l.driverCode}
-                          {l.depositName ? ` · ${l.depositName}` : ''}
-                        </div>
-                      </Td>
-                      <Td align="center">{l.livres}</Td>
-                      <Td align="center">{l.ramassages}</Td>
-                      <Td align="right" className="font-mono">{formatTND(l.gainPeriode)}</Td>
-                      <Td align="right" className="font-mono">{formatTND(l.encaissePeriode)}</Td>
-                      <Td align="right" className={`font-mono ${l.especesNonValidees > 0 ? 'text-amber-700' : ''}`}>
-                        {formatTND(l.especesNonValidees)}
-                      </Td>
-                      <Td align="right" className="font-mono">{formatTND(l.totalGagne)}</Td>
-                      <Td align="right" className="font-mono">{formatTND(l.totalPaye)}</Td>
-                      <Td align="right" className="font-mono font-bold text-slate-900">{formatTND(l.resteAPayer)}</Td>
-                      <Td align="right">
-                        <div className="flex justify-end gap-2">
-                          <button
-                            type="button"
-                            onClick={() => void voirHistorique(l)}
-                            className="text-xs px-2 py-1 rounded border border-slate-200 hover:bg-slate-50"
-                          >
-                            Historique
-                          </button>
-                          {peutPayer && (
-                            <button
-                              type="button"
-                              disabled={l.resteAPayer <= 0}
-                              onClick={() => ouvrirPaiement(l)}
-                              data-testid="caisse-payer"
-                              className="text-xs px-2 py-1 rounded bg-emerald-600 text-white disabled:opacity-40 hover:bg-emerald-700"
-                            >
-                              Payer
-                            </button>
+          <Card className="p-0 overflow-hidden">
+            <div className="hidden md:grid grid-cols-12 gap-3 px-5 py-2.5 bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500 border-b border-slate-200">
+              <span className="col-span-4">Livreur</span>
+              <span className="col-span-3">Travail {phrase}</span>
+              <span className="col-span-2 text-right">Gagné {phrase}</span>
+              <span className="col-span-3 text-right">Reste à payer</span>
+            </div>
+            {chargement && !livreurs.length ? (
+              <p className="p-6 text-sm text-slate-500">Chargement…</p>
+            ) : lignes.length === 0 ? (
+              <p className="p-6 text-sm text-slate-500">Aucun livreur n&apos;a travaillé {phrase}, et personne n&apos;attend de paiement.</p>
+            ) : (
+              <ul className="divide-y divide-slate-100">
+                {lignes.map((l) => (
+                  <li key={l.driverId} data-testid={`caisse-livreur-${l.driverCode}`}>
+                    <div className="grid grid-cols-2 md:grid-cols-12 items-center gap-3 px-5 py-3.5">
+                      <button type="button" onClick={() => void basculer(l)} className="col-span-2 md:col-span-4 flex items-center gap-3 text-left">
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-sm font-semibold text-slate-600">
+                          {initiales(l.fullName)}
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block truncate font-medium text-slate-900">{l.fullName}</span>
+                          <span className="flex items-center gap-1 text-xs text-slate-500">
+                            {l.driverCode}
+                            {ouvert === l.driverId ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                            <span className="sr-only">Détails</span>
+                          </span>
+                        </span>
+                      </button>
+                      <p className="md:col-span-3 text-sm text-slate-700">
+                        <strong>{l.livres}</strong> livré{l.livres > 1 ? 's' : ''} · <strong>{l.ramassages}</strong> ramassage
+                        {l.ramassages > 1 ? 's' : ''}
+                      </p>
+                      <p className="md:col-span-2 text-right text-sm tabular-nums text-slate-700">{formatTND(l.gainPeriode)}</p>
+                      <div className="col-span-2 md:col-span-3 flex items-center justify-end gap-3">
+                        {l.resteAPayer > 0 ? (
+                          <>
+                            <span className="text-base font-bold tabular-nums text-slate-900">{formatTND(l.resteAPayer)}</span>
+                            {peutPayer && (
+                              <button
+                                type="button"
+                                onClick={() => ouvrirPaiement(l)}
+                                data-testid="caisse-payer"
+                                className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-emerald-700"
+                              >
+                                <HandCoins className="w-4 h-4" aria-hidden="true" /> Payer
+                              </button>
+                            )}
+                          </>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-sm text-emerald-700">
+                            <CheckCircle2 className="w-4 h-4" aria-hidden="true" /> À jour
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {ouvert === l.driverId && (
+                      <div className="mx-5 mb-4 grid grid-cols-1 gap-4 rounded-lg border border-slate-200 bg-slate-50 p-4 md:grid-cols-2">
+                        <dl className="space-y-1.5 text-sm">
+                          <Detail libelle="Gagné depuis le début" valeur={formatTND(l.totalGagne)} />
+                          <Detail libelle="Déjà payé" valeur={formatTND(l.totalPaye)} />
+                          <Detail libelle="Reste à payer" valeur={formatTND(l.resteAPayer)} fort />
+                          <Detail libelle={`Espèces encaissées ${phrase}`} valeur={formatTND(l.encaissePeriode)} />
+                          {l.especesNonValidees > 0 && (
+                            <Detail libelle="Espèces encore à valider en caisse" valeur={formatTND(l.especesNonValidees)} alerte />
+                          )}
+                        </dl>
+                        <div>
+                          <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            <History className="w-3.5 h-3.5" aria-hidden="true" /> Derniers paiements
+                          </p>
+                          {!historique[l.driverId] ? (
+                            <p className="mt-2 text-sm text-slate-400">Chargement…</p>
+                          ) : historique[l.driverId]!.length === 0 ? (
+                            <p className="mt-2 text-sm text-slate-500">Aucun paiement enregistré.</p>
+                          ) : (
+                            <ul className="mt-2 space-y-1 text-sm">
+                              {historique[l.driverId]!.slice(0, 5).map((p) => (
+                                <li key={p.id} className="flex justify-between gap-3">
+                                  <span className="text-slate-600">
+                                    {new Date(p.paidAt).toLocaleDateString('fr-TN')}
+                                    {p.note ? <span className="text-slate-400"> — {p.note}</span> : null}
+                                  </span>
+                                  <span className="font-medium tabular-nums">{formatTND(p.amount)}</span>
+                                </li>
+                              ))}
+                            </ul>
                           )}
                         </div>
-                      </Td>
-                    </Tr>
-                  ))
-                )}
-              </Tbody>
-            </Table>
-          </div>
-        </Card>
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+        </section>
       </div>
 
       <Modal
         isOpen={!!aPayer}
         onClose={() => !envoi && setAPayer(null)}
         title={aPayer ? `Payer ${aPayer.fullName}` : ''}
-        subtitle={aPayer ? `Reste à payer : ${formatTND(aPayer.resteAPayer)}` : undefined}
         size="sm"
         footer={
           <div className="flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => setAPayer(null)}
-              disabled={envoi}
-              className="px-3 py-1.5 rounded-md border border-slate-200 text-sm"
-            >
+            <button type="button" onClick={() => setAPayer(null)} disabled={envoi} className="px-3 py-1.5 rounded-md border border-slate-200 text-sm">
               Annuler
             </button>
             <button
@@ -341,21 +475,22 @@ export default function CaissePage() {
               onClick={() => void payer()}
               disabled={envoi}
               data-testid="caisse-confirmer-paiement"
-              className="px-3 py-1.5 rounded-md bg-emerald-600 text-white text-sm disabled:opacity-50"
+              className="px-3 py-1.5 rounded-md bg-emerald-600 text-white text-sm font-semibold disabled:opacity-50"
             >
-              {envoi ? 'Enregistrement…' : 'Confirmer le paiement'}
+              {envoi ? 'Enregistrement…' : `Confirmer le paiement`}
             </button>
           </div>
         }
       >
         {aPayer && (
-          <div className="space-y-3 text-sm">
-            <p className="text-slate-600">
-              {aPayer.livres} colis livré(s) et {aPayer.ramassages} ramassage(s) sur la période. Gagné depuis le
-              début : {formatTND(aPayer.totalGagne)}, déjà payé : {formatTND(aPayer.totalPaye)}.
-            </p>
+          <div className="space-y-4 text-sm">
+            <dl className="rounded-lg bg-slate-50 p-3 space-y-1.5">
+              <Detail libelle="Gagné depuis le début" valeur={formatTND(aPayer.totalGagne)} />
+              <Detail libelle="Déjà payé" valeur={`− ${formatTND(aPayer.totalPaye)}`} />
+              <Detail libelle="Reste à payer" valeur={formatTND(aPayer.resteAPayer)} fort />
+            </dl>
             <label className="block">
-              <span className="text-xs font-semibold text-slate-600">Montant (DT)</span>
+              <span className="text-xs font-semibold text-slate-600">Montant remis maintenant (DT)</span>
               <input
                 type="number"
                 min="0"
@@ -363,8 +498,9 @@ export default function CaissePage() {
                 value={montant}
                 onChange={(e) => setMontant(e.target.value)}
                 data-testid="caisse-montant"
-                className="mt-1 w-full border border-slate-200 rounded-md px-3 py-2"
+                className="mt-1 w-full border border-slate-200 rounded-md px-3 py-2 text-lg font-semibold tabular-nums"
               />
+              <span className="mt-1 block text-xs text-slate-500">Par défaut, tout le reste à payer. Un paiement partiel est possible.</span>
             </label>
             <label className="block">
               <span className="text-xs font-semibold text-slate-600">Note (facultatif)</span>
@@ -372,6 +508,7 @@ export default function CaissePage() {
                 type="text"
                 value={note}
                 maxLength={300}
+                placeholder="ex. paiement de la semaine"
                 onChange={(e) => setNote(e.target.value)}
                 className="mt-1 w-full border border-slate-200 rounded-md px-3 py-2"
               />
@@ -379,32 +516,126 @@ export default function CaissePage() {
           </div>
         )}
       </Modal>
+    </div>
+  );
+}
 
-      <Modal
-        isOpen={!!historique}
-        onClose={() => setHistorique(null)}
-        title={historique ? `Paiements — ${historique.livreur.fullName}` : ''}
-        size="md"
-      >
-        {historique && historique.lignes.length === 0 ? (
-          <p className="text-sm text-slate-500">Aucun paiement enregistré.</p>
-        ) : (
-          <ul className="divide-y divide-slate-100 text-sm">
-            {historique?.lignes.map((p) => (
-              <li key={p.id} className="py-2 flex justify-between gap-3">
-                <div>
-                  <div className="font-mono text-xs text-slate-500">{p.reference}</div>
-                  <div className="text-slate-700">
-                    {new Date(p.paidAt).toLocaleString('fr-TN')}
-                    {p.note ? ` — ${p.note}` : ''}
-                  </div>
-                </div>
-                <div className="font-mono font-bold">{formatTND(p.amount)}</div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Modal>
+function initiales(nom: string): string {
+  return nom
+    .replace(/\(.*?\)/g, '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((m) => m[0]?.toUpperCase())
+    .join('');
+}
+
+const TEINTES = {
+  amber: { fond: 'bg-amber-50', icone: 'bg-amber-100 text-amber-700', bouton: 'text-amber-800' },
+  sky: { fond: 'bg-sky-50', icone: 'bg-sky-100 text-sky-700', bouton: 'text-sky-800' },
+  violet: { fond: 'bg-violet-50', icone: 'bg-violet-100 text-violet-700', bouton: 'text-violet-800' },
+} as const;
+
+function Action({
+  icone,
+  titre,
+  montant,
+  explication,
+  lien,
+  action,
+  teinte,
+}: {
+  icone: React.ReactNode;
+  titre: string;
+  montant: number | undefined;
+  explication: string;
+  lien: string;
+  action: string;
+  teinte: keyof typeof TEINTES;
+}) {
+  const t = TEINTES[teinte];
+  const rien = montant !== undefined && montant <= 0;
+  return (
+    <div className={`flex flex-col rounded-xl border border-slate-200 bg-white p-5 shadow-xs`}>
+      <div className="flex items-center gap-3">
+        <span className={`flex h-10 w-10 items-center justify-center rounded-lg ${rien ? 'bg-emerald-50 text-emerald-600' : t.icone}`}>
+          {rien ? <CheckCircle2 className="w-5 h-5" aria-hidden="true" /> : icone}
+        </span>
+        <p className="font-semibold text-slate-800">{titre}</p>
+      </div>
+      <p className={`mt-4 text-3xl font-bold tabular-nums tracking-tight ${rien ? 'text-slate-400' : 'text-slate-900'}`}>
+        {montant === undefined ? '—' : formatTND(montant)}
+      </p>
+      <p className="mt-1 text-sm text-slate-500 flex-1">{rien ? 'Rien à faire : tout est à jour.' : explication}</p>
+      {!rien && montant !== undefined && (
+        <Link href={lien} className={`mt-4 inline-flex items-center gap-1 text-sm font-semibold ${t.bouton} hover:underline`}>
+          {action} <ArrowRight className="w-4 h-4" aria-hidden="true" />
+        </Link>
+      )}
+    </div>
+  );
+}
+
+function Ligne({
+  signe,
+  libelle,
+  aide,
+  montant,
+  couleur = 'text-slate-900',
+  total,
+}: {
+  signe?: string;
+  libelle: string;
+  aide: string;
+  montant: number;
+  couleur?: string;
+  total?: boolean;
+}) {
+  return (
+    <div className={`flex items-baseline justify-between gap-4 py-3 ${total ? 'border-t-2 border-slate-900 mt-1' : 'border-b border-slate-100'}`}>
+      <div className="flex gap-3">
+        <span className="w-4 text-center font-semibold text-slate-400">{signe}</span>
+        <div>
+          <p className={`text-sm ${total ? 'font-semibold text-slate-900' : 'text-slate-800'}`}>{libelle}</p>
+          <p className="text-xs text-slate-500">{aide}</p>
+        </div>
+      </div>
+      <p className={`tabular-nums ${total ? 'text-lg font-bold' : 'text-base font-medium'} ${couleur}`}>{formatTND(montant)}</p>
+    </div>
+  );
+}
+
+function Repartition({ total, parts }: { total: number; parts: { libelle: string; valeur: number; classe: string }[] }) {
+  const base = total > 0 ? total : parts.reduce((s, p) => s + p.valeur, 0) || 1;
+  return (
+    <div className="mt-3">
+      <div className="flex h-3 w-full overflow-hidden rounded-full bg-slate-200" role="img" aria-label="Répartition de l'argent encaissé">
+        {parts.map((p) => (
+          <div key={p.libelle} className={p.classe} style={{ width: `${Math.max((p.valeur / base) * 100, 0)}%` }} />
+        ))}
+      </div>
+      <ul className="mt-3 space-y-1.5 text-sm">
+        {parts.map((p) => (
+          <li key={p.libelle} className="flex items-center justify-between gap-3">
+            <span className="flex items-center gap-2 text-slate-600">
+              <span className={`h-2.5 w-2.5 rounded-sm ${p.classe}`} aria-hidden="true" />
+              {p.libelle}
+            </span>
+            <span className="tabular-nums text-slate-800">
+              {formatTND(p.valeur)} <span className="text-xs text-slate-400">({Math.round((p.valeur / base) * 100)} %)</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function Detail({ libelle, valeur, fort, alerte }: { libelle: string; valeur: string; fort?: boolean; alerte?: boolean }) {
+  return (
+    <div className="flex justify-between gap-3">
+      <dt className={alerte ? 'text-amber-700' : 'text-slate-500'}>{libelle}</dt>
+      <dd className={`tabular-nums ${fort ? 'font-bold text-slate-900' : alerte ? 'font-medium text-amber-700' : 'text-slate-800'}`}>{valeur}</dd>
     </div>
   );
 }
