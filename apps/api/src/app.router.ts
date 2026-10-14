@@ -20,6 +20,7 @@ import { searchController } from './modules/search/search.controller';
 import { auditController } from './modules/audit/audit.controller';
 import { reportsController } from './modules/reports/reports.controller';
 import { receptionController } from './modules/depot/reception.controller';
+import { caisseController } from './modules/caisse/caisse.controller';
 import {
   usersController,
   shippersController,
@@ -893,6 +894,33 @@ export function createApiRouter(): Router {
     asyncHandler((req, res) => paymentsController.rejectPayment(req, res))
   );
 
+  // Caisse : encaissements, net expéditeurs, frais de livraison et
+  // rémunération des livreurs (3 DT par livraison ou ramassage effectué).
+  router.get(
+    '/caisse/resume',
+    authenticateToken,
+    requirePermissions(PermissionCode.PAYMENT_CASH_READ),
+    asyncHandler((req, res) => caisseController.resume(req, res))
+  );
+  router.get(
+    '/caisse/livreurs',
+    authenticateToken,
+    requirePermissions(PermissionCode.PAYMENT_CASH_READ),
+    asyncHandler((req, res) => caisseController.livreurs(req, res))
+  );
+  router.get(
+    '/caisse/livreurs/:id/paiements',
+    authenticateToken,
+    requirePermissions(PermissionCode.PAYMENT_CASH_READ),
+    asyncHandler((req, res) => caisseController.paiementsLivreur(req, res))
+  );
+  router.post(
+    '/caisse/livreurs/:id/paiements',
+    authenticateToken,
+    requirePermissions(PermissionCode.PAYMENT_CASH_VALIDATE),
+    asyncHandler((req, res) => caisseController.payerLivreur(req, res))
+  );
+
   // Dépôts : le réseau est multi-sites, Ben Arous étant le dépôt principal.
   // La lecture est ouverte au livreur, qui doit savoir où se trouve un colis ;
   // l'écriture relève de l'exploitation.
@@ -1206,6 +1234,14 @@ export function createApiRouter(): Router {
     authenticateToken,
     requirePermissions(PermissionCode.COLIS_ASSIGN),
     asyncHandler((req, res) => zonesController.driverSuggestions(req, res))
+  );
+
+  // Gains du livreur connecté (3 DT par colis livré ou ramassage effectué).
+  router.get(
+    '/drivers/me/gains',
+    authenticateToken,
+    requireRoles(RoleType.LIVREUR),
+    asyncHandler((req, res) => caisseController.mesGains(req, res))
   );
 
   // Fiche du livreur connecté (application mobile) : déclarée avant `/:id`.
