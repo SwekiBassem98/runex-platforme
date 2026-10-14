@@ -64,6 +64,7 @@ const NAV_ROUTES: Record<string, string> = {
   caisse: '/caisse',
   'inter-depots': '/inter-depots',
   'inter-depots-retours': '/inter-depots/retours',
+  'retours-expediteur': '/retours-expediteur',
   inventaire: '/inventaire',
   rapports: '/rapports',
   audit: '/audit',
@@ -125,6 +126,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   // Demandes de changement de prix des expéditeurs : à approuver par
   // l'administration ; la pastille compte celles en attente.
   const peutDeciderPrix = user?.role === RoleType.ADMIN || user?.role === RoleType.GESTIONNAIRE;
+  const peutRendreRetours = peutDeciderPrix || user?.role === RoleType.AGENT_DEPOT;
   const [demandesPrix, setDemandesPrix] = React.useState(0);
   React.useEffect(() => {
     if (!peutDeciderPrix) return;
@@ -214,6 +216,15 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       label: 'Inter dépôt retours et échanges',
       icon: <Undo2 className="w-4 h-4" />,
     },
+    ...(peutRendreRetours
+      ? [
+          {
+            id: 'retours-expediteur',
+            label: 'Retours expéditeur',
+            icon: <PackageX className="w-4 h-4" />,
+          },
+        ]
+      : []),
     ...(peutConsulterRapports
       ? [
           {
@@ -351,6 +362,7 @@ const ACCES_ECRANS: { prefix: string; roles?: RoleType[]; permission?: Permissio
   { prefix: '/paiements', permission: PermissionCode.PAYMENT_CASH_READ },
   { prefix: '/finance', permission: PermissionCode.PAYMENT_CASH_READ },
   { prefix: '/caisse', permission: PermissionCode.PAYMENT_CASH_READ },
+  { prefix: '/retours-expediteur', roles: [RoleType.ADMIN, RoleType.GESTIONNAIRE, RoleType.AGENT_DEPOT] },
   { prefix: '/rapports', permission: PermissionCode.REPORT_READ },
   { prefix: '/recherche', permission: PermissionCode.SEARCH_GLOBAL },
   { prefix: '/audit', permission: PermissionCode.AUDIT_READ },

@@ -42,6 +42,57 @@ import { PackageType, type PackageDto } from '@logixpress/types';
 import { useI18n } from '@/i18n';
 import { VueColisCategorie } from '@/features/expediteur/colis/VueColisCategorie';
 import { STATUTS_RETOUR, useVocabulaire } from '@/features/expediteur/lib/libelles';
+import { retoursExpediteurApi, type BonRetour } from '@/lib/api';
+
+/**
+ * Bons de retour préparés par RUNEX : le code affiché est celui que
+ * l'expéditeur donne au guichet pour récupérer ses colis retournés.
+ */
+function BonsDeRetour() {
+  const { t, formatDateTime } = useI18n();
+  const [bons, setBons] = React.useState<BonRetour[]>([]);
+  React.useEffect(() => {
+    let actif = true;
+    retoursExpediteurApi
+      .bons()
+      .then((b) => actif && setBons(b.filter((x) => x.status !== 'ANNULE').slice(0, 20)))
+      .catch(() => undefined);
+    return () => {
+      actif = false;
+    };
+  }, []);
+  if (!bons.length) return null;
+  return (
+    <section className="bg-white border border-slate-200 rounded-lg p-4 space-y-2" aria-label={t('retours.bons.titre')}>
+      <h2 className="text-sm font-semibold text-slate-800">{t('retours.bons.titre')}</h2>
+      <ul className="divide-y divide-slate-100">
+        {bons.map((b) => (
+          <li key={b.id} className="py-2 flex flex-wrap items-center justify-between gap-2" data-testid={`bon-retour-${b.slipNumber}`}>
+            <div>
+              <p className="font-mono text-xs font-semibold text-slate-800" dir="ltr">
+                {b.slipNumber}
+              </p>
+              <p className="text-[11px] text-slate-500">
+                {t('retours.bons.colis', { n: b.packagesCount })} ·{' '}
+                {b.status === 'REMIS' && b.handedOverAt
+                  ? t('retours.bons.remisLe', { date: formatDateTime(b.handedOverAt) })
+                  : t('retours.bons.pret')}
+              </p>
+            </div>
+            {b.status === 'PREPARE' && b.handoverCode && (
+              <div className="text-end">
+                <p className="text-[10px] text-emerald-800">{t('retours.bons.code')}</p>
+                <p className="font-mono text-lg font-bold tracking-[0.3em] text-emerald-800" dir="ltr" data-testid="code-bon-retour">
+                  {b.handoverCode}
+                </p>
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
 
 /**
  * Les deux ensembles, décrits par la clé de leur libellé et de leur aide.
@@ -121,6 +172,7 @@ export function VueRetours() {
 
   return (
     <div className="space-y-4">
+      <BonsDeRetour />
       <nav aria-label={t('retours.titre')} className="flex gap-2 overflow-x-auto pb-1">
         {ENSEMBLES.map((e) => (
           <button

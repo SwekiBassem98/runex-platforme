@@ -1048,9 +1048,81 @@ export const demandesPrixApi = {
     }),
 };
 
+export interface ColisARendre {
+  id: string;
+  trackingNumber: string;
+  status: string;
+  customerName: string;
+  governorate: string | null;
+  pieceCount: number;
+  totalPrice: number;
+  returnFee: number;
+  reason: string | null;
+  depositName: string | null;
+  returnedAt: string;
+}
+
+export interface GroupeRetours {
+  shipperId: string;
+  shipperName: string;
+  shipperPhone: string | null;
+  colis: ColisARendre[];
+}
+
+export interface BonRetour {
+  id: string;
+  slipNumber: string;
+  status: 'PREPARE' | 'REMIS' | 'ANNULE';
+  shipperId: string;
+  shipperName: string;
+  shipperPhone: string | null;
+  shipperAddress: string | null;
+  packagesCount: number;
+  handoverCode?: string;
+  createdBy: string | null;
+  createdAt: string;
+  handedOverAt: string | null;
+  handedOverBy: string | null;
+  receiverName: string | null;
+  notes: string | null;
+  colis?: ColisARendre[];
+}
+
+/** Retours expéditeur : colis à rendre, bons de retour, remise par code. */
+export const retoursExpediteurApi = {
+  aRendre: (shipperId?: string) =>
+    requestData<GroupeRetours[]>('/retours-expediteur/a-rendre', { query: { shipperId } }),
+  bons: (params?: { status?: string; shipperId?: string }) =>
+    requestData<BonRetour[]>('/retours-expediteur/bons', { query: params }),
+  bon: (id: string) => requestData<BonRetour>(`/retours-expediteur/bons/${encodeURIComponent(id)}`),
+  creer: (payload: { shipperId: string; packageIds?: string[]; notes?: string }) =>
+    request<BonRetour>('/retours-expediteur/bons', { method: 'POST', body: payload }),
+  remettre: (id: string, payload: { code: string; receiverName?: string }) =>
+    request<BonRetour>(`/retours-expediteur/bons/${encodeURIComponent(id)}/remettre`, { method: 'POST', body: payload }),
+  annuler: (id: string) =>
+    request<BonRetour>(`/retours-expediteur/bons/${encodeURIComponent(id)}/annuler`, { method: 'POST' }),
+};
+
+export interface CandidatsBordereau {
+  shipperId: string;
+  shipperName: string;
+  livres: number;
+  retournes: number;
+  encaisse: number;
+  fraisLivraison: number;
+  fraisRetour: number;
+  netEstime: number;
+}
+
 export const paymentsApi = {
   list: (params?: Record<string, QueryValue>) =>
     request<PaymentVoucherDto[]>('/payments/vouchers', { query: params }),
+  candidats: () => requestData<CandidatsBordereau[]>('/payments/vouchers/candidats'),
+  creer: (payload: { shipperId: string; packageIds?: string[]; notes?: string }) =>
+    request<PaymentVoucherDto>('/payments/vouchers', { method: 'POST', body: payload }),
+  detail: (id: string) => requestData<PaymentVoucherDto>(`/payments/vouchers/${encodeURIComponent(id)}`),
+  annuler: (id: string) =>
+    request<PaymentVoucherDto>(`/payments/vouchers/${encodeURIComponent(id)}/annuler`, { method: 'POST' }),
   validate: (voucherNumber: string, payload: unknown) =>
     request<PaymentVoucherDto>(
       `/payments/vouchers/${encodeURIComponent(voucherNumber)}/validate`,
