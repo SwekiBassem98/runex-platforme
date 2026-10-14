@@ -948,6 +948,67 @@ export const ramassagesApi = {
     request<PickupAppointmentDto>(`/ramassages/${encodeURIComponent(id)}/cancel`, { method: 'PATCH' }),
 };
 
+/** Caisse de la société (encaissements, net, frais, rémunération livreurs). */
+export interface ResumeCaisse {
+  periode: { from: string | null; to: string | null };
+  tarifLivreur: number;
+  encaisse: number;
+  encaisseValide: number;
+  encaisseEnAttente: number;
+  colisLivres: number;
+  colisRetournes: number;
+  fraisLivraison: number;
+  fraisRetour: number;
+  netExpediteurs: number;
+  payeExpediteurs: number;
+  resteExpediteurs: number;
+  ramassagesEffectues: number;
+  remunerationLivreurs: number;
+  payeLivreurs: number;
+  resteLivreurs: number;
+  margeNette: number;
+}
+
+export interface LigneCaisseLivreur {
+  driverId: string;
+  driverCode: string;
+  fullName: string;
+  depositName: string | null;
+  livres: number;
+  ramassages: number;
+  gainPeriode: number;
+  encaissePeriode: number;
+  especesNonValidees: number;
+  totalGagne: number;
+  totalPaye: number;
+  resteAPayer: number;
+  dernierPaiement: string | null;
+}
+
+export interface PaiementLivreur {
+  id: string;
+  reference: string;
+  amount: number;
+  deliveredCount: number;
+  pickupCount: number;
+  note: string | null;
+  paidAt: string;
+}
+
+export const caisseApi = {
+  resume: (params?: { from?: string; to?: string }) =>
+    requestData<ResumeCaisse>('/caisse/resume', { query: params }),
+  livreurs: (params?: { from?: string; to?: string }) =>
+    requestData<LigneCaisseLivreur[]>('/caisse/livreurs', { query: params }),
+  paiements: (driverId: string) =>
+    requestData<PaiementLivreur[]>(`/caisse/livreurs/${encodeURIComponent(driverId)}/paiements`),
+  payer: (driverId: string, payload: { amount?: number; note?: string }) =>
+    request<{ reference: string; amount: number; resteAPayer: number }>(
+      `/caisse/livreurs/${encodeURIComponent(driverId)}/paiements`,
+      { method: 'POST', body: payload }
+    ),
+};
+
 export const paymentsApi = {
   list: (params?: Record<string, QueryValue>) =>
     request<PaymentVoucherDto[]>('/payments/vouchers', { query: params }),

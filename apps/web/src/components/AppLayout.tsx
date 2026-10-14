@@ -57,6 +57,7 @@ const NAV_ROUTES: Record<string, string> = {
   ramassages: '/ramassages',
   paiements: '/paiements',
   finance: '/finance',
+  caisse: '/caisse',
   'inter-depots': '/inter-depots',
   'inter-depots-retours': '/inter-depots/retours',
   inventaire: '/inventaire',
@@ -157,6 +158,11 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           {
             id: 'finance',
             label: 'Finance',
+            icon: <Wallet className="w-4 h-4" />,
+          },
+          {
+            id: 'caisse',
+            label: 'Caisse société & livreurs',
             icon: <Wallet className="w-4 h-4" />,
           },
         ]
@@ -306,6 +312,7 @@ const ACCES_ECRANS: { prefix: string; roles?: RoleType[]; permission?: Permissio
   { prefix: '/paiements/bordereaux', permission: PermissionCode.PAYMENT_READ },
   { prefix: '/paiements', permission: PermissionCode.PAYMENT_CASH_READ },
   { prefix: '/finance', permission: PermissionCode.PAYMENT_CASH_READ },
+  { prefix: '/caisse', permission: PermissionCode.PAYMENT_CASH_READ },
   { prefix: '/rapports', permission: PermissionCode.REPORT_READ },
   { prefix: '/recherche', permission: PermissionCode.SEARCH_GLOBAL },
   { prefix: '/audit', permission: PermissionCode.AUDIT_READ },
