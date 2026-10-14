@@ -527,8 +527,8 @@ model DeliveryZone {
   /// Vrai si la zone a été créée automatiquement à la saisie d'un colis
   /// (adresse jamais vue). L'exploitation peut ensuite la renommer, changer
   /// son agence ou la désactiver.
-  autoCreated     Boolean  @default(false)
-  updatedAt       DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+  autoCreated Boolean  @default(false)
+  updatedAt   DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
   deposit   Deposit           @relation(fields: [depositId], references: [id], onDelete: Restrict)
   addresses CustomerAddress[]
@@ -703,6 +703,7 @@ model Driver {
   assignedPackages Package[]            @relation("DriverPackages")
   runsheets        Runsheet[]
   payouts          DriverPayout[]
+  returnSlips      ReturnSlip[]
   pickupJobs       PickupAppointment[]
   interDepotDrives InterDepotTransfer[]
   deliveryAttempts DeliveryAttempt[]
@@ -800,11 +801,11 @@ model Package {
   currentDeposit     Deposit? @relation("CurrentDeposit", fields: [currentDepositId], references: [id], onDelete: Restrict)
   destinationDeposit Deposit  @relation("DestinationDeposit", fields: [destinationDepositId], references: [id], onDelete: Restrict)
 
-  currentRunsheet    Runsheet?           @relation(fields: [currentRunsheetId], references: [id], onDelete: SetNull)
-  interDepotTransfer InterDepotTransfer? @relation(fields: [interDepotTransferId], references: [id], onDelete: SetNull)
-  pickupAppointment  PickupAppointment?  @relation(fields: [pickupAppointmentId], references: [id], onDelete: SetNull)
-  paymentVoucher     PaymentVoucher?     @relation(fields: [paymentVoucherId], references: [id], onDelete: SetNull)
-  returnSlip         ReturnSlip?         @relation(fields: [returnSlipId], references: [id], onDelete: SetNull)
+  currentRunsheet     Runsheet?            @relation(fields: [currentRunsheetId], references: [id], onDelete: SetNull)
+  interDepotTransfer  InterDepotTransfer?  @relation(fields: [interDepotTransferId], references: [id], onDelete: SetNull)
+  pickupAppointment   PickupAppointment?   @relation(fields: [pickupAppointmentId], references: [id], onDelete: SetNull)
+  paymentVoucher      PaymentVoucher?      @relation(fields: [paymentVoucherId], references: [id], onDelete: SetNull)
+  returnSlip          ReturnSlip?          @relation(fields: [returnSlipId], references: [id], onDelete: SetNull)
   priceChangeRequests PriceChangeRequest[]
 
   items            PackageItem[]
@@ -941,29 +942,34 @@ model PartialDelivery {
 }
 
 model ExchangeRecord {
-  id                  String    @id @default(uuid()) @db.Uuid
-  packageId           String    @unique @db.Uuid
-  newPackageBarcode   String    @db.VarChar(50)
-  oldPackageBarcode   String    @db.VarChar(50) // Code de l'article repris
-  returnedItemSummary String    @db.VarChar(255)
+  id                  String      @id @default(uuid()) @db.Uuid
+  packageId           String      @unique @db.Uuid
+  newPackageBarcode   String      @db.VarChar(50)
+  oldPackageBarcode   String      @db.VarChar(50) // Code de l'article repris
+  returnedItemSummary String      @db.VarChar(255)
   // Ce que l'échange coûte au client : à payer quand la marchandise de
   // remplacement vaut plus, à rembourser quand elle vaut moins, nul quand
   // l'échange est à valeur égale. Nul est un résultat, pas une absence :
   // sans cette colonne, impossible de distinguer « échange à valeur égale »
   // de « personne n'a jamais calculé l'écart ».
-  financialDifference Decimal?  @db.Decimal(10, 3)
+  financialDifference Decimal?    @db.Decimal(10, 3)
   // Le livreur n'est pas déductible de l'horodatage : deux livreurs peuvent
   // intervenir sur un même échange (remise, puis vérification au dépôt).
-  driverId            String?   @db.Uuid
-  isOldItemReceived   Boolean   @default(false)
-  driver              Driver?   @relation(fields: [driverId], references: [id], onDelete: SetNull)
-  verifiedAtDepositId String?   @db.Uuid
-  validatedAt         DateTime? @db.Timestamptz(6)
-  createdAt           DateTime  @default(now()) @db.Timestamptz(6)
+  driverId            String?     @db.Uuid
+  isOldItemReceived   Boolean     @default(false)
+  driver              Driver?     @relation(fields: [driverId], references: [id], onDelete: SetNull)
+  verifiedAtDepositId String?     @db.Uuid
+  validatedAt         DateTime?   @db.Timestamptz(6)
+  createdAt           DateTime    @default(now()) @db.Timestamptz(6)
+  /// Article repris rendu à l'expéditeur par un bon de retour.
+  returnSlipId        String?     @db.Uuid
+  returnedToShipperAt DateTime?   @db.Timestamptz(6)
+  returnSlip          ReturnSlip? @relation(fields: [returnSlipId], references: [id], onDelete: SetNull)
 
   package Package @relation(fields: [packageId], references: [id], onDelete: Cascade)
 
   @@index([packageId])
+  @@index([returnSlipId])
 }
 
 // ==============================================================================
@@ -1393,6 +1399,7 @@ model PriceChangeRequest {
 
 enum ReturnSlipStatus {
   PREPARE
+  EN_COURS
   REMIS
   ANNULE
 }
@@ -1400,23 +1407,32 @@ enum ReturnSlipStatus {
 /// Bon de retour : les colis retournés rendus ensemble à un expéditeur. La
 /// remise est confirmée par le code que l'expéditeur lit dans son portail.
 model ReturnSlip {
-  id               String           @id @default(uuid()) @db.Uuid
-  slipNumber       String           @unique @db.VarChar(40) // BR-20261015-0001
-  shipperId        String           @db.Uuid
-  status           ReturnSlipStatus @default(PREPARE)
-  handoverCode     String           @db.VarChar(12)
-  packagesCount    Int              @default(0)
-  createdByUserId  String?          @db.Uuid
-  handedOverAt     DateTime?        @db.Timestamptz(6)
-  handedOverById   String?          @db.Uuid
-  receiverName     String?          @db.VarChar(150)
-  notes            String?          @db.VarChar(255)
-  createdAt        DateTime         @default(now()) @db.Timestamptz(6)
-  updatedAt        DateTime         @updatedAt @db.Timestamptz(6)
+  id              String           @id @default(uuid()) @db.Uuid
+  slipNumber      String           @unique @db.VarChar(40) // BR-20261015-0001
+  shipperId       String           @db.Uuid
+  status          ReturnSlipStatus @default(PREPARE)
+  handoverCode    String?          @db.VarChar(12)
+  packagesCount   Int              @default(0)
+  /// Livreur qui porte le bon chez l'expéditeur, et son véhicule.
+  driverId        String?          @db.Uuid
+  vehiclePlate    String?          @db.VarChar(30)
+  plannedDate     DateTime?        @db.Date
+  departedAt      DateTime?        @db.Timestamptz(6)
+  createdByUserId String?          @db.Uuid
+  handedOverAt    DateTime?        @db.Timestamptz(6)
+  handedOverById  String?          @db.Uuid
+  receiverName    String?          @db.VarChar(150)
+  notes           String?          @db.VarChar(255)
+  createdAt       DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime         @updatedAt @db.Timestamptz(6)
 
-  shipper  Shipper   @relation(fields: [shipperId], references: [id], onDelete: Restrict)
-  packages Package[]
+  shipper   Shipper          @relation(fields: [shipperId], references: [id], onDelete: Restrict)
+  packages  Package[]
+  driver    Driver?          @relation(fields: [driverId], references: [id], onDelete: SetNull)
+  exchanges ExchangeRecord[]
 
   @@index([shipperId])
   @@index([status])
+  @@index([driverId])
+  @@index([createdAt])
 }

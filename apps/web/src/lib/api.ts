@@ -957,6 +957,8 @@ export interface ResumeCaisse {
   encaisseEnAttente: number;
   colisLivres: number;
   colisRetournes: number;
+  encaisseColisLivres: number;
+  especesAValider: number;
   fraisLivraison: number;
   fraisRetour: number;
   netExpediteurs: number;
@@ -1048,59 +1050,79 @@ export const demandesPrixApi = {
     }),
 };
 
-export interface ColisARendre {
+export type EtatBonRetour = 'PREPARE' | 'EN_COURS' | 'REMIS' | 'ANNULE';
+
+export interface ColisBonRetour {
   id: string;
+  kind: 'COLIS' | 'ECHANGE';
   trackingNumber: string;
+  barcode: string;
   status: string;
-  customerName: string;
-  governorate: string | null;
+  statusLabel: string;
+  content: string;
   pieceCount: number;
-  totalPrice: number;
-  returnFee: number;
+  amount: number;
+  customerName: string;
+  customerPhone: string | null;
+  address: string;
   reason: string | null;
   depositName: string | null;
-  returnedAt: string;
-}
-
-export interface GroupeRetours {
-  shipperId: string;
-  shipperName: string;
-  shipperPhone: string | null;
-  colis: ColisARendre[];
+  date: string;
 }
 
 export interface BonRetour {
   id: string;
   slipNumber: string;
-  status: 'PREPARE' | 'REMIS' | 'ANNULE';
+  status: EtatBonRetour;
+  statusLabel: string;
+  nextStatuses: { status: EtatBonRetour; label: string }[];
   shipperId: string;
   shipperName: string;
-  shipperPhone: string | null;
-  shipperAddress: string | null;
-  packagesCount: number;
-  handoverCode?: string;
-  createdBy: string | null;
+  driverId: string | null;
+  driverName: string | null;
+  vehiclePlate: string | null;
+  plannedDate: string | null;
+  colisCount: number;
+  piecesCount: number;
   createdAt: string;
+  createdBy: string | null;
+  departedAt: string | null;
   handedOverAt: string | null;
   handedOverBy: string | null;
   receiverName: string | null;
   notes: string | null;
-  colis?: ColisARendre[];
 }
 
-/** Retours expéditeur : colis à rendre, bons de retour, remise par code. */
+export interface BonRetourDetail extends BonRetour {
+  shipperPhone: string | null;
+  shipperAddress: string | null;
+  depositName: string | null;
+  colis: ColisBonRetour[];
+  colisAuDepot: ColisBonRetour[];
+  echangesAuDepot: ColisBonRetour[];
+}
+
+export interface ExpediteurARendre {
+  shipperId: string;
+  shipperName: string;
+  colis: number;
+  echanges: number;
+}
+
+/** Retours expéditeur (comme ADEX) : bons, livreur, scan, état. */
 export const retoursExpediteurApi = {
-  aRendre: (shipperId?: string) =>
-    requestData<GroupeRetours[]>('/retours-expediteur/a-rendre', { query: { shipperId } }),
-  bons: (params?: { status?: string; shipperId?: string }) =>
+  aRendre: () => requestData<ExpediteurARendre[]>('/retours-expediteur/a-rendre'),
+  bons: (params?: { status?: string; shipperId?: string; driverId?: string; from?: string; to?: string; q?: string }) =>
     requestData<BonRetour[]>('/retours-expediteur/bons', { query: params }),
-  bon: (id: string) => requestData<BonRetour>(`/retours-expediteur/bons/${encodeURIComponent(id)}`),
-  creer: (payload: { shipperId: string; packageIds?: string[]; notes?: string }) =>
-    request<BonRetour>('/retours-expediteur/bons', { method: 'POST', body: payload }),
-  remettre: (id: string, payload: { code: string; receiverName?: string }) =>
-    request<BonRetour>(`/retours-expediteur/bons/${encodeURIComponent(id)}/remettre`, { method: 'POST', body: payload }),
-  annuler: (id: string) =>
-    request<BonRetour>(`/retours-expediteur/bons/${encodeURIComponent(id)}/annuler`, { method: 'POST' }),
+  bon: (id: string) => requestData<BonRetourDetail>(`/retours-expediteur/bons/${encodeURIComponent(id)}`),
+  creer: (payload: { shipperId: string; driverId?: string; vehiclePlate?: string; plannedDate?: string }) =>
+    request<BonRetourDetail>('/retours-expediteur/bons', { method: 'POST', body: payload }),
+  modifier: (id: string, payload: { driverId?: string | null; vehiclePlate?: string; plannedDate?: string; notes?: string }) =>
+    request<BonRetourDetail>(`/retours-expediteur/bons/${encodeURIComponent(id)}`, { method: 'PATCH', body: payload }),
+  scanner: (id: string, payload: { code: string; mode: 'ajouter' | 'retirer' }) =>
+    request<BonRetourDetail>(`/retours-expediteur/bons/${encodeURIComponent(id)}/scan`, { method: 'POST', body: payload }),
+  changerEtat: (id: string, payload: { status: EtatBonRetour; receiverName?: string }) =>
+    request<BonRetourDetail>(`/retours-expediteur/bons/${encodeURIComponent(id)}/etat`, { method: 'POST', body: payload }),
 };
 
 export interface CandidatsBordereau {

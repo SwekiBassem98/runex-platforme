@@ -947,8 +947,8 @@ export function createApiRouter(): Router {
     asyncHandler((req, res) => paymentsController.rejectPayment(req, res))
   );
 
-  // Retours expéditeur : colis retournés groupés par expéditeur, bons de
-  // retour imprimables, remise confirmée par le code donné par l'expéditeur.
+  // Retours expéditeur (comme ADEX) : bon créé pour un expéditeur, porté par
+  // un livreur, colis ajoutés/retirés au scan, état suivi jusqu'à la remise.
   const EXPLOITATION_RETOURS = [RoleType.ADMIN, RoleType.GESTIONNAIRE, RoleType.AGENT_DEPOT];
   router.get(
     '/retours-expediteur/a-rendre',
@@ -974,18 +974,23 @@ export function createApiRouter(): Router {
     requireRoles(...EXPLOITATION_RETOURS),
     asyncHandler((req, res) => retoursExpediteurController.creer(req, res))
   );
-  router.post(
-    '/retours-expediteur/bons/:id/remettre',
+  router.patch(
+    '/retours-expediteur/bons/:id',
     authenticateToken,
     requireRoles(...EXPLOITATION_RETOURS),
-    voucherSecretLimiter,
-    asyncHandler((req, res) => retoursExpediteurController.remettre(req, res))
+    asyncHandler((req, res) => retoursExpediteurController.modifier(req, res))
   );
   router.post(
-    '/retours-expediteur/bons/:id/annuler',
+    '/retours-expediteur/bons/:id/scan',
     authenticateToken,
     requireRoles(...EXPLOITATION_RETOURS),
-    asyncHandler((req, res) => retoursExpediteurController.annuler(req, res))
+    asyncHandler((req, res) => retoursExpediteurController.scanner(req, res))
+  );
+  router.post(
+    '/retours-expediteur/bons/:id/etat',
+    authenticateToken,
+    requireRoles(...EXPLOITATION_RETOURS),
+    asyncHandler((req, res) => retoursExpediteurController.changerEtat(req, res))
   );
 
   // Caisse : encaissements, net expéditeurs, frais de livraison et

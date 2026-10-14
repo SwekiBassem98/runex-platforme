@@ -15,15 +15,22 @@ function acteur(req: AuthenticatedRequest): ActeurRetour {
 }
 
 export class RetoursExpediteurController {
-  /** `GET /retours-expediteur/a-rendre?shipperId=` */
+  /** `GET /retours-expediteur/a-rendre` — par expéditeur, colis et articles d'échange en attente. */
   async aRendre(req: AuthenticatedRequest, res: Response): Promise<void> {
-    const data = await retoursExpediteurService.aRendre(acteur(req), q(req.query.shipperId));
-    res.json({ success: true, data, meta: { expediteurs: data.length, colis: data.reduce((s, g) => s + g.colis.length, 0) } });
+    const data = await retoursExpediteurService.aRendre(acteur(req));
+    res.json({ success: true, data });
   }
 
-  /** `GET /retours-expediteur/bons?status=&shipperId=` */
+  /** `GET /retours-expediteur/bons?status=&shipperId=&driverId=&from=&to=&q=` */
   async lister(req: AuthenticatedRequest, res: Response): Promise<void> {
-    const data = await retoursExpediteurService.lister(acteur(req), { status: q(req.query.status), shipperId: q(req.query.shipperId) });
+    const data = await retoursExpediteurService.lister(acteur(req), {
+      status: q(req.query.status),
+      shipperId: q(req.query.shipperId),
+      driverId: q(req.query.driverId),
+      from: q(req.query.from),
+      to: q(req.query.to),
+      q: q(req.query.q),
+    });
     res.json({ success: true, data, meta: { total: data.length } });
   }
 
@@ -32,22 +39,28 @@ export class RetoursExpediteurController {
     res.json({ success: true, data: await retoursExpediteurService.detail(String(req.params.id), acteur(req)) });
   }
 
-  /** `POST /retours-expediteur/bons` — `{ shipperId, packageIds?, notes? }` */
+  /** `POST /retours-expediteur/bons` — `{ shipperId, driverId?, vehiclePlate?, plannedDate? }` */
   async creer(req: AuthenticatedRequest, res: Response): Promise<void> {
     const data = await retoursExpediteurService.creer(req.body ?? {}, acteur(req));
-    res.status(201).json({ success: true, data, message: `Bon ${data.slipNumber} préparé (${data.packagesCount} colis).` });
+    res.status(201).json({ success: true, data, message: `Bon de retour ${data.slipNumber} créé pour ${data.shipperName}.` });
   }
 
-  /** `POST /retours-expediteur/bons/:id/remettre` — `{ code, receiverName? }` */
-  async remettre(req: AuthenticatedRequest, res: Response): Promise<void> {
-    const data = await retoursExpediteurService.remettre(String(req.params.id), req.body ?? {}, acteur(req));
-    res.json({ success: true, data, message: `Bon ${data.slipNumber} : ${data.packagesCount} colis remis à ${data.shipperName}.` });
+  /** `PATCH /retours-expediteur/bons/:id` — `{ driverId?, vehiclePlate?, plannedDate?, notes? }` */
+  async modifier(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const data = await retoursExpediteurService.modifier(String(req.params.id), req.body ?? {}, acteur(req));
+    res.json({ success: true, data, message: `Bon ${data.slipNumber} enregistré.` });
   }
 
-  /** `POST /retours-expediteur/bons/:id/annuler` */
-  async annuler(req: AuthenticatedRequest, res: Response): Promise<void> {
-    const data = await retoursExpediteurService.annuler(String(req.params.id), acteur(req));
-    res.json({ success: true, data, message: `Bon ${data.slipNumber} annulé.` });
+  /** `POST /retours-expediteur/bons/:id/scan` — `{ code, mode: 'ajouter' | 'retirer' }` */
+  async scanner(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const { bon, message } = await retoursExpediteurService.scanner(String(req.params.id), req.body ?? {}, acteur(req));
+    res.json({ success: true, data: bon, message });
+  }
+
+  /** `POST /retours-expediteur/bons/:id/etat` — `{ status, receiverName? }` */
+  async changerEtat(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const { bon, message } = await retoursExpediteurService.changerEtat(String(req.params.id), req.body ?? {}, acteur(req));
+    res.json({ success: true, data: bon, message });
   }
 }
 

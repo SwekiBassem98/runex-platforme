@@ -171,7 +171,8 @@ export const PACKAGE_STATUS_TRANSITIONS: Readonly<Record<PackageStatus, readonly
     // Retour rendu à l'agence de l'expéditeur par inter-dépôt retours.
     PackageStatus.EN_TRANSIT_INTER_DEPOT,
   ],
-  [PackageStatus.EN_RUNSHEET_RETOUR]: [PackageStatus.RETOURNE_EXPEDITEUR],
+  // Bon de retour : remis à l'expéditeur, ou revenu au dépôt (non remis).
+  [PackageStatus.EN_RUNSHEET_RETOUR]: [PackageStatus.RETOURNE_EXPEDITEUR, PackageStatus.RETOUR_DEPOT],
 
   // --- États terminaux ---
   [PackageStatus.LIVRE]: [],

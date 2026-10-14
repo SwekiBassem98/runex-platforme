@@ -45,8 +45,8 @@ import { STATUTS_RETOUR, useVocabulaire } from '@/features/expediteur/lib/libell
 import { retoursExpediteurApi, type BonRetour } from '@/lib/api';
 
 /**
- * Bons de retour préparés par RUNEX : le code affiché est celui que
- * l'expéditeur donne au guichet pour récupérer ses colis retournés.
+ * Bons de retour : les colis que RUNEX rend à l'expéditeur, le livreur qui
+ * les porte et où en est la restitution.
  */
 function BonsDeRetour() {
   const { t, formatDateTime } = useI18n();
@@ -55,13 +55,19 @@ function BonsDeRetour() {
     let actif = true;
     retoursExpediteurApi
       .bons()
-      .then((b) => actif && setBons(b.filter((x) => x.status !== 'ANNULE').slice(0, 20)))
+      .then((b) => actif && setBons(b.filter((x) => x.status !== 'ANNULE' && x.colisCount > 0).slice(0, 20)))
       .catch(() => undefined);
     return () => {
       actif = false;
     };
   }, []);
   if (!bons.length) return null;
+  const etat = (b: BonRetour) =>
+    b.status === 'REMIS'
+      ? t('retours.bons.remisLe', { date: formatDateTime(b.handedOverAt ?? b.createdAt) })
+      : b.status === 'EN_COURS'
+        ? t('retours.bons.enRoute', { livreur: b.driverName ?? '—' })
+        : t('retours.bons.enPreparation');
   return (
     <section className="bg-white border border-slate-200 rounded-lg p-4 space-y-2" aria-label={t('retours.bons.titre')}>
       <h2 className="text-sm font-semibold text-slate-800">{t('retours.bons.titre')}</h2>
@@ -72,21 +78,19 @@ function BonsDeRetour() {
               <p className="font-mono text-xs font-semibold text-slate-800" dir="ltr">
                 {b.slipNumber}
               </p>
-              <p className="text-[11px] text-slate-500">
-                {t('retours.bons.colis', { n: b.packagesCount })} ·{' '}
-                {b.status === 'REMIS' && b.handedOverAt
-                  ? t('retours.bons.remisLe', { date: formatDateTime(b.handedOverAt) })
-                  : t('retours.bons.pret')}
-              </p>
+              <p className="text-[11px] text-slate-500">{t('retours.bons.colis', { n: b.colisCount })}</p>
             </div>
-            {b.status === 'PREPARE' && b.handoverCode && (
-              <div className="text-end">
-                <p className="text-[10px] text-emerald-800">{t('retours.bons.code')}</p>
-                <p className="font-mono text-lg font-bold tracking-[0.3em] text-emerald-800" dir="ltr" data-testid="code-bon-retour">
-                  {b.handoverCode}
-                </p>
-              </div>
-            )}
+            <span
+              className={`text-[11px] font-medium px-2 py-0.5 rounded-full border ${
+                b.status === 'REMIS'
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  : b.status === 'EN_COURS'
+                    ? 'bg-blue-50 text-blue-700 border-blue-200'
+                    : 'bg-slate-100 text-slate-700 border-slate-200'
+              }`}
+            >
+              {etat(b)}
+            </span>
           </li>
         ))}
       </ul>

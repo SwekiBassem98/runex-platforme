@@ -1,5 +1,5 @@
 /**
- * QA 33 (écrans) — caisse, demandes de prix, retours expéditeur, bordereaux
+ * QA 33 (écrans) — caisse, demandes de prix, bordereaux
  * payés par code, portail (codes, prix + 8 DT), inter-dépôt sans dépôt de
  * départ, filtre expéditeur. Prépare ses données par l'API, puis clique.
  *
@@ -44,8 +44,7 @@ const codeV=await e.$eval('[data-testid=code-retrait] span.font-mono',x=>x.inner
 ok(/^\d{6}$/.test(codeV??''),'portail : code de retrait du bordereau affiché',codeV);
 await e.screenshot({path:S+'/portail-bordereaux.png',fullPage:true});
 await e.goto(W+'/expediteur/retours',{waitUntil:'networkidle2'});await sleep(1500);
-const codeR=await e.$eval('[data-testid=code-bon-retour]',x=>x.innerText.trim()).catch(()=>null);
-ok(/^\d{6}$/.test(codeR??''),'portail : code du bon de retour affiché',codeR);
+ok(/Bons de retour/.test(await e.evaluate(()=>document.body.innerText)),'portail : bons de retour listés (sans code)');
 await e.screenshot({path:S+'/portail-retours.png'});
 // Portal: create form shows fee and total
 await e.goto(W+'/expediteur/colis/nouveau',{waitUntil:'networkidle2'});await sleep(1200);
@@ -59,7 +58,7 @@ ok(!e.errs.some(x=>!/favicon|401|404/.test(x)),'portail : aucune erreur console'
 const a=await login('/connexion','admin@logixpress.tn','Admin123!');
 // Caisse
 await a.goto(W+'/caisse',{waitUntil:'networkidle2'});await sleep(1500);
-let t=await txt(a); ok(t.includes('Paiement des livreurs')&&/marge nette/i.test(t),'caisse : KPI et tableau livreurs');
+let t=await txt(a); ok(t.includes('Paiement des livreurs')&&/bénéfice net/i.test(t),'caisse : KPI et tableau livreurs');
 await clickText(a,'button','Depuis le début');await sleep(1200);
 await a.screenshot({path:S+'/caisse.png',fullPage:true});
 const payer=await a.$('[data-testid=caisse-payer]:not([disabled])');
@@ -71,14 +70,7 @@ await a.screenshot({path:S+'/demandes-prix.png',fullPage:true});
 const ap=await a.$('[data-testid=approuver-prix]'); ok(!!ap,'demande en attente listée');
 if(ap){await ap.click();await sleep(400);await a.click('[data-testid=confirmer-decision-prix]');await sleep(1500);t=await txt(a);ok(t.includes('Nouveau prix appliqué'),'approbation depuis l’écran');}
 // Retours expéditeur
-await a.goto(W+'/retours-expediteur',{waitUntil:'networkidle2'});await sleep(1500);
-await a.screenshot({path:S+'/retours-a-rendre.png',fullPage:true});
-t=await txt(a);ok(t.includes('Préparer le bon de retour'),'retours : groupe à rendre');
-await clickText(a,'button[role=tab]','Bons préparés');await sleep(1200);
-await a.screenshot({path:S+'/retours-bons.png',fullPage:true});
-const rem=await a.$('[data-testid=remettre-bon]');ok(!!rem,'bon préparé listé');
-if(rem){await rem.click();await sleep(400);await a.type('[data-testid=code-remise]','000000');await a.click('[data-testid=confirmer-remise]');await sleep(1200);t=await txt(a);ok(t.includes('Code incorrect'),'mauvais code : refus affiché');
- await a.click('[data-testid=code-remise]',{clickCount:3});await a.type('[data-testid=code-remise]',codeR??'');await a.click('[data-testid=confirmer-remise]');await sleep(1500);t=await txt(a);ok(/colis remis à/.test(t),'remise confirmée avec le code');}
+// Retours expéditeur : parcours complet dans qa-retours-adex-ecran-34.mjs.
 // Bordereaux
 await a.goto(W+'/paiements/bordereaux',{waitUntil:'networkidle2'});await sleep(1500);
 await a.screenshot({path:S+'/bordereaux.png',fullPage:true});
