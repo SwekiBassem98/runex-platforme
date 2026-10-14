@@ -72,27 +72,37 @@ const c1 = await nouveau({ goodsPrice: 50, governorate: 'Sfax', delegation: 'Sfa
 ok(near(c1?.goodsPrice, 50) && near(c1?.deliveryFee, 8) && near(c1?.totalPrice, 58), 'prix 50 → à encaisser 58 (8 DT ajoutés)', JSON.stringify([c1?.goodsPrice, c1?.deliveryFee, c1?.totalPrice]));
 ok(c1?.destinationDepositName === 'Agence Sfax', 'Sfax → agence de sortie Agence Sfax', c1?.destinationDepositName);
 const sousse = opts?.deposits?.find((d) => d.name === 'Agence Sousse');
+// L'expéditeur ne choisit pas les agences : ses choix éventuels sont ignorés.
 const c2 = await nouveau({ governorate: 'Sfax', delegation: 'Sakiet', destinationDepositId: sousse?.id });
-ok(c2?.destinationDepositName === 'Agence Sousse', 'agence de sortie choisie respectée', c2?.destinationDepositName);
-const bad = await api(exp, 'POST', '/colis', { customerName: 'X', customerPhone: '97000001', governorate: 'Sfax', delegation: 'S', address: 'r', goodsPrice: 5, pieceCount: 1, destinationDepositId: '00000000-0000-0000-0000-000000000000' });
+ok(c2?.destinationDepositName === 'Agence Sfax', 'expéditeur : agence de sortie automatique (choix ignoré)', c2?.destinationDepositName);
+// L'exploitation, elle, peut choisir.
+const parAdmin = (extra) => api(admin, 'POST', '/colis', { shipperId: c1.shipperId, customerName: `Admin ${sfx}`, customerPhone: '97000009', governorate: 'Sfax', delegation: 'Sakiet', address: 'Rue admin', goodsPrice: 10, pieceCount: 1, ...extra });
+const c2a = await parAdmin({ destinationDepositId: sousse?.id });
+ok(c2a.data?.destinationDepositName === 'Agence Sousse', 'exploitation : agence de sortie choisie respectée', c2a.data?.destinationDepositName);
+const bad = await parAdmin({ destinationDepositId: '00000000-0000-0000-0000-000000000000' });
 ok(bad.status === 400, 'agence de sortie inconnue refusée', String(bad.status));
 const legacy = await nouveau({ goodsPrice: undefined, totalPrice: 40 });
 ok(near(legacy?.totalPrice, 40) && near(legacy?.goodsPrice, 32), 'ancien champ totalPrice : total 40, prix 32', JSON.stringify([legacy?.totalPrice, legacy?.goodsPrice]));
 
-// Bon de livraison : départ et sortie tels qu'indiqués à la saisie.
+// Bon de livraison : départ = agence de l'adresse de l'expéditeur ; sortie =
+// agence du destinataire. L'exploitation peut indiquer d'autres agences.
 const agTunis = opts?.deposits?.find((d) => d.name === 'Agence Tunis');
 const agNabeul = opts?.deposits?.find((d) => d.name === 'Agence Nabeul');
-const sugD = (await api(exp, 'GET', '/colis/agences-livraison?governorate=Sfax')).data?.suggestionDepart;
-ok(!!sugD, 'agence de départ proposée (celle de l’expéditeur)', String(sugD));
-const cR = await nouveau({ governorate: 'Sfax', delegation: 'Hancha', originDepositId: agNabeul?.id, destinationDepositId: sfax?.id });
-const bl = (await api(exp, 'GET', `/colis/${cR?.id}/bon-livraison`)).data;
-ok(bl?.originAgency === 'Agence Nabeul' && bl?.destinationAgency === 'Agence Sfax' && bl?.governorate === 'Sfax' && bl?.delegation === 'Hancha',
-  'bon de livraison : Agence Nabeul => Agence Sfax => Sfax/Hancha', JSON.stringify([bl?.originAgency, bl?.destinationAgency, bl?.governorate, bl?.delegation]));
-const badO = await api(exp, 'POST', '/colis', { customerName: 'X', customerPhone: '97000002', governorate: 'Sfax', delegation: 'S', address: 'r', goodsPrice: 5, pieceCount: 1, originDepositId: 'pas-un-id' });
+const sugD = (await api(exp, 'GET', '/colis/agences-livraison?governorate=Sfax')).data;
+const nomDepart = sugD?.agences?.find((a) => a.id === sugD?.suggestionDepart)?.name;
+ok(!!nomDepart, 'agence de départ = celle de l’adresse de l’expéditeur', String(nomDepart));
+const cE = await nouveau({ governorate: 'Sfax', delegation: 'Hancha', originDepositId: agNabeul?.id, destinationDepositId: agTunis?.id });
+const blE = (await api(exp, 'GET', `/colis/${cE?.id}/bon-livraison`)).data;
+ok(blE?.originAgency === nomDepart && blE?.destinationAgency === 'Agence Sfax' && blE?.governorate === 'Sfax' && blE?.delegation === 'Hancha',
+  `bon de livraison (expéditeur) : ${nomDepart} => Agence Sfax => Sfax/Hancha`, JSON.stringify([blE?.originAgency, blE?.destinationAgency]));
+const cR = await parAdmin({ delegation: 'Hancha', originDepositId: agNabeul?.id, destinationDepositId: sfax?.id });
+const bl = (await api(admin, 'GET', `/colis/${cR.data?.id}/bon-livraison`)).data;
+ok(bl?.originAgency === 'Agence Nabeul' && bl?.destinationAgency === 'Agence Sfax', 'bon de livraison (exploitation) : agences indiquées', JSON.stringify([bl?.originAgency, bl?.destinationAgency]));
+const badO = await parAdmin({ originDepositId: 'pas-un-id' });
 ok(badO.status === 400 && /départ/.test(badO.message ?? ''), 'agence de départ invalide refusée', `${badO.status} ${badO.message}`);
-// Changement d'adresse : l'agence de sortie choisie est conservée.
-const cS = await nouveau({ governorate: 'Sfax', delegation: 'Hancha', destinationDepositId: agTunis?.id });
-await api(exp, 'PUT', `/colis/${cS?.id}`, { governorate: 'Sousse', delegation: 'Sahloul' });
+// Changement d'adresse : l'agence de sortie choisie (exploitation) est conservée.
+const cS = (await parAdmin({ delegation: 'Hancha', destinationDepositId: agTunis?.id })).data;
+await api(admin, 'PUT', `/colis/${cS?.id}`, { governorate: 'Sousse', delegation: 'Sahloul' });
 ok((await pkg(cS.id))?.destinationDepositName === 'Agence Tunis', 'adresse modifiée : agence de sortie choisie conservée', (await pkg(cS.id))?.destinationDepositName);
 const cT = await nouveau({ governorate: 'Sfax', delegation: 'Hancha' });
 await api(exp, 'PUT', `/colis/${cT?.id}`, { governorate: 'Sousse', delegation: 'Sahloul' });

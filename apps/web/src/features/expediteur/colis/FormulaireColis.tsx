@@ -49,8 +49,6 @@ interface EtatFormulaire {
   delegation: string;
   address: string;
   goodsPrice: string;
-  destinationDepositId: string;
-  originDepositId: string;
   pieceCount: string;
   sizeCategory: PackageSize;
   packageType: PackageType;
@@ -67,8 +65,6 @@ const VIDE: EtatFormulaire = {
   delegation: '',
   address: '',
   goodsPrice: '',
-  destinationDepositId: '',
-  originDepositId: '',
   pieceCount: '1',
   sizeCategory: PackageSize.MOYENNE,
   packageType: PackageType.NORMAL,
@@ -89,11 +85,11 @@ export function FormulaireColis() {
   const delegationsConnues = useDelegationsConnues(form.governorate);
   const { agences, suggestion, suggestionDepart, frais } = useAgencesLivraison(form.governorate, form.delegation);
   // L'agence proposée suit l'adresse tant que l'expéditeur ne l'a pas choisie.
-  const [agenceChoisie, setAgenceChoisie] = React.useState(false);
-  const agenceSortie = agenceChoisie ? form.destinationDepositId : (suggestion ?? '');
-  // Agence de départ : celle de l'expéditeur, modifiable ; imprimée sur le bon.
-  const [departChoisi, setDepartChoisi] = React.useState(false);
-  const agenceDepart = departChoisi ? form.originDepositId : (suggestionDepart ?? '');
+  // Agences : déterminées automatiquement, l'expéditeur ne les choisit pas.
+  // Départ = l'agence qui dessert l'adresse de son compte ; sortie = celle qui
+  // dessert l'adresse du destinataire. Le trajet imprimé sur le bon est montré.
+  const agenceSortie = suggestion ?? '';
+  const agenceDepart = suggestionDepart ?? '';
   const trajet = libelleTrajet(agences, agenceDepart, agenceSortie, form.governorate, form.delegation);
   const total = totalAEncaisser(form.goodsPrice, frais);
   const [envoi, setEnvoi] = React.useState(false);
@@ -120,8 +116,6 @@ export function FormulaireColis() {
         delegation: form.delegation.trim() || undefined,
         address: form.address.trim(),
         goodsPrice: Number(form.goodsPrice),
-        destinationDepositId: agenceSortie || undefined,
-        originDepositId: agenceDepart || undefined,
         pieceCount: Number(form.pieceCount),
         sizeCategory: form.sizeCategory,
         packageType: form.packageType,
@@ -304,52 +298,17 @@ export function FormulaireColis() {
               </p>
             </div>
 
-            <FormField label={t('colis.formulaire.agenceDepart')} helpText={t('colis.formulaire.agenceDepartAide')}>
-              <Select
-                value={agenceDepart}
-                onChange={(e) => {
-                  setDepartChoisi(true);
-                  modifier('originDepositId', e.target.value);
-                }}
-                data-testid="agence-depart"
-              >
-                {!agenceDepart && <option value="">—</option>}
-                {agences.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                    {a.id === suggestionDepart ? ` (${t('colis.formulaire.agenceProposee')})` : ''}
-                  </option>
-                ))}
-              </Select>
-            </FormField>
-
-            <FormField label={t('colis.formulaire.agenceSortie')} helpText={t('colis.formulaire.agenceSortieAide')}>
-              <Select
-                value={agenceSortie}
-                onChange={(e) => {
-                  setAgenceChoisie(true);
-                  modifier('destinationDepositId', e.target.value);
-                }}
-                data-testid="agence-sortie"
-              >
-                {!agenceSortie && <option value="">—</option>}
-                {agences.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                    {a.id === suggestion ? ` (${t('colis.formulaire.agenceProposee')})` : ''}
-                  </option>
-                ))}
-              </Select>
-            </FormField>
-
             {trajet && (
-              <p
+              <div
                 className="sm:col-span-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700"
                 data-testid="trajet-bon"
                 dir="auto"
               >
-                <span className="font-semibold">{t('colis.formulaire.trajet')}</span> <span className="font-mono">{trajet}</span>
-              </p>
+                <p>
+                  <span className="font-semibold">{t('colis.formulaire.trajet')}</span> <span className="font-mono">{trajet}</span>
+                </p>
+                <p className="mt-0.5 text-slate-500">{t('colis.formulaire.trajetAide')}</p>
+              </div>
             )}
 
             <FormField
