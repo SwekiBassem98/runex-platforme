@@ -147,10 +147,10 @@ export const voucherSecretLimiter = rateLimit({
   max: 5,
   key: (req) => {
     const user = (req as Request & { user?: { id?: string } }).user;
-    return user?.id ? `${user.id}|${String(req.params.voucherNumber ?? '')}` : ip(req);
+    return user?.id ? `${user.id}|${String(req.params.voucherNumber ?? req.params.id ?? '')}` : ip(req);
   },
   countOnly: (status) => status >= 400 && status < 500,
-  message: 'Trop de codes secrets erronés pour ce bordereau. Réessayez dans 15 minutes.',
+  message: 'Trop de codes secrets erronés pour ce bordereau (ou ce bon de retour). Réessayez dans 15 minutes.',
 });
 
 /** En-têtes de sécurité de base pour une API JSON. */

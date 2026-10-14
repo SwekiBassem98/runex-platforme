@@ -22,6 +22,7 @@ import { reportsController } from './modules/reports/reports.controller';
 import { receptionController } from './modules/depot/reception.controller';
 import { caisseController } from './modules/caisse/caisse.controller';
 import { priceChangeController } from './modules/prix/price-change.controller';
+import { retoursExpediteurController } from './modules/retours/retours-expediteur.controller';
 import {
   usersController,
   shippersController,
@@ -851,6 +852,31 @@ export function createApiRouter(): Router {
     asyncHandler((req, res) => paymentsController.getAll(req, res))
   );
 
+  router.get(
+    '/payments/vouchers/candidats',
+    authenticateToken,
+    requirePermissions(PermissionCode.PAYMENT_VALIDATE),
+    asyncHandler((req, res) => paymentsController.candidats(req, res))
+  );
+  router.post(
+    '/payments/vouchers',
+    authenticateToken,
+    requirePermissions(PermissionCode.PAYMENT_VALIDATE),
+    asyncHandler((req, res) => paymentsController.creer(req, res))
+  );
+  router.get(
+    '/payments/vouchers/:id',
+    authenticateToken,
+    requirePermissions(PermissionCode.PAYMENT_READ),
+    asyncHandler((req, res) => paymentsController.detail(req, res))
+  );
+  router.post(
+    '/payments/vouchers/:id/annuler',
+    authenticateToken,
+    requirePermissions(PermissionCode.PAYMENT_VALIDATE),
+    asyncHandler((req, res) => paymentsController.annuler(req, res))
+  );
+
   router.post(
     '/payments/vouchers/:voucherNumber/validate',
     authenticateToken,
@@ -919,6 +945,47 @@ export function createApiRouter(): Router {
     authenticateToken,
     requirePermissions(PermissionCode.PAYMENT_CASH_VALIDATE),
     asyncHandler((req, res) => paymentsController.rejectPayment(req, res))
+  );
+
+  // Retours expéditeur : colis retournés groupés par expéditeur, bons de
+  // retour imprimables, remise confirmée par le code donné par l'expéditeur.
+  const EXPLOITATION_RETOURS = [RoleType.ADMIN, RoleType.GESTIONNAIRE, RoleType.AGENT_DEPOT];
+  router.get(
+    '/retours-expediteur/a-rendre',
+    authenticateToken,
+    requireRoles(...EXPLOITATION_RETOURS),
+    asyncHandler((req, res) => retoursExpediteurController.aRendre(req, res))
+  );
+  router.get(
+    '/retours-expediteur/bons',
+    authenticateToken,
+    requireRoles(...EXPLOITATION_RETOURS, RoleType.EXPEDITEUR),
+    asyncHandler((req, res) => retoursExpediteurController.lister(req, res))
+  );
+  router.get(
+    '/retours-expediteur/bons/:id',
+    authenticateToken,
+    requireRoles(...EXPLOITATION_RETOURS, RoleType.EXPEDITEUR),
+    asyncHandler((req, res) => retoursExpediteurController.detail(req, res))
+  );
+  router.post(
+    '/retours-expediteur/bons',
+    authenticateToken,
+    requireRoles(...EXPLOITATION_RETOURS),
+    asyncHandler((req, res) => retoursExpediteurController.creer(req, res))
+  );
+  router.post(
+    '/retours-expediteur/bons/:id/remettre',
+    authenticateToken,
+    requireRoles(...EXPLOITATION_RETOURS),
+    voucherSecretLimiter,
+    asyncHandler((req, res) => retoursExpediteurController.remettre(req, res))
+  );
+  router.post(
+    '/retours-expediteur/bons/:id/annuler',
+    authenticateToken,
+    requireRoles(...EXPLOITATION_RETOURS),
+    asyncHandler((req, res) => retoursExpediteurController.annuler(req, res))
   );
 
   // Caisse : encaissements, net expéditeurs, frais de livraison et

@@ -897,6 +897,22 @@ export interface PaymentVoucherDto {
   scheduledDate?: string;
   paidAt?: string;
   createdAt: string;
+  /**
+   * Code de retrait du bordereau : renvoyé au seul expéditeur, tant que le
+   * bordereau n'est pas réglé. Il le donne à la caisse pour être payé.
+   */
+  withdrawalCode?: string | null;
+  /** Colis du bordereau (fiche détaillée seulement). */
+  colis?: {
+    id: string;
+    trackingNumber: string;
+    status: string;
+    customerName: string;
+    totalPrice: number;
+    collectedAmount: number;
+    deliveryFee: number;
+    returnFee: number;
+  }[];
 }
 
 export interface HealthCheckResponse {

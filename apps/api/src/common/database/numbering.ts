@@ -9,8 +9,9 @@
  * le temps du calcul, puis le verrou tombe avec la transaction.
  */
 import type { Prisma } from '@prisma/client';
+import { randomInt } from 'node:crypto';
 
-export type NumberSeries = 'payment' | 'runsheet' | 'return' | 'customer' | 'transfer';
+export type NumberSeries = 'payment' | 'runsheet' | 'return' | 'customer' | 'transfer' | 'voucher' | 'returnSlip';
 
 async function lock(tx: Prisma.TransactionClient, series: NumberSeries, prefix: string): Promise<void> {
   const key = `runex:number:${series}:${prefix}`;
@@ -76,6 +77,35 @@ export async function nextReturnNumber(tx: Prisma.TransactionClient, now = new D
     select: { returnNumber: true },
   });
   return `${prefix}${String(nextFrom(last?.returnNumber, prefix)).padStart(6, '0')}`;
+}
+
+/** `BRD-2026-000123` — séquence annuelle des bordereaux de paiement. */
+export async function nextVoucherNumber(tx: Prisma.TransactionClient, now = new Date()): Promise<string> {
+  const prefix = `BRD-${now.getFullYear()}-`;
+  await lock(tx, 'voucher', prefix);
+  const last = await tx.paymentVoucher.findFirst({
+    where: { voucherNumber: { startsWith: prefix } },
+    orderBy: { voucherNumber: 'desc' },
+    select: { voucherNumber: true },
+  });
+  return `${prefix}${String(nextFrom(last?.voucherNumber, prefix)).padStart(6, '0')}`;
+}
+
+/** `BR-20261015-0001` — bons de retour expéditeur, séquence quotidienne. */
+export async function nextReturnSlipNumber(tx: Prisma.TransactionClient, stamp: string): Promise<string> {
+  const prefix = `BR-${stamp}-`;
+  await lock(tx, 'returnSlip', prefix);
+  const last = await tx.returnSlip.findFirst({
+    where: { slipNumber: { startsWith: prefix } },
+    orderBy: { slipNumber: 'desc' },
+    select: { slipNumber: true },
+  });
+  return `${prefix}${String(nextFrom(last?.slipNumber, prefix)).padStart(4, '0')}`;
+}
+
+/** Code à 6 chiffres remis à l'expéditeur (retrait d'un bordereau, d'un bon de retour). */
+export function codeASixChiffres(): string {
+  return String(randomInt(0, 1000000)).padStart(6, '0');
 }
 
 /** `CLI-2026-000123` — séquence annuelle des destinataires. */
