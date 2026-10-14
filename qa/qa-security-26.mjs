@@ -106,6 +106,11 @@ async function main() {
   const pkgA = await newPkg(expA);
   ok((await assign(pkgB, hamza)).status === 200, 'assign shipper-B package to Hamza');
   ok((await assign(pkgA, hamza)).status === 200, 'assign shipper-A package to Hamza');
+  // L'affectation place le colis dans la tournée ouverte du livreur : il est
+  // « dans la tournée », ou déjà « en cours de livraison » si elle est partie.
+  const statutB = await pkgStatus(admin.accessToken, pkgB.id);
+  const statutA = await pkgStatus(admin.accessToken, pkgA.id);
+  ok(['AFFECTE_RUNSHEET', 'EN_COURS_LIVRAISON'].includes(statutB) && statutA === statutB, 'assigned packages join the driver runsheet', `${statutB}/${statutA}`);
 
   // ------------------------------------------------------------------
   section('S1 — Expéditeur cannot run delivery actions (any package)');
@@ -125,8 +130,8 @@ async function main() {
     const own = await api(expA.accessToken, method, `/colis/${pkgA.id}/${action}`, body);
     ok([403, 404].includes(own.status), `expA → ${action} on own package refused`, `HTTP ${own.status}`);
   }
-  ok((await pkgStatus(admin.accessToken, pkgB.id)) === 'AFFECTE_RUNSHEET', 'shipper-B package unchanged');
-  ok((await pkgStatus(admin.accessToken, pkgA.id)) === 'AFFECTE_RUNSHEET', 'shipper-A package unchanged');
+  ok((await pkgStatus(admin.accessToken, pkgB.id)) === statutB, 'shipper-B package unchanged');
+  ok((await pkgStatus(admin.accessToken, pkgA.id)) === statutA, 'shipper-A package unchanged');
   const foreignRead = await api(expA.accessToken, 'GET', `/colis/${pkgB.trackingNumber}`);
   ok(foreignRead.status === 404, 'expA cannot read shipper-B package by tracking number');
   const foreignEdit = await api(expA.accessToken, 'PUT', `/colis/${pkgB.id}`, { contentSummary: 'pwned' });

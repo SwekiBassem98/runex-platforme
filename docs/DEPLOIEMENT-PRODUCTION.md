@@ -114,6 +114,7 @@ créent ensuite depuis le web (Administration). Relançable sans effet ;
 | `MAIL_FROM_EMAIL` | adresse d'expédition **vérifiée** dans Brevo (§ 3.1) |
 | `MAIL_FROM_NAME` | `RUNEX` (nom affiché dans la boîte de réception) |
 | `WEB_APP_URL` | `https://<projet>.vercel.app` (adresse des liens envoyés par courriel ; par défaut, la première origine HTTPS de `CORS_ORIGIN`) |
+| `DRIVER_RATE_PER_JOB` | facultatif — rémunération du livreur par colis livré ou ramassage effectué, en DT (défaut `3`) ; sert à l'écran Caisse et à la carte « Mes gains » de l'application |
 
    Koyeb fournit `PORT` (8000) ; l'API le lit en priorité. Derrière la passerelle
    Koyeb, 1 relais est approuvé par défaut en production (`TRUST_PROXY`), ce
@@ -217,6 +218,34 @@ Mise en place (une fois) :
 | Schéma (`prisma/migrations`) | le workflow « Migrations production » s'exécute à la fusion ; vérifier qu'il est vert **avant** d'utiliser les nouveaux écrans |
 | Application livreur | `versionCode` + 1 dans `app.json`, nouveau build EAS, distribuer l'APK (il s'installe par-dessus l'ancien) |
 | Rotation des secrets JWT | changer les deux variables sur Koyeb : toutes les sessions sont fermées, chacun se reconnecte |
+
+### 6.1 Version d'octobre 2026 (retours client du 14/10)
+
+Deux migrations s'appliquent à la fusion :
+
+- `20261015000000_agences_regionales` : crée (ou complète) les agences Tunis,
+  Nabeul, Sousse, Sfax, Siliana, Gafsa et Médenine, renomme le hub
+  « Hub Central Ben Arous » et passe les frais de livraison par défaut à 8 DT
+  (les expéditeurs encore à 7 DT passent à 8 DT) ;
+- `20261015010000_caisse_prix_retours` : paiements des livreurs, demandes de
+  changement de prix, bons de retour expéditeur, code de retrait des
+  bordereaux (un code est généré pour les bordereaux non réglés existants).
+
+Ce qui change pour les utilisateurs :
+
+| Écran | Nouveauté |
+|---|---|
+| Création de colis | l'expéditeur saisit le **prix du colis** ; 8 DT de livraison s'ajoutent (montant à encaisser = prix + 8) ; **agence de sortie** proposée selon le gouvernorat, modifiable |
+| Inter-dépôt | plus de dépôt de départ : toujours le Hub Central Ben Arous |
+| Gestion des colis | filtres corrigés + filtre par expéditeur |
+| Demandes de prix | un changement de prix par l'expéditeur attend l'approbation d'un admin/gestionnaire |
+| Retours expéditeur | colis retournés par expéditeur, bon de retour imprimable, remise confirmée par le code que l'expéditeur lit dans son espace |
+| Bordereaux | « Créer le bordereau » par expéditeur ; paiement avec le code de retrait donné par l'expéditeur |
+| Caisse société & livreurs | encaissements, net expéditeurs, frais, marge, et paiement de chaque livreur (3 DT par colis livré ou ramassage) |
+| Tournées | ajout/retrait d'un colis dans une tournée en cours ; affecter un colis à un livreur le place dans sa tournée ouverte (visible tout de suite dans l'application) |
+| Livraison | 3 tentatives sans livraison → retour automatique au dépôt |
+
+L'application livreur passe en **1.4.0 (versionCode 5)** : reconstruire l'APK.
 
 ## 7. Liste de contrôle finale
 

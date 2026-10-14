@@ -62,12 +62,21 @@ const d = r.data.package;
 ok(d.trackingNumber === A.trackingNumber && d.customerName === 'Scan 1' && d.customerPhone && d.address && d.totalPrice === 31
   && d.status && Array.isArray(d.trackingTimeline), 'fiche complète : destinataire, montant, statut, chronologie');
 const keys = r.data.actions.map((a) => a.key);
-ok(['start', 'deliver', 'postpone', 'failed-attempt', 'return'].every((k) => keys.includes(k)), 'actions proposées selon le statut', keys.join(','));
+// Affecté, le colis rejoint la tournée ouverte du livreur ; si elle est déjà
+// partie, il est directement « en cours de livraison » (pas de « démarrer »).
+const attendues = d.status === 'EN_COURS_LIVRAISON'
+  ? ['deliver', 'postpone', 'failed-attempt', 'return']
+  : ['start', 'deliver', 'postpone', 'failed-attempt', 'return'];
+ok(attendues.every((k) => keys.includes(k)), 'actions proposées selon le statut', `${d.status}: ${keys.join(',')}`);
 ok(r.data.actions.every((a) => a.method === 'POST' && a.path.startsWith(`/colis/${A.trackingNumber}/`)), 'chaque action donne méthode et chemin');
 ok(Array.isArray(r.data.nextStatuses) && r.data.nextStatuses.includes('LIVRE'), 'nextStatuses');
 const start = r.data.actions.find((a) => a.key === 'start');
-const st = await api(hamza, start.method, start.path, {});
-ok(st.status === 200 && st.data.status === 'EN_COURS_LIVRAISON', 'action « Démarrer » exécutée telle que fournie', `${st.status} ${st.json?.message ?? ''}`);
+if (start) {
+  const st = await api(hamza, start.method, start.path, {});
+  ok(st.status === 200 && st.data.status === 'EN_COURS_LIVRAISON', 'action « Démarrer » exécutée telle que fournie', `${st.status} ${st.json?.message ?? ''}`);
+} else {
+  ok(d.status === 'EN_COURS_LIVRAISON', 'tournée déjà partie : colis directement en cours de livraison', d.status);
+}
 r = await api(hamza, 'POST', '/scan', { code: A.barcode });
 ok(!r.data.actions.some((a) => a.key === 'start') && r.data.actions.some((a) => a.key === 'deliver'), 'après démarrage : plus de « Démarrer », « Livré » proposé');
 ok((await api(hamza, 'GET', `/colis/${enc(`${A.barcode}-1`)}`)).data?.id === A.id, 'GET /colis/<étiquette de pièce> accepté');

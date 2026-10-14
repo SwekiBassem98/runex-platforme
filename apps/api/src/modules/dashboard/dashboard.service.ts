@@ -8,7 +8,7 @@
 
 import { getPrisma } from '../../common/database/prisma-context';
 import type { DashboardMetricsDto } from './dashboard.types';
-import { PackageStatus, PackageType } from '@logixpress/types';
+import { PackageStatus, PackageType, packageStatusLabel } from '@logixpress/types';
 import { isDriverOnline } from '../presence/presence.service';
 
 const round3 = (value: number): number => parseFloat(value.toFixed(3));
@@ -712,7 +712,8 @@ export class DashboardService {
       type: activityType(event.status),
       title: event.title,
       description:
-        event.description ?? `Colis #${event.package.trackingNumber} — ${event.status}`,
+        event.description ??
+        `Colis #${event.package.trackingNumber} — ${packageStatusLabel(event.status as PackageStatus)}`,
       actor: event.operatorName ?? 'Système',
       badge: event.locationName ?? undefined,
     }));
