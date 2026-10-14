@@ -38,6 +38,10 @@ export interface ResumeCaisse {
   encaisseEnAttente: number;
   colisLivres: number;
   colisRetournes: number;
+  /** Encaissé (ou à encaisser) pour les colis livrés de la période = net expéditeurs + frais. */
+  encaisseColisLivres: number;
+  /** Espèces déclarées par les livreurs, pas encore validées en caisse (depuis toujours). */
+  especesAValider: number;
   fraisLivraison: number;
   fraisRetour: number;
   netExpediteurs: number;
@@ -83,7 +87,7 @@ export class CaisseService {
     const prisma = getPrisma();
     const p = bornes(from, to);
 
-    const [paiements, livraisons, retours, vouchersPayes, vouchersOuverts, horsBordereau, ramassages, payouts, gagneTotal, payeTotal] =
+    const [paiements, livraisons, retours, vouchersPayes, vouchersOuverts, horsBordereau, ramassages, payouts, gagneTotal, payeTotal, aValider] =
       await Promise.all([
         prisma.$queryRaw<{ total: Prisma.Decimal | null; valide: Prisma.Decimal | null; attente: Prisma.Decimal | null }[]>`
           SELECT sum("amountCollected" - "amountRefunded") AS total,
@@ -123,6 +127,8 @@ export class CaisseService {
           SELECT sum(amount) AS total FROM "DriverPayout" WHERE ${sqlPeriode(Prisma.sql`"paidAt"`, p)}`,
         this.gagneParLivreur(),
         prisma.$queryRaw<{ total: Prisma.Decimal | null }[]>`SELECT sum(amount) AS total FROM "DriverPayout"`,
+        prisma.$queryRaw<{ total: Prisma.Decimal | null }[]>`
+          SELECT sum("amountCollected" - "amountRefunded") AS total FROM "Payment" WHERE status = 'EN_ATTENTE'`,
       ]);
 
     const encaisse = r3(n(paiements[0]?.total));
@@ -149,6 +155,8 @@ export class CaisseService {
       encaisseEnAttente: r3(n(paiements[0]?.attente)),
       colisLivres: colisLivresPeriode,
       colisRetournes: n(retours[0]?.nb),
+      encaisseColisLivres: r3(n(livraisons[0]?.net) + fraisLivraison),
+      especesAValider: r3(n(aValider[0]?.total)),
       fraisLivraison,
       fraisRetour,
       netExpediteurs: r3(n(livraisons[0]?.net)),

@@ -201,6 +201,9 @@ export const AUDIT_ACTIONS: Readonly<Record<string, AuditActionDefinition>> = {
   RETURN_SLIP_CREE: { label: 'Bon de retour expéditeur préparé', category: 'LIVRAISON' },
   RETURN_SLIP_REMIS: { label: 'Retours remis à l\'expéditeur', category: 'LIVRAISON', critical: true },
   RETURN_SLIP_ANNULE: { label: 'Bon de retour annulé', category: 'LIVRAISON' },
+  RETURN_SLIP_MODIFIE: { label: 'Bon de retour modifié (livreur, colis)', category: 'LIVRAISON' },
+  RETURN_SLIP_EN_COURS: { label: 'Bon de retour en cours de livraison', category: 'LIVRAISON' },
+  RETURN_SLIP_REVENU: { label: 'Bon de retour revenu au dépôt', category: 'LIVRAISON' },
   PAYMENT_REJECTED: {
     label: 'Paiement rejeté',
     category: 'FINANCE',

@@ -239,13 +239,18 @@ Ce qui change pour les utilisateurs :
 | Inter-dépôt | plus de dépôt de départ : toujours le Hub Central Ben Arous |
 | Gestion des colis | filtres corrigés + filtre par expéditeur |
 | Demandes de prix | un changement de prix par l'expéditeur attend l'approbation d'un admin/gestionnaire |
-| Retours expéditeur | colis retournés par expéditeur, bon de retour imprimable, remise confirmée par le code que l'expéditeur lit dans son espace |
+| Retours expéditeur | comme ADEX : « Ajouter un bon de retour » → expéditeur → livreur et matricule → colis ajoutés/retirés au scan (et articles repris lors d'un échange) → impression → état : en préparation, en cours de livraison, remis (ou revenu au dépôt, annulé) |
 | Bordereaux | « Créer le bordereau » par expéditeur ; paiement avec le code de retrait donné par l'expéditeur |
-| Caisse société & livreurs | encaissements, net expéditeurs, frais, marge, et paiement de chaque livreur (3 DT par colis livré ou ramassage) |
+| Caisse société & livreurs | « À faire maintenant » (espèces à valider, à reverser aux expéditeurs, à payer aux livreurs), bilan de la période lu de haut en bas jusqu'au bénéfice net, et une ligne par livreur avec « Payer » (3 DT par colis livré ou ramassage) |
 | Tournées | ajout/retrait d'un colis dans une tournée en cours ; affecter un colis à un livreur le place dans sa tournée ouverte (visible tout de suite dans l'application) |
 | Livraison | 3 tentatives sans livraison → retour automatique au dépôt |
 
 L'application livreur passe en **1.4.0 (versionCode 5)** : reconstruire l'APK.
+
+Migration suivante, `20261016000000_bon_retour_adex` : livreur, véhicule et date
+sur le bon de retour, état « en cours de livraison », articles d'échange
+rattachés au bon. La remise ne demande plus de code (le livreur fait signer le
+bon imprimé).
 
 ## 7. Liste de contrôle finale
 

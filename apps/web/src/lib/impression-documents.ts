@@ -4,7 +4,8 @@
  * fenêtre d'impression. Les codes de remise ne sont jamais imprimés.
  */
 import type { PaymentVoucherDto } from '@logixpress/types';
-import type { BonRetour } from './api';
+import type { BonRetourDetail } from './api';
+import { qrSvg } from '@/features/colis/bonLivraison';
 import { ouvrirImpression } from '@/features/expediteur/colis/impression';
 
 const esc = (v: unknown) =>
@@ -27,24 +28,53 @@ function page(titre: string, corps: string): string {
   return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>${esc(titre)}</title><style>${STYLE}</style></head><body>${corps}<script>window.onload=()=>{window.focus();window.print()}</script></body></html>`;
 }
 
-export function imprimerBonRetour(bon: BonRetour): void {
-  const lignes = (bon.colis ?? [])
+/**
+ * Bon de retour, mis en page comme chez ADEX : en-tête (logo, numéro, QR),
+ * livreur / voiture / date / totaux, expéditeur, table des colis, cachet et
+ * signature de l'agence et du livreur.
+ */
+export function imprimerBonRetour(bon: BonRetourDetail, agence = 'RUNEX'): void {
+  const logo = `${window.location.origin}/brand/runex-logo.jpeg`;
+  const lignes = bon.colis
     .map(
-      (c, i) => `<tr><td>${i + 1}</td><td class="mono">${esc(c.trackingNumber)}</td><td>${esc(c.customerName)}</td>
-      <td>${esc(c.governorate)}</td><td class="r">${c.pieceCount}</td><td>${esc(c.reason)}</td><td class="r">${dt(c.returnFee)}</td></tr>`
+      (c, i) => `<tr><td class="c">${i + 1}</td><td class="mono">${esc(c.trackingNumber)}${c.kind === 'ECHANGE' ? '<br><small>article échange</small>' : ''}</td>
+      <td>${esc(c.content || '—')}</td><td class="r">${c.kind === 'ECHANGE' ? '—' : dt(c.amount)}</td>
+      <td>${esc(c.customerName)}${c.customerPhone ? `<br><small>${esc(c.customerPhone)}</small>` : ''}</td><td>${esc(c.address)}</td></tr>`
     )
     .join('');
-  const frais = (bon.colis ?? []).reduce((s, c) => s + c.returnFee, 0);
+  const date = bon.plannedDate ? new Date(`${bon.plannedDate}T12:00:00`).toLocaleDateString('fr-TN') : new Date(bon.createdAt).toLocaleString('fr-TN');
   ouvrirImpression(
     page(
       `Bon de retour ${bon.slipNumber}`,
-      `<div class="tete"><div><h1>RUNEX — Bon de retour expéditeur</h1><div class="muted">N° ${esc(bon.slipNumber)} · préparé le ${date(bon.createdAt)}</div></div>
-      <div><strong>${esc(bon.shipperName)}</strong><br>${esc(bon.shipperPhone)}<br>${esc(bon.shipperAddress)}</div></div>
-      <p>${bon.packagesCount} colis retourné(s) remis à l'expéditeur. ${bon.status === 'REMIS' ? `Remis le ${date(bon.handedOverAt)}${bon.receiverName ? ` à ${esc(bon.receiverName)}` : ''}.` : ''}</p>
-      <table><thead><tr><th>#</th><th>Colis</th><th>Destinataire</th><th>Gouvernorat</th><th class="r">Pièces</th><th>Motif du retour</th><th class="r">Frais retour</th></tr></thead>
-      <tbody>${lignes}<tr class="tot"><td colspan="6">Total</td><td class="r">${dt(frais)}</td></tr></tbody></table>
+      `<style>
+        .cadre{border:1.5px solid #94a3b8;padding:10px 12px;margin-bottom:10px}
+        .entete{display:flex;align-items:center;gap:18px}.entete img.logo{height:46px}
+        .entete h1{flex:1;font-size:22px}.entete .qr svg{width:90px;height:90px}
+        .grille{display:grid;grid-template-columns:repeat(3,1fr);gap:6px 18px}
+        .grille b{font-weight:700}
+        td.c{text-align:center} small{color:#64748b}
+        .signe{display:flex;justify-content:space-between;min-height:70px}
+      </style>
+      <div class="cadre entete"><img class="logo" src="${esc(logo)}" alt="RUNEX"><h1>Bon de retour N° ${esc(bon.slipNumber)}</h1><div class="qr">${qrSvg(bon.slipNumber, 24)}</div></div>
+      <div class="cadre grille">
+        <div><b>Nom livreur :</b> ${esc(bon.driverName ?? '—')}</div>
+        <div><b>Voiture :</b> ${esc(bon.vehiclePlate ?? '—')}</div>
+        <div><b>Date :</b> ${esc(date)}</div>
+        <div><b>Nombre total des colis :</b> ${bon.colisCount}</div>
+        <div><b>Nombre total des pièces :</b> ${bon.piecesCount}</div>
+        <div><b>État :</b> ${esc(bon.statusLabel)}</div>
+      </div>
+      <div class="cadre grille">
+        <div><b>Expéditeur :</b> ${esc(bon.shipperName)}</div>
+        <div><b>Téléphone :</b> ${esc(bon.shipperPhone ?? '—')}</div>
+        <div><b>Adresse :</b> ${esc(bon.shipperAddress ?? '—')}</div>
+      </div>
+      <table><thead><tr><th class="c">N°</th><th>Code</th><th>Contenu colis</th><th class="r">Montant</th><th>Client</th><th>Adresse</th></tr></thead>
+      <tbody>${lignes || '<tr><td colspan="6" class="c muted">Aucun colis dans ce bon.</td></tr>'}</tbody></table>
       ${bon.notes ? `<p class="muted">Note : ${esc(bon.notes)}</p>` : ''}
-      <div class="sign"><div>Remis par (RUNEX)</div><div>Reçu par (expéditeur) — nom et signature</div></div>`
+      <div class="cadre" style="margin-top:18px"><b>Cachet et signature :</b>
+        <div class="signe"><div style="align-self:flex-end">${esc(bon.depositName ?? agence)}</div><div style="align-self:flex-end">${esc(bon.driverName ?? 'Livreur')}</div><div style="align-self:flex-end">Expéditeur</div></div>
+      </div>`
     )
   );
 }
