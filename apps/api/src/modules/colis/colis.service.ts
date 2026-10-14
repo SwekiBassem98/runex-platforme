@@ -65,6 +65,7 @@ import {
   type TransitionCommand,
 } from './package-workflow.service';
 import { generateBusinessNumber, barcodeFor } from '../depot/package-identity';
+import { priceChangeService, type PriceChangeDto } from '../prix/price-change.service';
 
 export interface ScopeFilter {
   shipperId?: string;
@@ -908,6 +909,7 @@ export class ColisService {
     package: PackageDto;
     driverNotified: boolean;
     notificationMessage?: string;
+    priceChangeRequest?: PriceChangeDto | null;
   }> {
     const record = await this.findRecord(idOrTracking);
 
@@ -935,6 +937,51 @@ export class ColisService {
         409
       );
     }
+
+    // Prix du colis : l'expéditeur demande, l'administration approuve. Le prix
+    // n'est pas modifié ici ; une demande est créée et les admins notifiés.
+    const fraisColis = Number(record.deliveryFee);
+    if (payload.goodsPrice !== undefined && payload.goodsPrice !== null && payload.goodsPrice !== '') {
+      const goods = Number(payload.goodsPrice);
+      if (!Number.isFinite(goods) || goods < 0) {
+        throw new BusinessRuleError('Le prix du colis doit être un nombre positif ou nul.', 400);
+      }
+      payload = { ...payload, totalPrice: Math.round((goods + fraisColis) * 1000) / 1000 };
+    }
+    const { goodsPrice: _g, ...sansPrix } = payload;
+    void _g;
+    payload = sansPrix;
+    if (isShipper && payload.totalPrice !== undefined) {
+      const total = Number(payload.totalPrice);
+      if (!Number.isFinite(total) || total < 0) {
+        throw new BusinessRuleError('Le montant à encaisser doit être un nombre positif ou nul.', 400);
+      }
+      const { totalPrice: _t, ...reste } = payload;
+      void _t;
+      payload = reste;
+      let demande: Awaited<ReturnType<typeof priceChangeService.demander>> = null;
+      if (Math.round(total * 1000) !== Math.round(Number(record.totalPrice) * 1000)) {
+        demande = await priceChangeService.demander(
+          record.id,
+          Math.max(total - fraisColis, 0),
+          typeof payload.priceChangeReason === 'string' ? payload.priceChangeReason : null,
+          user
+        );
+      }
+      delete (payload as Record<string, unknown>).priceChangeReason;
+      const autres = Object.keys(payload).length > 0;
+      const resultat = autres
+        ? await this.update(record.id, payload, user)
+        : { package: toPackageDto(await this.findRecord(record.id)), driverNotified: false };
+      return {
+        ...resultat,
+        priceChangeRequest: demande,
+        notificationMessage: demande
+          ? `Nouveau prix (${demande.newGoodsPrice.toFixed(3)} DT) envoyé à l'administration pour approbation. Le prix actuel reste appliqué en attendant.`
+          : resultat.notificationMessage,
+      };
+    }
+    delete (payload as Record<string, unknown>).priceChangeReason;
 
     // L'expéditeur ne peut plus intervenir une fois le colis engagé.
     if (isShipper && !isFullyEditableByShipper(record.status as PackageStatus)) {
@@ -1029,6 +1076,8 @@ export class ColisService {
 
     if (amountChanged) {
       data.totalPrice = Number(payload.totalPrice);
+      // Le prix du colis suit : montant à encaisser − frais de livraison.
+      data.declaredValue = Math.max(Math.round((Number(payload.totalPrice) - Number(record.deliveryFee)) * 1000) / 1000, 0);
       criticalChanges.push(FIELD_LABELS.totalPrice!);
     }
     if (quantityChanged) {
@@ -1079,6 +1128,16 @@ export class ColisService {
             String(payload.delegation ?? record.customerAddress.delegation)
           );
           if (destinationId) data.destinationDepositId = destinationId;
+        }
+      }
+      // L'attendu de la tournée suit le montant à encaisser.
+      if (amountChanged && record.currentRunsheetId && record.status !== 'ANNULE') {
+        const delta = Math.round((Number(payload.totalPrice) - Number(record.totalPrice)) * 1000) / 1000;
+        if (delta !== 0) {
+          await tx.runsheet.update({
+            where: { id: record.currentRunsheetId },
+            data: { expectedCash: { increment: new Prisma.Decimal(delta) } },
+          });
         }
       }
       return tx.package.update({

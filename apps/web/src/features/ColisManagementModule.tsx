@@ -1603,6 +1603,23 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
             {/* C. FINANCIAL */}
             <Card title="Données Financières (Financial)">
               <div className="space-y-2.5 text-xs">
+                {colis.pendingPriceChange && (
+                  <div className="p-2.5 rounded-md bg-amber-50 border border-amber-200 text-amber-900" data-testid="prix-en-attente-staff">
+                    L&apos;expéditeur demande un nouveau prix : <strong>{formatTND(colis.pendingPriceChange.newGoodsPrice)}</strong>{' '}
+                    (à encaisser {formatTND(colis.pendingPriceChange.newTotal)}).{' '}
+                    {(currentUser.role === RoleType.ADMIN || currentUser.role === RoleType.GESTIONNAIRE) && (
+                      <a href="/colis/demandes-prix" className="underline font-semibold">
+                        Approuver ou refuser
+                      </a>
+                    )}
+                  </div>
+                )}
+                <div className="flex justify-between items-center py-1 border-b border-slate-100">
+                  <span className="text-slate-500">Prix du colis :</span>
+                  <span className="font-mono text-slate-900">
+                    {formatTND(colis.goodsPrice ?? Math.max(0, colis.totalPrice - colis.deliveryFee))}
+                  </span>
+                </div>
                 <div className="flex justify-between items-center py-1 border-b border-slate-100">
                   <span className="text-slate-500">Montant à Encaisser (CRBT) :</span>
                   <span className="font-mono font-bold text-slate-900 text-sm">{formatTND(colis.totalPrice)}</span>

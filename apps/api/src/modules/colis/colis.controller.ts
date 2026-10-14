@@ -164,9 +164,11 @@ export class ColisController {
         success: true,
         data: result.package,
         driverNotified: result.driverNotified,
-        message: result.driverNotified
-          ? result.notificationMessage
-          : 'Colis mis à jour avec succès.',
+        priceChangeRequest: result.priceChangeRequest ?? null,
+        message:
+          result.priceChangeRequest || result.driverNotified
+            ? result.notificationMessage
+            : 'Colis mis à jour avec succès.',
       });
     } catch (err: unknown) {
       respondError(res, err, 'Impossible de mettre à jour le colis.');

@@ -104,7 +104,8 @@ export function VueColisDetail({ identifiant }: { identifiant: string }) {
     governorate: '',
     delegation: '',
     address: '',
-    totalPrice: '',
+    goodsPrice: '',
+    priceChangeReason: '',
     pieceCount: '',
     notes: '',
     isFragile: false,
@@ -126,7 +127,10 @@ export function VueColisDetail({ identifiant }: { identifiant: string }) {
         governorate: fiche.governorate ?? '',
         delegation: fiche.delegation ?? '',
         address: fiche.address ?? '',
-        totalPrice: String(fiche.totalPrice ?? ''),
+        goodsPrice: String(
+          fiche.goodsPrice ?? Math.max(Number(fiche.totalPrice ?? 0) - Number(fiche.deliveryFee ?? 0), 0)
+        ),
+        priceChangeReason: '',
         pieceCount: String(fiche.pieceCount ?? 1),
         notes: fiche.notes ?? '',
         isFragile: Boolean(fiche.isFragile),
@@ -182,6 +186,11 @@ export function VueColisDetail({ identifiant }: { identifiant: string }) {
   const badge = voc.statutColis(colis.status);
   const livre = colis.status === PackageStatus.LIVRE;
   const attendu = Number(colis.totalPrice ?? 0);
+  const fraisColis = Number(colis.deliveryFee ?? 0);
+  const prixActuel = Number(colis.goodsPrice ?? Math.max(attendu - fraisColis, 0));
+  const prixSaisi = Number(form.goodsPrice);
+  const prixChange = form.goodsPrice !== '' && Number.isFinite(prixSaisi) && Math.abs(prixSaisi - prixActuel) > 0.0005;
+  const demandePrix = colis.pendingPriceChange ?? null;
   const encaisse = Number(colis.collectedAmount ?? 0);
   const reste = Math.max(attendu - encaisse, 0);
   const verrouille = isLockedForEditing(colis.status);
@@ -234,7 +243,9 @@ export function VueColisDetail({ identifiant }: { identifiant: string }) {
         governorate: form.governorate,
         delegation: form.delegation.trim() || undefined,
         address: form.address.trim(),
-        totalPrice: Number(form.totalPrice),
+        ...(prixChange
+          ? { goodsPrice: prixSaisi, priceChangeReason: form.priceChangeReason.trim() || undefined }
+          : {}),
         pieceCount: Number(form.pieceCount),
         notes: form.notes.trim(),
         isFragile: form.isFragile,
@@ -244,10 +255,11 @@ export function VueColisDetail({ identifiant }: { identifiant: string }) {
         return;
       }
       setEdition(false);
+      const demande = (reponse as { priceChangeRequest?: unknown }).priceChangeRequest;
       addToast({
-        type: 'success',
-        title: t('colis.detail.sauvegardeTitre'),
-        message: t('colis.detail.sauvegarde'),
+        type: demande ? 'info' : 'success',
+        title: demande ? t('colis.detail.prix.demandeEnvoyee') : t('colis.detail.sauvegardeTitre'),
+        message: demande ? t('colis.detail.prix.demandeAide') : t('colis.detail.sauvegarde'),
       });
       await charger();
     } catch (err) {
@@ -522,7 +534,16 @@ export function VueColisDetail({ identifiant }: { identifiant: string }) {
               </span>
             }
           >
+            {demandePrix && (
+              <p
+                className="mb-3 p-2.5 rounded-md bg-amber-50 border border-amber-200 text-[11px] text-amber-900"
+                data-testid="demande-prix-en-attente"
+              >
+                {t('colis.detail.prix.enAttente', { prix: formatTND(demandePrix.newGoodsPrice) })}
+              </p>
+            )}
             <dl className="space-y-2.5 text-sm">
+              <Ligne libelle={t('colis.detail.prix.titre')} valeur={formatTND(prixActuel)} />
               <Ligne libelle={t('colis.detail.champ.montantEncaisser')} valeur={formatTND(attendu)} />
               <Ligne libelle={t('colis.detail.champ.dejaEncaisse')} valeur={formatTND(encaisse)} />
               <Ligne
@@ -730,14 +751,23 @@ export function VueColisDetail({ identifiant }: { identifiant: string }) {
             à une tournée alerte le livreur. L'écran le dit avant l'enregistrement,
             pour que la surprise ne vienne pas du chauffeur.
           */}
-          {Number(form.totalPrice) !== attendu && (
-            <p className="flex items-start gap-2 p-3 rounded-md bg-amber-50 border border-amber-200 text-[11px] text-amber-900">
-              <Banknote className="w-4 h-4 mt-0.5 shrink-0" aria-hidden="true" />
-              <span>
-                {t('colis.detail.champ.montantEncaisser')} {formatTND(attendu)} →{' '}
-                {formatTND(Number(form.totalPrice) || 0)}. {t('colis.detail.terminal')}
-              </span>
-            </p>
+          {prixChange && (
+            <div className="p-3 rounded-md bg-amber-50 border border-amber-200 text-[11px] text-amber-900 space-y-2" data-testid="avertissement-prix">
+              <p className="flex items-start gap-2">
+                <Banknote className="w-4 h-4 mt-0.5 shrink-0" aria-hidden="true" />
+                <span>
+                  {t('colis.detail.prix.titre')} {formatTND(prixActuel)} → {formatTND(prixSaisi || 0)} (
+                  {t('colis.detail.champ.montantEncaisser')} {formatTND((prixSaisi || 0) + fraisColis)}).{' '}
+                  {t('colis.detail.prix.approbation')}
+                </span>
+              </p>
+              <Input
+                placeholder={t('colis.detail.prix.motif')}
+                value={form.priceChangeReason}
+                maxLength={255}
+                onChange={(e) => setForm((f) => ({ ...f, priceChangeReason: e.target.value }))}
+              />
+            </div>
           )}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -787,15 +817,20 @@ export function VueColisDetail({ identifiant }: { identifiant: string }) {
           </FormField>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <FormField label={t('colis.detail.champ.montantEncaisser')} required>
+            <FormField
+              label={t('colis.detail.prix.titre')}
+              required
+              helpText={t('colis.formulaire.prixAide', { frais: fraisColis.toFixed(3) })}
+            >
               <Input
                 required
                 type="number"
                 min="0"
                 step="0.001"
                 className="font-mono font-semibold"
-                value={form.totalPrice}
-                onChange={(e) => setForm((f) => ({ ...f, totalPrice: e.target.value }))}
+                data-testid="prix-colis-edition"
+                value={form.goodsPrice}
+                onChange={(e) => setForm((f) => ({ ...f, goodsPrice: e.target.value }))}
               />
             </FormField>
             <FormField label={t('colis.detail.champ.nombrePieces')} required>

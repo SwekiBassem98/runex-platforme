@@ -21,6 +21,7 @@ import { auditController } from './modules/audit/audit.controller';
 import { reportsController } from './modules/reports/reports.controller';
 import { receptionController } from './modules/depot/reception.controller';
 import { caisseController } from './modules/caisse/caisse.controller';
+import { priceChangeController } from './modules/prix/price-change.controller';
 import {
   usersController,
   shippersController,
@@ -247,6 +248,32 @@ export function createApiRouter(): Router {
     authenticateToken,
     requirePermissions(PermissionCode.COLIS_READ),
     asyncHandler((req, res) => colisController.getAll(req, res))
+  );
+
+  // Demandes de changement de prix (expéditeur → approbation admin), avant `/colis/:id`.
+  router.get(
+    ['/colis/demandes-prix', '/packages/price-changes'],
+    authenticateToken,
+    requirePermissions(PermissionCode.COLIS_READ),
+    asyncHandler((req, res) => priceChangeController.lister(req, res))
+  );
+  router.get(
+    ['/colis/demandes-prix/compteur', '/packages/price-changes/count'],
+    authenticateToken,
+    requireRoles(RoleType.ADMIN, RoleType.GESTIONNAIRE),
+    asyncHandler((req, res) => priceChangeController.compteur(req, res))
+  );
+  router.post(
+    ['/colis/demandes-prix/:id/approuver', '/packages/price-changes/:id/approve'],
+    authenticateToken,
+    requireRoles(RoleType.ADMIN, RoleType.GESTIONNAIRE),
+    asyncHandler((req, res) => priceChangeController.approuver(req, res))
+  );
+  router.post(
+    ['/colis/demandes-prix/:id/refuser', '/packages/price-changes/:id/reject'],
+    authenticateToken,
+    requireRoles(RoleType.ADMIN, RoleType.GESTIONNAIRE),
+    asyncHandler((req, res) => priceChangeController.refuser(req, res))
   );
 
   // Agences de sortie proposées au formulaire de colis (avant `/colis/:id`).

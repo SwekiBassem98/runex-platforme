@@ -1009,6 +1009,45 @@ export const caisseApi = {
     ),
 };
 
+export interface DemandePrix {
+  id: string;
+  packageId: string;
+  trackingNumber: string;
+  status: 'EN_ATTENTE' | 'APPROUVEE' | 'REFUSEE';
+  packageStatus: string;
+  shipperId: string;
+  shipperName: string;
+  customerName: string;
+  previousGoodsPrice: number;
+  previousTotal: number;
+  newGoodsPrice: number;
+  newTotal: number;
+  deliveryFee: number;
+  reason: string | null;
+  requestedBy: string | null;
+  decidedBy: string | null;
+  decisionNote: string | null;
+  decidedAt: string | null;
+  createdAt: string;
+}
+
+/** Demandes de changement de prix des expéditeurs (approbation admin). */
+export const demandesPrixApi = {
+  list: (params?: { status?: string; packageId?: string }) =>
+    requestData<DemandePrix[]>('/colis/demandes-prix', { query: params }),
+  compteur: () => requestData<{ enAttente: number }>('/colis/demandes-prix/compteur'),
+  approuver: (id: string, note?: string) =>
+    request<DemandePrix>(`/colis/demandes-prix/${encodeURIComponent(id)}/approuver`, {
+      method: 'POST',
+      body: { note },
+    }),
+  refuser: (id: string, note?: string) =>
+    request<DemandePrix>(`/colis/demandes-prix/${encodeURIComponent(id)}/refuser`, {
+      method: 'POST',
+      body: { note },
+    }),
+};
+
 export const paymentsApi = {
   list: (params?: Record<string, QueryValue>) =>
     request<PaymentVoucherDto[]>('/payments/vouchers', { query: params }),

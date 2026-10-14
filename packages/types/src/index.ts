@@ -440,6 +440,14 @@ export interface PackageDto {
   deliveryFee: number;
   /** Prix de la marchandise (sans les frais de livraison). */
   goodsPrice?: number;
+  /** Changement de prix demandé par l'expéditeur, en attente d'approbation. */
+  pendingPriceChange?: {
+    id: string;
+    newGoodsPrice: number;
+    newTotal: number;
+    reason: string | null;
+    createdAt: string;
+  } | null;
   shipperId: string;
   shipperName: string;
   assignedDriverId?: string;

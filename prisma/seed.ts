@@ -236,7 +236,7 @@ async function seedReferenceData(): Promise<SeedContext> {
         address: shipper.address,
         config: {
           create: {
-            defaultDeliveryFee: '7.000',
+            defaultDeliveryFee: '8.000',
             defaultReturnFee: '3.000',
             defaultExchangeFee: '8.000',
             // Code secret de déblocage des bordereaux (démonstration).
