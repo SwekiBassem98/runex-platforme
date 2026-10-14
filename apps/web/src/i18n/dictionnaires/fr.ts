@@ -206,6 +206,9 @@ export const fr = {
   'colis.formulaire.agenceSortie': 'Agence de sortie',
   'colis.formulaire.agenceSortieAide': 'Agence qui livrera le colis. Proposée d’après l’adresse ; vous pouvez la changer.',
   'colis.formulaire.agenceProposee': 'proposée',
+  'colis.formulaire.agenceDepart': 'Agence de départ',
+  'colis.formulaire.agenceDepartAide': 'D’où part le colis — imprimé sur le bon de livraison.',
+  'colis.formulaire.trajet': 'Trajet sur le bon :',
   'colis.formulaire.montant': 'Montant à encaisser',
   'colis.formulaire.nombrePieces': 'Nombre de pièces',
   'colis.formulaire.nombrePiecesAide':

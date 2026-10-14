@@ -247,6 +247,12 @@ Ce qui change pour les utilisateurs :
 
 L'application livreur passe en **1.4.0 (versionCode 5)** : reconstruire l'APK.
 
+Ensuite : tournée — ajout/retrait d'un colis au scan (interrupteur Ajouter /
+Retirer, comme le bon de retour) ; menu — ouverture immédiate des écrans
+(préchargement et écran d'ouverture) ; création de colis — agence de départ
+indiquée à la saisie, imprimée sur le bon de livraison (départ => agence de
+sortie => gouvernorat/délégation).
+
 Migration suivante, `20261016000000_bon_retour_adex` : livreur, véhicule et date
 sur le bon de retour, état « en cours de livraison », articles d'échange
 rattachés au bon. La remise ne demande plus de code (le livreur fait signer le

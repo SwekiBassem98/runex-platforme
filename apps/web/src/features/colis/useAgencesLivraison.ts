@@ -5,7 +5,8 @@
  * formulaire de colis — portail expéditeur et exploitation.
  *
  * `GET /colis/agences-livraison` renvoie la liste des agences, celle que le
- * routage propose pour l'adresse saisie, et les frais de livraison de
+ * routage propose pour l'adresse saisie (agence de sortie), celle qui dessert
+ * l'expéditeur (agence de départ proposée), et les frais de livraison de
  * l'expéditeur (8 DT par défaut) qui s'ajoutent au prix du colis.
  */
 
@@ -24,13 +25,14 @@ export const FRAIS_LIVRAISON_DEFAUT = 8;
 export function useAgencesLivraison(governorate: string, delegation: string, shipperId?: string | null) {
   const [agences, setAgences] = useState<AgenceLivraison[]>([]);
   const [suggestion, setSuggestion] = useState<string | null>(null);
+  const [suggestionDepart, setSuggestionDepart] = useState<string | null>(null);
   const [frais, setFrais] = useState<number>(FRAIS_LIVRAISON_DEFAUT);
 
   useEffect(() => {
     let annule = false;
     // Petite attente : la délégation se tape lettre par lettre.
     const minuteur = window.setTimeout(() => {
-      requestData<{ agences: AgenceLivraison[]; suggestion: string | null; deliveryFee: number }>(
+      requestData<{ agences: AgenceLivraison[]; suggestion: string | null; suggestionDepart?: string | null; deliveryFee: number }>(
         '/colis/agences-livraison',
         {
           query: {
@@ -44,6 +46,7 @@ export function useAgencesLivraison(governorate: string, delegation: string, shi
           if (annule) return;
           setAgences(r.agences);
           setSuggestion(r.suggestion);
+          setSuggestionDepart(r.suggestionDepart ?? null);
           if (Number.isFinite(r.deliveryFee)) setFrais(r.deliveryFee);
         })
         .catch(() => undefined);
@@ -54,7 +57,7 @@ export function useAgencesLivraison(governorate: string, delegation: string, shi
     };
   }, [governorate, delegation, shipperId]);
 
-  return { agences, suggestion, frais };
+  return { agences, suggestion, suggestionDepart, frais };
 }
 
 /** Total à encaisser : prix du colis + frais de livraison (arrondi au millime). */
@@ -62,4 +65,19 @@ export function totalAEncaisser(prix: string | number, frais: number): number | 
   const p = Number(prix);
   if (prix === '' || !Number.isFinite(p) || p < 0) return null;
   return Math.round((p + frais) * 1000) / 1000;
+}
+
+/** Trajet imprimé sur le bon de livraison : « départ => sortie => gouvernorat/délégation ». */
+export function libelleTrajet(
+  agences: AgenceLivraison[],
+  departId: string,
+  sortieId: string,
+  gouvernorat: string,
+  delegation: string
+): string | null {
+  const depart = agences.find((a) => a.id === departId)?.name;
+  const sortie = agences.find((a) => a.id === sortieId)?.name;
+  if (!depart || !sortie) return null;
+  const zone = [gouvernorat, delegation.trim()].filter(Boolean).join('/');
+  return `${depart} => ${sortie}${zone ? ` => ${zone}` : ''}`;
 }
