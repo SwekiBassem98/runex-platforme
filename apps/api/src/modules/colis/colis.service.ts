@@ -1264,7 +1264,7 @@ export class ColisService {
         409
       );
     }
-    if (runsheet && runsheet.status !== 'EN_ATTENTE' && runsheet.status !== 'BROUILLON') {
+    if (runsheet && !['BROUILLON', 'EN_ATTENTE', 'VALIDEE_DEPART', 'EN_COURS'].includes(runsheet.status)) {
       throw new BusinessRuleError(
         `La tournée ${runsheet.runsheetNumber} n'est plus modifiable (statut ${runsheet.status}).`,
         409
@@ -1290,12 +1290,30 @@ export class ColisService {
     }
 
     const location = packageLocation(record);
+    let tournee: { id: string; runsheetNumber: string; created: boolean } | null = runsheet
+      ? { id: runsheet.id, runsheetNumber: runsheet.runsheetNumber, created: false }
+      : null;
     await this.prisma.$transaction(async (tx) => {
       if (record.assignedDriverId !== driver.id) {
         await tx.package.update({ where: { id: record.id }, data: { assignedDriverId: driver.id } });
       }
       if (runsheet) {
         await runsheetsService.attachPackage(tx, runsheet, record.id, { id: user.id, fullName: user.fullName });
+        return;
+      }
+      // Sans tournée désignée : le colis rejoint la tournée ouverte du livreur
+      // (ou une tournée du jour créée pour l'occasion). Un colis « affecté sans
+      // tournée » n'apparaissait pas dans l'application du livreur alors qu'il
+      // en recevait la notification.
+      const dejaDansUneTournee =
+        record.currentRunsheetId &&
+        (await tx.runsheet.count({
+          where: { id: record.currentRunsheetId, driverId: driver.id, status: { in: ['BROUILLON', 'EN_ATTENTE', 'VALIDEE_DEPART', 'EN_COURS'] } },
+        })) > 0;
+      if (!dejaDansUneTournee && (status === PackageStatus.AFFECTE_RUNSHEET || canTransition(status, PackageStatus.AFFECTE_RUNSHEET))) {
+        const ouverte = await runsheetsService.ensureOpenRunsheet(tx, driver.id, record.currentDepositId ?? null);
+        await runsheetsService.attachPackage(tx, ouverte, record.id, { id: user.id, fullName: user.fullName });
+        tournee = ouverte;
         return;
       }
       if (status !== PackageStatus.AFFECTE_RUNSHEET && canTransition(status, PackageStatus.AFFECTE_RUNSHEET)) {
@@ -1324,11 +1342,15 @@ export class ColisService {
       });
     });
 
+    // `tournee` est fixée dans la transaction : TypeScript ne suit pas
+    // l'affectation faite dans le rappel.
+    const rejointe = tournee as { id: string; runsheetNumber: string; created: boolean } | null;
+
     // Le livreur reçoit sa nouvelle affectation.
     await notificationDispatcher.notify({
       event: NotificationEvent.COLIS_ASSIGNED,
       title: 'Nouvelle livraison à effectuer',
-      content: `${user.fullName} vous a affecté le colis #${record.trackingNumber}${runsheet ? ` sur la tournée ${runsheet.runsheetNumber}` : ''}.`,
+      content: `${user.fullName} vous a affecté le colis #${record.trackingNumber}${rejointe ? ` sur la tournée ${rejointe.runsheetNumber}` : ''}.`,
       relatedEntity: 'PACKAGE',
       relatedEntityId: record.id,
       packageId: record.id,
@@ -1337,15 +1359,17 @@ export class ColisService {
 
     // Un colis qui rejoint une tournée est aussi une information pour celui qui
     // suit le flux des tournées.
-    if (runsheet) {
+    if (rejointe) {
       await notificationDispatcher
         .notify({
           event: NotificationEvent.RUNSHEET_ASSIGNED,
-          title: 'Colis intégré à une tournée',
-          content: `Le colis #${record.trackingNumber} a rejoint la tournée ${runsheet.runsheetNumber} de ${driver.user.fullName}.`,
+          title: rejointe.created ? 'Nouvelle tournée' : 'Colis intégré à une tournée',
+          content: rejointe.created
+            ? `La tournée ${rejointe.runsheetNumber} vous est affectée avec le colis #${record.trackingNumber}.`
+            : `Le colis #${record.trackingNumber} a rejoint la tournée ${rejointe.runsheetNumber} de ${driver.user.fullName}.`,
           relatedEntity: 'RUNSHEET',
-          relatedEntityId: runsheet.id,
-          runsheetId: runsheet.id,
+          relatedEntityId: rejointe.id,
+          runsheetId: rejointe.id,
           userIds: [driver.userId],
         })
         .catch(() => undefined);
@@ -1796,6 +1820,20 @@ export class ColisService {
     const rescheduled = parseOptionalDate(payload.rescheduledDate, 'date de report');
     const customerNote = payload.customerNote?.trim() || null;
 
+    // Troisième tentative sans livraison : le système retourne le colis.
+    if (attempts + 1 >= MAX_DELIVERY_ATTEMPTS) {
+      return this.executeReturn(
+        record,
+        {
+          reason: `Retour automatique : ${MAX_DELIVERY_ATTEMPTS} tentatives sans livraison (dernier motif : ${payload.reason}).`,
+          driverNote: payload.driverNote,
+        },
+        user,
+        { result: 'REPORTEE', comment: payload.driverNote?.trim() || payload.reason, customerNote },
+        true
+      );
+    }
+
     await this.prisma.$transaction(async (tx) => {
       await this.applyStatusChange(record.id, PackageStatus.REPORTE, {
         actorName: user.fullName,
@@ -1884,15 +1922,27 @@ export class ColisService {
     }
 
     const definitive = payload.definitive ?? DEFENSIVE_REASONS.has(payload.reasonCode);
-    if (definitive && attempts + 1 >= MAX_DELIVERY_ATTEMPTS) {
-      throw new BusinessRuleError(
-        `Dernière tentative autorisée (${MAX_DELIVERY_ATTEMPTS}) : déclarez plutôt un ` +
-          'retour au dépôt, le colis ne peut plus être retenté.',
-        409
+    const rescheduled = parseOptionalDate(payload.rescheduledFor, 'date de nouvelle tentative');
+
+    // Troisième tentative sans livraison : le système retourne le colis.
+    if (attempts + 1 >= MAX_DELIVERY_ATTEMPTS) {
+      return this.executeReturn(
+        record,
+        {
+          reason: `Retour automatique : ${MAX_DELIVERY_ATTEMPTS} tentatives sans livraison (dernier motif : ${FAILED_DELIVERY_LABELS[payload.reasonCode]}).`,
+          driverNote: payload.comment,
+        },
+        user,
+        {
+          result: payload.reasonCode,
+          reasonCode: payload.reasonCode,
+          comment: payload.comment,
+          rescheduledFor: rescheduled,
+        },
+        true
       );
     }
 
-    const rescheduled = parseOptionalDate(payload.rescheduledFor, 'date de nouvelle tentative');
     const target = definitive ? PackageStatus.ECHEC_LIVRAISON : PackageStatus.REPORTE;
     const location = `${record.customerAddress.delegation}, ${record.customerAddress.governorate}`;
     const reason = FAILED_DELIVERY_LABELS[payload.reasonCode];
@@ -1942,6 +1992,26 @@ export class ColisService {
   ): Promise<PackageDto> {
     const record = await this.findRecord(identifier);
     assertDriverOwnsPackage(record, user);
+    return this.executeReturn(record, payload, user, { result: 'REFUSEE', comment: payload.reason });
+  }
+
+  /**
+   * Retour au dépôt, partagé par le retour déclaré par le livreur et le retour
+   * automatique après la dernière tentative autorisée.
+   */
+  private async executeReturn(
+    record: Awaited<ReturnType<ColisService['findRecord']>>,
+    payload: ReturnRequest,
+    user: DriverActor,
+    attempt: {
+      result: 'REFUSEE' | 'REPORTEE' | FailedDeliveryReason;
+      comment?: string;
+      reasonCode?: FailedDeliveryReason;
+      rescheduledFor?: Date | null;
+      customerNote?: string | null;
+    },
+    automatic = false
+  ): Promise<PackageDto> {
     await this.assertTransitionPossible(record.id, PackageStatus.RETOUR_DEPOT);
     const driverId = this.fieldDriverId(record, user);
 
@@ -1972,7 +2042,7 @@ export class ColisService {
         actorId: user.id,
         role: user.role,
         driverId: user.driverId,
-        title: 'Colis retourné au dépôt',
+        title: automatic ? 'Retour automatique au dépôt' : 'Colis retourné au dépôt',
         reason: payload.reason,
         note: payload.driverNote,
         locationName: deposit?.name ?? packageLocation(record),
@@ -1988,7 +2058,12 @@ export class ColisService {
         client: tx,
       });
 
-      await this.recordAttempt(tx, record, driverId, 'REFUSEE', { comment: payload.reason });
+      await this.recordAttempt(tx, record, driverId, attempt.result, {
+        comment: attempt.comment,
+        reasonCode: attempt.reasonCode,
+        rescheduledFor: attempt.rescheduledFor ?? null,
+        customerNote: attempt.customerNote ?? null,
+      });
 
       // Rendre un colis après avoir pris l'argent, c'est rembourser. Un retour
       // sur un colis jamais encaissé n'a rien à rembourser.
@@ -2032,6 +2107,19 @@ export class ColisService {
     });
 
     await this.notifyStatusChanged(record.id, PackageStatus.RETOUR_DEPOT, user.fullName, user.id);
+    if (automatic) {
+      // L'expéditeur et l'exploitation apprennent que le colis revient, sans
+      // attendre que quelqu'un le déclare.
+      await notificationDispatcher.notify({
+        event: NotificationEvent.DELIVERY_POSTPONED,
+        title: 'Retour automatique',
+        content: `Le colis #${record.trackingNumber} n'a pas pu être livré après ${MAX_DELIVERY_ATTEMPTS} tentatives : il est retourné au dépôt.`,
+        relatedEntity: 'PACKAGE',
+        relatedEntityId: record.id,
+        packageId: record.id,
+        actorUserId: user.id ?? null,
+      });
+    }
 
     const fresh = await this.findRecord(record.id);
     return toPackageDto(fresh);

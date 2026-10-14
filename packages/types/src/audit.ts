@@ -154,6 +154,7 @@ export const AUDIT_ACTIONS: Readonly<Record<string, AuditActionDefinition>> = {
   // Codes écrits par le service des tournées : sans entrée ici, la famille
   // RUNSHEET_* les « humanisait » en « Tournée : Package added ».
   RUNSHEET_PACKAGE_ADDED: { label: 'Colis intégré à une tournée', category: 'TOURNEE' },
+  RUNSHEET_PACKAGE_REMOVED: { label: 'Colis retiré d’une tournée en cours', category: 'TOURNEE' },
   RUNSHEET_DEPART: { label: 'Départ en tournée', category: 'TOURNEE' },
   RUNSHEET_ANNULEE: { label: 'Tournée annulée', category: 'TOURNEE', critical: true },
   RUNSHEET_STATUT: { label: 'Statut de la tournée modifié', category: 'TOURNEE' },

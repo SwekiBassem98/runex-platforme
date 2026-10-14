@@ -18,6 +18,33 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 type Client = PrismaClient | Prisma.TransactionClient;
 
 const norm = (v: string | null | undefined) => String(v ?? '').trim().toLowerCase();
+const sansAccents = (v: string) => v.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+/**
+ * Gouvernorats sans agence propre → agence régionale qui les livre (codes de
+ * la migration 20261015000000_agences_regionales). Le hub central (Ben Arous)
+ * reste le recours pour tout gouvernorat absent de la table. Ce n'est qu'un
+ * défaut : l'agence de livraison se choisit à la création du colis, et une
+ * zone peut être rattachée à une autre agence (Administration → Zones).
+ */
+const AGENCE_REGIONALE: Record<string, string> = {
+  ariana: 'DEP-TUNIS-AGT',
+  'la manouba': 'DEP-TUNIS-AGT',
+  bizerte: 'DEP-TUNIS-AGT',
+  zaghouan: 'DEP-NABEUL-AGT',
+  monastir: 'DEP-SOUSSE-AGT',
+  mahdia: 'DEP-SOUSSE-AGT',
+  kairouan: 'DEP-SOUSSE-AGT',
+  beja: 'DEP-SILIANA-AGT',
+  jendouba: 'DEP-SILIANA-AGT',
+  'le kef': 'DEP-SILIANA-AGT',
+  kasserine: 'DEP-GAFSA-AGT',
+  'sidi bouzid': 'DEP-GAFSA-AGT',
+  tozeur: 'DEP-GAFSA-AGT',
+  kebili: 'DEP-GAFSA-AGT',
+  gabes: 'DEP-MEDENINE-AGT',
+  tataouine: 'DEP-MEDENINE-AGT',
+};
 
 export async function mainHubId(client: Client): Promise<string | null> {
   const hub =
@@ -52,6 +79,15 @@ export async function resolveDestinationDepositId(
       select: { id: true },
     });
     if (deposit) return deposit.id;
+    // Gouvernorat sans agence : l'agence régionale qui le dessert.
+    const region = AGENCE_REGIONALE[sansAccents(gov)];
+    if (region) {
+      const agence = await client.deposit.findFirst({
+        where: { isActive: true, code: region },
+        select: { id: true },
+      });
+      if (agence) return agence.id;
+    }
   }
   return mainHubId(client);
 }

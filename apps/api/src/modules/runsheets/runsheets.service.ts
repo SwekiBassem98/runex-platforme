@@ -79,6 +79,24 @@ const REMOVABLE_STATUSES: PackageStatus[] = [
   PackageStatus.CREE,
 ];
 
+/**
+ * Tournée à montrer au livreur parmi ses tournées ouvertes : celle qui roule
+ * (EN_COURS) d'abord, puis la plus récente par date de tournée, puis par
+ * création. Sans cette règle, deux tournées du même jour se départageaient au
+ * hasard et le livreur pouvait voir une tournée vide au lieu de la bonne.
+ */
+function choisirTourneeActive<T extends { status: string; tourDate: Date; createdAt: Date }>(liste: T[]): T | null {
+  const rang = (s: string) => (s === 'EN_COURS' ? 0 : s === 'VALIDEE_DEPART' ? 1 : 2);
+  return (
+    [...liste].sort(
+      (a, b) =>
+        rang(a.status) - rang(b.status) ||
+        b.tourDate.getTime() - a.tourDate.getTime() ||
+        b.createdAt.getTime() - a.createdAt.getTime()
+    )[0] ?? null
+  );
+}
+
 /** Jour calendaire de Tunis, `AAAA-MM-JJ`. */
 function tunisIsoDay(now = new Date()): string {
   const stamp = tunisDayStamp(now);
@@ -575,6 +593,25 @@ export class RunsheetsService {
       });
     }
 
+    // Tournée déjà partie : le colis part aussitôt en livraison avec elle.
+    if (runsheet.status === 'EN_COURS') {
+      await packageWorkflowService.transition({
+        packageId: pkg.id,
+        to: PackageStatus.EN_COURS_LIVRAISON,
+        actor: { id: user.id, fullName: user.fullName, role: RoleType.GESTIONNAIRE },
+        title: 'Ajouté à la tournée en cours',
+        note: `Tournée ${runsheet.runsheetNumber}`,
+        location: 'En tournée',
+        runsheetNumber: runsheet.runsheetNumber,
+        auditAction: 'RUNSHEET_DEPARTURE',
+        client: tx,
+      });
+      await tx.runsheetItem.updateMany({
+        where: { runsheetId: runsheet.id, packageId: pkg.id },
+        data: { scannedAtDeparture: new Date() },
+      });
+    }
+
     await auditService.record(
       {
         entityType: 'RUNSHEET',
@@ -606,7 +643,10 @@ export class RunsheetsService {
       throw notFound('Ce colis ne figure pas dans la tournée.');
     }
     const status = item.package.status as unknown as PackageStatus;
-    if (item.isHandled || !REMOVABLE_STATUSES.includes(status)) {
+    // En tournée, un colis encore « en cours de livraison » peut être retiré :
+    // le livreur le rapporte au dépôt.
+    const enRoute = status === PackageStatus.EN_COURS_LIVRAISON;
+    if (item.isHandled || (!REMOVABLE_STATUSES.includes(status) && !enRoute)) {
       throw conflict(
         `Le colis #${item.package.trackingNumber} a déjà été traité (statut « ${PACKAGE_STATUS_LABELS[status] ?? status} ») : ` +
           'il ne peut plus être retiré de la tournée.'
@@ -624,12 +664,29 @@ export class RunsheetsService {
           expectedCash: { decrement: item.package.totalPrice },
         },
       });
-      // Le colis reste affecté au livreur (« affecté sans tournée ») : il peut
-      // être réaffecté ou intégré à une autre tournée.
-      await tx.package.update({
-        where: { id: item.packageId },
-        data: { currentRunsheetId: null },
-      });
+      if (enRoute) {
+        // Retiré pendant la tournée : il revient au dépôt de la tournée, sans
+        // livreur, prêt à être réaffecté.
+        await packageWorkflowService.transition({
+          packageId: item.packageId,
+          to: PackageStatus.RECU_DEPOT,
+          actor: { id: user.id, fullName: user.fullName, role: RoleType.GESTIONNAIRE },
+          title: `Retiré de la tournée ${runsheet.runsheetNumber}`,
+          note: 'À rapporter au dépôt par le livreur',
+          location: runsheet.deposit?.name ?? 'Dépôt',
+          runsheetNumber: runsheet.runsheetNumber,
+          auditAction: 'RUNSHEET_PACKAGE_REMOVED',
+          data: { currentRunsheetId: null, assignedDriverId: null, currentDepositId: runsheet.depositId },
+          client: tx,
+        });
+      } else {
+        // Le colis reste affecté au livreur (« affecté sans tournée ») : il peut
+        // être réaffecté ou intégré à une autre tournée.
+        await tx.package.update({
+          where: { id: item.packageId },
+          data: { currentRunsheetId: null },
+        });
+      }
       await auditService.record(
         {
           entityType: 'RUNSHEET',
@@ -644,7 +701,9 @@ export class RunsheetsService {
 
     await this.notifyDriver(runsheet.driverId, {
       title: 'Colis retiré de votre tournée',
-      content: `Le colis #${item.package.trackingNumber} a été retiré de la tournée ${runsheet.runsheetNumber} : ne le livrez pas.`,
+      content: enRoute
+        ? `Le colis #${item.package.trackingNumber} a été retiré de la tournée ${runsheet.runsheetNumber} : ne le livrez pas, rapportez-le au dépôt.`
+        : `Le colis #${item.package.trackingNumber} a été retiré de la tournée ${runsheet.runsheetNumber} : ne le livrez pas.`,
       runsheetId: runsheet.id,
       actorUserId: user.id ?? null,
     });
@@ -891,18 +950,55 @@ export class RunsheetsService {
     const uuid = asUuid(driverId);
     if (!uuid) return null;
 
-    const record = await prisma.runsheet.findFirst({
+    const ouvertes = await prisma.runsheet.findMany({
       where: {
         driverId: uuid,
-        status: { in: ['EN_ATTENTE', 'VALIDEE_DEPART', 'EN_COURS'] },
+        status: { in: ['BROUILLON', 'EN_ATTENTE', 'VALIDEE_DEPART', 'EN_COURS'] },
         // Un agent de dépôt ne lit que les tournées de son dépôt.
         ...(scope?.depositId ? { depositId: scope.depositId } : {}),
       },
-      include: RUNSHEET_INCLUDE,
-      orderBy: { tourDate: 'desc' },
+      select: { id: true, status: true, tourDate: true, createdAt: true },
     });
-
+    const choisie = choisirTourneeActive(ouvertes);
+    if (!choisie) return null;
+    const record = await prisma.runsheet.findUnique({ where: { id: choisie.id }, include: RUNSHEET_INCLUDE });
     return record ? this.toDto(record) : null;
+  }
+
+  /**
+   * Tournée ouverte du livreur, ou une nouvelle tournée du jour (EN_ATTENTE)
+   * créée dans la transaction : un colis affecté à un livreur est toujours
+   * rattaché à une tournée, sans quoi il n'apparaîtrait pas dans son
+   * application.
+   */
+  async ensureOpenRunsheet(
+    tx: Prisma.TransactionClient,
+    driverId: string,
+    depositId: string | null
+  ): Promise<{ id: string; runsheetNumber: string; driverId: string; status: string; created: boolean }> {
+    const ouvertes = await tx.runsheet.findMany({
+      where: { driverId, status: { in: ['BROUILLON', 'EN_ATTENTE', 'VALIDEE_DEPART', 'EN_COURS'] } },
+      select: { id: true, runsheetNumber: true, driverId: true, status: true, tourDate: true, createdAt: true },
+    });
+    const choisie = choisirTourneeActive(ouvertes);
+    if (choisie) return { ...choisie, created: false };
+    const deposit =
+      (depositId ? await tx.deposit.findUnique({ where: { id: depositId } }) : null) ??
+      (await tx.deposit.findFirst({ where: { isMainHub: true } }));
+    if (!deposit) throw badRequest('Aucun dépôt disponible pour créer la tournée.');
+    const created = await tx.runsheet.create({
+      data: {
+        runsheetNumber: await nextRunsheetNumber(tx, tunisDayStamp()),
+        depositId: deposit.id,
+        driverId,
+        tourDate: new Date(`${tunisIsoDay()}T00:00:00.000Z`),
+        type: 'DISTRIBUTION' as never,
+        status: 'EN_ATTENTE',
+        notes: 'Créée automatiquement à l’affectation d’un colis.',
+      },
+      select: { id: true, runsheetNumber: true, driverId: true, status: true },
+    });
+    return { ...created, created: true };
   }
 
   /* ---------------------------------------------------------------- */
@@ -922,7 +1018,9 @@ export class RunsheetsService {
   }
 
   private assertOpen(status: string, action: string): void {
-    if (status === 'BROUILLON' || status === 'EN_ATTENTE') return;
+    // Une tournée partie (EN_COURS) reste modifiable : l'exploitation peut y
+    // ajouter un colis à livrer ou en retirer un, le livreur est prévenu.
+    if (['BROUILLON', 'EN_ATTENTE', 'VALIDEE_DEPART', 'EN_COURS'].includes(status)) return;
     throw conflict(
       `Impossible de ${action} un colis : la tournée n'est plus modifiable (statut ${status}).`
     );

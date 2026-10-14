@@ -579,7 +579,13 @@ export class InterDepotsService {
     const type = (payload.type ? String(payload.type).toUpperCase() : InterDepotType.LIVRAISON) as InterDepotType;
     if (!Object.values(InterDepotType).includes(type)) throw badRequest(`Type d'inter-dépôt inconnu : ${payload.type}.`);
 
-    const sourceId = await this.operatingDepositId(actor, payload.sourceDepositId);
+    // Départ : toujours le hub central (Ben Arous), sauf pour un agent de dépôt
+    // qui expédie depuis son agence, ou un départ explicitement demandé.
+    const hub = await mainHubId(this.prisma);
+    const sourceId =
+      actor.role === RoleType.AGENT_DEPOT || payload.sourceDepositId || !hub
+        ? await this.operatingDepositId(actor, payload.sourceDepositId)
+        : hub;
     const destinationId = asUuid(payload.destinationDepositId ?? '');
     if (!destinationId) {
       throw badRequest(type === InterDepotType.RETOUR ? "Choisissez l'agence source des retours." : "Choisissez l'agence de destination.");

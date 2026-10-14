@@ -76,6 +76,10 @@ const BRANCHES = [
   { code: 'BR-TUNIS', name: 'Agence Tunis Centre', governorate: 'Tunis', address: 'Avenue Habib Bourguiba, Tunis', phone: '71300001' },
   { code: 'BR-SOUSSE', name: 'Agence Sousse', governorate: 'Sousse', address: 'Avenue Yasser Arafat, Sousse', phone: '73200001' },
   { code: 'BR-SFAX', name: 'Agence Sfax', governorate: 'Sfax', address: 'Avenue Al Massila, Sfax', phone: '74200001' },
+  { code: 'BR-NABEUL', name: 'Agence Nabeul', governorate: 'Nabeul', address: 'Avenue Habib Thameur, Nabeul', phone: '72200001' },
+  { code: 'BR-SILIANA', name: 'Agence Siliana', governorate: 'Siliana', address: 'Centre-ville, Siliana', phone: '78800001' },
+  { code: 'BR-GAFSA', name: 'Agence Gafsa', governorate: 'Gafsa', address: 'Centre-ville, Gafsa', phone: '76200001' },
+  { code: 'BR-MEDENINE', name: 'Agence Médenine', governorate: 'Médenine', address: 'Centre-ville, Médenine', phone: '75600001' },
 ];
 
 const DEPOSITS = [
@@ -83,6 +87,10 @@ const DEPOSITS = [
   { code: 'DEP-TUNIS-AGT', name: 'Agence Tunis', governorate: 'Tunis', city: 'Tunis', address: 'Avenue Habib Bourguiba, Tunis', isMainHub: false, branchCode: 'BR-TUNIS', phone: '71300001' },
   { code: 'DEP-SOUSSE-AGT', name: 'Agence Sousse', governorate: 'Sousse', city: 'Sousse', address: 'Avenue Yasser Arafat, Sousse', isMainHub: false, branchCode: 'BR-SOUSSE', phone: '73200001' },
   { code: 'DEP-SFAX-AGT', name: 'Agence Sfax', governorate: 'Sfax', city: 'Sfax', address: 'Avenue Al Massila, Sfax', isMainHub: false, branchCode: 'BR-SFAX', phone: '74200001' },
+  { code: 'DEP-NABEUL-AGT', name: 'Agence Nabeul', governorate: 'Nabeul', city: 'Nabeul', address: 'Avenue Habib Thameur, Nabeul', isMainHub: false, branchCode: 'BR-NABEUL', phone: '72200001' },
+  { code: 'DEP-SILIANA-AGT', name: 'Agence Siliana', governorate: 'Siliana', city: 'Siliana', address: 'Centre-ville, Siliana', isMainHub: false, branchCode: 'BR-SILIANA', phone: '78800001' },
+  { code: 'DEP-GAFSA-AGT', name: 'Agence Gafsa', governorate: 'Gafsa', city: 'Gafsa', address: 'Centre-ville, Gafsa', isMainHub: false, branchCode: 'BR-GAFSA', phone: '76200001' },
+  { code: 'DEP-MEDENINE-AGT', name: 'Agence Médenine', governorate: 'Médenine', city: 'Médenine', address: 'Centre-ville, Médenine', isMainHub: false, branchCode: 'BR-MEDENINE', phone: '75600001' },
 ];
 
 const SHIPPERS = [

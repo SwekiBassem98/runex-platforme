@@ -134,6 +134,9 @@ export const PACKAGE_STATUS_TRANSITIONS: Readonly<Record<PackageStatus, readonly
     PackageStatus.REPORTE,
     PackageStatus.ECHEC_LIVRAISON,
     PackageStatus.RETOUR_DEPOT,
+    // Retiré d'une tournée en cours : le livreur le rapporte au dépôt, d'où il
+    // pourra être réaffecté.
+    PackageStatus.RECU_DEPOT,
   ],
 
   // --- Reprises et échecs ---
@@ -143,6 +146,8 @@ export const PACKAGE_STATUS_TRANSITIONS: Readonly<Record<PackageStatus, readonly
     PackageStatus.LIVRE,
     PackageStatus.LIVRAISON_PARTIELLE,
     PackageStatus.ECHEC_LIVRAISON,
+    // Troisième tentative sans livraison : retour automatique au dépôt.
+    PackageStatus.RETOUR_DEPOT,
   ],
   [PackageStatus.ECHEC_LIVRAISON]: [
     PackageStatus.AFFECTE_RUNSHEET,
