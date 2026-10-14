@@ -40,6 +40,7 @@ import { creerColis } from '@/features/expediteur/lib/client';
 import { GOUVERNORATS, useVocabulaire } from '@/features/expediteur/lib/libelles';
 import { estZoneConnue, useDelegationsConnues } from '@/features/zones/useDelegationsConnues';
 import { useI18n } from '@/i18n';
+import { totalAEncaisser, useAgencesLivraison } from '@/features/colis/useAgencesLivraison';
 
 interface EtatFormulaire {
   customerName: string;
@@ -47,7 +48,8 @@ interface EtatFormulaire {
   governorate: string;
   delegation: string;
   address: string;
-  totalPrice: string;
+  goodsPrice: string;
+  destinationDepositId: string;
   pieceCount: string;
   sizeCategory: PackageSize;
   packageType: PackageType;
@@ -63,7 +65,8 @@ const VIDE: EtatFormulaire = {
   governorate: 'Tunis',
   delegation: '',
   address: '',
-  totalPrice: '',
+  goodsPrice: '',
+  destinationDepositId: '',
   pieceCount: '1',
   sizeCategory: PackageSize.MOYENNE,
   packageType: PackageType.NORMAL,
@@ -82,6 +85,11 @@ export function FormulaireColis() {
 
   const [form, setForm] = React.useState<EtatFormulaire>(VIDE);
   const delegationsConnues = useDelegationsConnues(form.governorate);
+  const { agences, suggestion, frais } = useAgencesLivraison(form.governorate, form.delegation);
+  // L'agence proposée suit l'adresse tant que l'expéditeur ne l'a pas choisie.
+  const [agenceChoisie, setAgenceChoisie] = React.useState(false);
+  const agenceSortie = agenceChoisie ? form.destinationDepositId : (suggestion ?? '');
+  const total = totalAEncaisser(form.goodsPrice, frais);
   const [envoi, setEnvoi] = React.useState(false);
   const [erreur, setErreur] = React.useState<string | null>(null);
 
@@ -105,7 +113,8 @@ export function FormulaireColis() {
         governorate: form.governorate,
         delegation: form.delegation.trim() || undefined,
         address: form.address.trim(),
-        totalPrice: Number(form.totalPrice),
+        goodsPrice: Number(form.goodsPrice),
+        destinationDepositId: agenceSortie || undefined,
         pieceCount: Number(form.pieceCount),
         sizeCategory: form.sizeCategory,
         packageType: form.packageType,
@@ -260,21 +269,51 @@ export function FormulaireColis() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <FormField
-              label={t('colis.formulaire.montant')}
+              label={t('colis.formulaire.prix')}
               required
-              // Cette aide n'a pas encore de clé au dictionnaire.
-              helpText="Ce que le livreur collecte auprès du destinataire"
+              helpText={t('colis.formulaire.prixAide', { frais: frais.toFixed(3) })}
             >
               <Input
                 required
                 type="number"
                 min="0"
                 step="0.001"
-                value={form.totalPrice}
-                onChange={(e) => modifier('totalPrice', e.target.value)}
+                value={form.goodsPrice}
+                onChange={(e) => modifier('goodsPrice', e.target.value)}
                 className="font-mono font-semibold"
                 placeholder="0.000"
+                data-testid="prix-colis"
               />
+            </FormField>
+
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm" data-testid="total-encaisser">
+              <p className="flex justify-between gap-2 text-xs text-emerald-900">
+                <span>{t('colis.formulaire.fraisLivraison')}</span>
+                <span className="font-mono" dir="ltr">+ {frais.toFixed(3)} DT</span>
+              </p>
+              <p className="flex justify-between gap-2 mt-1 font-semibold text-emerald-900">
+                <span>{t('colis.formulaire.montant')}</span>
+                <span className="font-mono" dir="ltr">{total === null ? '—' : `${total.toFixed(3)} DT`}</span>
+              </p>
+            </div>
+
+            <FormField label={t('colis.formulaire.agenceSortie')} helpText={t('colis.formulaire.agenceSortieAide')}>
+              <Select
+                value={agenceSortie}
+                onChange={(e) => {
+                  setAgenceChoisie(true);
+                  modifier('destinationDepositId', e.target.value);
+                }}
+                data-testid="agence-sortie"
+              >
+                {!agenceSortie && <option value="">—</option>}
+                {agences.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                    {a.id === suggestion ? ` (${t('colis.formulaire.agenceProposee')})` : ''}
+                  </option>
+                ))}
+              </Select>
             </FormField>
 
             <FormField

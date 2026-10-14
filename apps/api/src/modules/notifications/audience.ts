@@ -69,7 +69,7 @@ interface PackageActors {
 
 export class NotificationAudience {
   /** Destinataires par rôle de la table `Role`. */
-  private async usersByRole(roles: readonly PrismaRoleType[]): Promise<string[]> {
+  async usersByRole(roles: readonly PrismaRoleType[]): Promise<string[]> {
     const prisma = getPrisma();
     const rows = await prisma.user.findMany({
       where: {

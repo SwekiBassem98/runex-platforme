@@ -87,7 +87,6 @@ export function InterDepotEdition({ type: typeInitial, numero }: { type: InterDe
 
   const [agence, setAgence] = useState('');
   const estAgent = user?.role === RoleType.AGENT_DEPOT;
-  const [depart, setDepart] = useState('');
   const [livreur, setLivreur] = useState('');
   const [matricule, setMatricule] = useState('');
   const [date, setDate] = useState(versChampDate());
@@ -139,8 +138,12 @@ export function InterDepotEdition({ type: typeInitial, numero }: { type: InterDe
     };
   }, [numero, chargerCandidats]);
 
-  // Agences proposées : toutes sauf celle d'où l'on opère.
-  const origine = transfert?.sourceDepositId ?? (depart || options?.operatingDepositId) ?? null;
+  // Départ : le hub central (Ben Arous) — un agent de dépôt part de son agence.
+  const hub = options?.deposits.find((d) => d.isMainHub) ?? null;
+  const origine =
+    transfert?.sourceDepositId ?? (estAgent ? options?.operatingDepositId : hub?.id ?? options?.operatingDepositId) ?? null;
+  const origineNom = transfert?.sourceDeposit ?? options?.deposits.find((d) => d.id === origine)?.name ?? '';
+  // Agences proposées : toutes sauf celle du départ.
   const agences = useMemo(() => (options?.deposits ?? []).filter((d) => d.id !== origine), [options, origine]);
   const agenceNom = (transfert?.destinationDeposit ?? agences.find((a) => a.id === agence)?.name) || '';
 
@@ -158,7 +161,6 @@ export function InterDepotEdition({ type: typeInitial, numero }: { type: InterDe
       if (!transfert) {
         const t = await interDepotsApi.create({
           type,
-          sourceDepositId: !estAgent && depart ? depart : undefined,
           destinationDepositId: agence,
           transporterDriverId: livreur,
           vehiclePlate: matricule || undefined,
@@ -321,15 +323,11 @@ export function InterDepotEdition({ type: typeInitial, numero }: { type: InterDe
               </p>
             )}
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 items-end">
-              {!transfert && !estAgent && options && (
-                <label className="text-xs text-slate-600 space-y-1">
-                  <span>Dépôt de départ</span>
-                  <select value={depart || options.operatingDepositId || ''} onChange={(e) => { setDepart(e.target.value); if (e.target.value === agence) setAgence(''); }} className="w-full border border-slate-300 rounded px-2 py-2 text-sm">
-                    {options.deposits.map((d) => (
-                      <option key={d.id} value={d.id}>{d.name}</option>
-                    ))}
-                  </select>
-                </label>
+              {!transfert && origineNom && (
+                <div className="text-xs text-slate-600 space-y-1">
+                  <span>Départ</span>
+                  <p className="w-full border border-slate-200 bg-slate-50 rounded px-2 py-2 text-sm text-slate-700">{origineNom}</p>
+                </div>
               )}
               {!transfert && (
                 <label className="text-xs text-slate-600 space-y-1">

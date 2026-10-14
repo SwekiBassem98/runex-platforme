@@ -116,6 +116,9 @@ const RUNSHEET_STATUS_BADGES: Record<string, { label: string; bg: string; text: 
   ANNULEE: { label: 'Annulée', bg: 'bg-rose-50', text: 'text-rose-800', border: 'border-rose-300' },
 };
 
+/** Statuts de tournée où l'on peut encore ajouter ou retirer un colis (y compris en tournée). */
+const TOURNEE_MODIFIABLE = ['BROUILLON', 'EN_ATTENTE', 'VALIDEE_DEPART', 'EN_COURS'];
+
 export function RunsheetManagementModule({ currentUser, token }: RunsheetManagementModuleProps) {
   const { addToast } = useToast();
 
@@ -1184,8 +1187,8 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
                 )}
               </div>
 
-              {/* Bouton Ajouter Colis si avant départ */}
-              {['BROUILLON', 'EN_ATTENTE'].includes(String(runsheet.status)) && (
+              {/* Ajout possible avant le départ et pendant la tournée */}
+              {TOURNEE_MODIFIABLE.includes(String(runsheet.status)) && (
                 <button
                   onClick={() => {
                     loadAvailablePackages();
@@ -1194,7 +1197,7 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
                   className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  <span>Ajouter Colis au Chargement</span>
+                  <span>{String(runsheet.status) === 'EN_COURS' ? 'Ajouter un colis à la tournée en cours' : 'Ajouter Colis au Chargement'}</span>
                 </button>
               )}
             </div>
@@ -1280,7 +1283,7 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
                 title="Aucun colis dans cette tournée"
                 description="Cette feuille de tournée ne contient aucun colis pour le moment."
                 action={
-                  ['BROUILLON', 'EN_ATTENTE'].includes(String(runsheet.status)) ? (
+                  TOURNEE_MODIFIABLE.includes(String(runsheet.status)) ? (
                     <button
                       onClick={() => {
                         loadAvailablePackages();
@@ -1317,9 +1320,11 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
                         text: 'text-slate-800',
                         border: 'border-slate-300',
                       };
-                      const canRemove = ['BROUILLON', 'EN_ATTENTE'].includes(
-                        String(runsheet.status)
-                      );
+                      // En tournée, seul un colis pas encore traité peut être retiré.
+                      const canRemove =
+                        ['BROUILLON', 'EN_ATTENTE'].includes(String(runsheet.status)) ||
+                        (TOURNEE_MODIFIABLE.includes(String(runsheet.status)) &&
+                          ['AFFECTE_RUNSHEET', 'EN_COURS_LIVRAISON', 'REPORTE'].includes(String(pkg.status)));
 
                       return (
                         <Tr key={pkg.id} resume={`Colis ${pkg.trackingNumber}, ${pkg.customerName}, ${badge.label}, ${formatTND(pkg.totalPrice)}`}>
@@ -1417,7 +1422,11 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
           void handleRemovePackage(trackingNumber);
         }}
         title="Retirer ce colis de la tournée ?"
-        message={`Le colis ${retraitAConfirmer?.trackingNumber ?? ''} (${retraitAConfirmer?.client ?? ''}) sort du chargement de cette tournée.`}
+        message={
+          String(runsheet?.status) === 'EN_COURS'
+            ? `Le colis ${retraitAConfirmer?.trackingNumber ?? ''} (${retraitAConfirmer?.client ?? ''}) quitte la tournée en cours : le livreur est prévenu et doit le rapporter au dépôt, où il pourra être réaffecté.`
+            : `Le colis ${retraitAConfirmer?.trackingNumber ?? ''} (${retraitAConfirmer?.client ?? ''}) sort du chargement de cette tournée.`
+        }
         confirmText="Retirer le colis"
         type="danger"
       />

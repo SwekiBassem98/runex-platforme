@@ -12,8 +12,49 @@ import crypto from 'node:crypto';
 import { getPrisma } from '../../common/database/prisma-context';
 import type { PaymentVoucherDto, PaymentVoucherStatus, PaymentMethod } from '@logixpress/types';
 import { PaymentVoucherStatus as SharedVoucherStatus, PaymentMethod as SharedMethod } from '@logixpress/types';
-import { notFound, badRequest, conflict } from '../../common/errors/api-error';
+import { Prisma } from '@prisma/client';
+import { NotificationEvent } from '@logixpress/types';
+import { notFound, badRequest, conflict, asUuid, BusinessRuleError } from '../../common/errors/api-error';
 import { auditService } from '../../common/audit/audit.service';
+import { codeASixChiffres, nextVoucherNumber } from '../../common/database/numbering';
+import { notificationDispatcher } from '../notifications/notification.dispatcher';
+
+/** Statuts « livré » d'un colis (la livraison partielle compte). */
+const LIVRES = ['LIVRE', 'LIVRAISON_PARTIELLE'] as const;
+
+/** Colis d'un expéditeur prêts à entrer dans un bordereau. */
+export interface CandidatsBordereau {
+  shipperId: string;
+  shipperName: string;
+  livres: number;
+  retournes: number;
+  encaisse: number;
+  fraisLivraison: number;
+  fraisRetour: number;
+  netEstime: number;
+}
+
+function memeCode(a: string, b: string): boolean {
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && crypto.timingSafeEqual(x, y);
+}
+
+/**
+ * Colis éligibles : livrés dont l'encaissement n'attend plus la caisse (aucun
+ * paiement « en attente »), et retournés à l'expéditeur — hors bordereau.
+ */
+function whereCandidats(shipperId?: string): Prisma.PackageWhereInput {
+  return {
+    deletedAt: null,
+    paymentVoucherId: null,
+    ...(shipperId ? { shipperId } : {}),
+    OR: [
+      { status: { in: [...LIVRES] }, NOT: { payment: { is: { status: 'EN_ATTENTE' } } } },
+      { status: 'RETOURNE_EXPEDITEUR' },
+    ],
+  };
+}
 
 const PBKDF2_ITERATIONS = 50000;
 const PBKDF2_KEY_LENGTH = 32;
@@ -75,6 +116,10 @@ export class PaymentsService {
       netPayable: Number(record.netPayable),
       paidAt: record.paidAt?.toISOString(),
       createdAt: record.createdAt.toISOString(),
+      // Le code ne sort que vers l'expéditeur, et seulement s'il sert encore.
+      ...(actor.shipperId && record.status !== 'PAYE' && record.status !== 'ANNULE'
+        ? { withdrawalCode: record.withdrawalCode }
+        : {}),
     }));
   }
 
@@ -142,7 +187,10 @@ export class PaymentsService {
       };
     }
 
-    if (!verifyPaymentCode(secretCode.trim(), voucher.shipper.config?.secretPaymentCode ?? null)) {
+    // Code du bordereau (donné par l'expéditeur, comme chez ADEX) ou, pour les
+    // anciens bordereaux, le code secret permanent de l'expéditeur.
+    const codeBordereau = voucher.withdrawalCode ? memeCode(secretCode.trim(), voucher.withdrawalCode) : false;
+    if (!codeBordereau && !verifyPaymentCode(secretCode.trim(), voucher.shipper.config?.secretPaymentCode ?? null)) {
       return {
         success: false,
         message: 'Code secret invalide pour débloquer le paiement.',
@@ -259,7 +307,7 @@ export class PaymentsService {
       throw notFound(`Bordereau ${voucherId} introuvable.`);
     }
 
-    const delivered = voucher.packages.filter((p) => p.status === 'LIVRE');
+    const delivered = voucher.packages.filter((p) => p.status === 'LIVRE' || p.status === 'LIVRAISON_PARTIELLE');
     const returned = voucher.packages.filter((p) => p.status === 'RETOURNE_EXPEDITEUR');
 
     const gross = delivered.reduce((sum, p) => sum + Number(p.collectedAmount ?? 0), 0);
@@ -283,6 +331,196 @@ export class PaymentsService {
     });
 
     return (await this.findById(voucherId))!;
+  }
+
+  /** Par expéditeur : ce qui peut entrer dans un nouveau bordereau. */
+  async candidats(shipperId?: string): Promise<CandidatsBordereau[]> {
+    const prisma = getPrisma();
+    const rows = await prisma.package.findMany({
+      where: whereCandidats(shipperId ? (asUuid(shipperId) ?? undefined) : undefined),
+      select: {
+        shipperId: true,
+        status: true,
+        collectedAmount: true,
+        deliveryFee: true,
+        returnFee: true,
+        shipper: { select: { companyName: true, config: { select: { withholdingTaxRate: true } } } },
+      },
+      take: 20000,
+    });
+    const parExp = new Map<string, CandidatsBordereau & { taux: number }>();
+    for (const r of rows) {
+      const g = parExp.get(r.shipperId) ?? {
+        shipperId: r.shipperId,
+        shipperName: r.shipper.companyName,
+        livres: 0,
+        retournes: 0,
+        encaisse: 0,
+        fraisLivraison: 0,
+        fraisRetour: 0,
+        netEstime: 0,
+        taux: Number(r.shipper.config?.withholdingTaxRate ?? 0),
+      };
+      if (r.status === 'RETOURNE_EXPEDITEUR') {
+        g.retournes += 1;
+        g.fraisRetour += Number(r.returnFee ?? 0);
+      } else {
+        g.livres += 1;
+        g.encaisse += Number(r.collectedAmount ?? 0);
+        g.fraisLivraison += Number(r.deliveryFee ?? 0);
+      }
+      parExp.set(r.shipperId, g);
+    }
+    const r3 = (v: number) => Math.round(v * 1000) / 1000;
+    return [...parExp.values()]
+      .map(({ taux, ...g }) => ({
+        ...g,
+        encaisse: r3(g.encaisse),
+        fraisLivraison: r3(g.fraisLivraison),
+        fraisRetour: r3(g.fraisRetour),
+        netEstime: r3(g.encaisse - g.fraisLivraison - g.fraisRetour - g.fraisLivraison * taux),
+      }))
+      .sort((a, b) => b.netEstime - a.netEstime);
+  }
+
+  /**
+   * Crée le bordereau d'un expéditeur avec tous ses colis éligibles (ou ceux
+   * choisis). Un code de retrait à 6 chiffres est généré : l'expéditeur le
+   * voit dans son espace et le donne à la caisse pour être payé.
+   */
+  async creerBordereau(
+    payload: { shipperId?: unknown; packageIds?: unknown; notes?: unknown },
+    actor: PaymentVoucherActor
+  ): Promise<PaymentVoucherDto> {
+    const shipperId = asUuid(typeof payload.shipperId === 'string' ? payload.shipperId : null);
+    if (!shipperId) throw badRequest('Expéditeur requis.');
+    const ids = Array.isArray(payload.packageIds)
+      ? payload.packageIds.map((x) => asUuid(String(x))).filter((x): x is string => !!x)
+      : null;
+    const prisma = getPrisma();
+    const voucher = await prisma.$transaction(async (tx) => {
+      const shipper = await tx.shipper.findUnique({ where: { id: shipperId }, select: { companyName: true } });
+      if (!shipper) throw notFound('Expéditeur introuvable.');
+      const where = { ...whereCandidats(shipperId), ...(ids ? { id: { in: ids } } : {}) };
+      const candidats = await tx.package.findMany({ where, select: { id: true } });
+      if (!candidats.length) {
+        throw new BusinessRuleError('Aucun colis livré (encaissement validé) ou retourné à régler pour cet expéditeur.', 409);
+      }
+      await tx.$queryRaw`SELECT id FROM "Package" WHERE id IN (${Prisma.join(candidats.map((c) => Prisma.sql`${c.id}::uuid`))}) FOR UPDATE`;
+      const voucherNumber = await nextVoucherNumber(tx);
+      const cree = await tx.paymentVoucher.create({
+        data: {
+          voucherNumber,
+          shipperId,
+          status: 'CONFIRME',
+          netPayable: 0,
+          withdrawalCode: codeASixChiffres(),
+          notes: typeof payload.notes === 'string' ? payload.notes.slice(0, 500) || null : null,
+        },
+      });
+      const { count } = await tx.package.updateMany({
+        where: { id: { in: candidats.map((c) => c.id) }, paymentVoucherId: null },
+        data: { paymentVoucherId: cree.id },
+      });
+      if (!count) throw conflict('Ces colis viennent d’être pris dans un autre bordereau.');
+      await auditService.record(
+        {
+          entityType: 'PAYMENT_VOUCHER',
+          entityId: cree.id,
+          action: 'PAYMENT_VOUCHER_CREE',
+          reason: `Bordereau ${voucherNumber} : ${count} colis pour ${shipper.companyName}`,
+          userId: actor.id ?? null,
+        },
+        tx
+      );
+      return cree;
+    });
+    const dto = await this.recalculate(voucher.id);
+    const users = (await prisma.shipperUser.findMany({ where: { shipperId }, select: { userId: true } })).map((u) => u.userId);
+    await notificationDispatcher
+      .notify({
+        event: NotificationEvent.PAYMENT_VALIDATED,
+        title: 'Bordereau de paiement prêt',
+        content:
+          `Bordereau ${dto.voucherNumber} : ${dto.netPayable.toFixed(3)} DT à percevoir. ` +
+          'Donnez le code du bordereau (espace « Bordereaux ») à la caisse pour être payé.',
+        relatedEntity: 'PAYMENT_VOUCHER',
+        relatedEntityId: dto.id,
+        userIds: users,
+      })
+      .catch(() => undefined);
+    return dto;
+  }
+
+  /** Fiche d'un bordereau avec ses colis ; le code ne sort que vers l'expéditeur. */
+  async detail(idOrNumber: string, actor: PaymentVoucherActor): Promise<PaymentVoucherDto> {
+    const prisma = getPrisma();
+    const uuid = asUuid(idOrNumber);
+    const record = await prisma.paymentVoucher.findFirst({
+      where: uuid ? { id: uuid } : { voucherNumber: idOrNumber },
+      include: {
+        packages: {
+          select: {
+            id: true,
+            trackingNumber: true,
+            status: true,
+            totalPrice: true,
+            collectedAmount: true,
+            deliveryFee: true,
+            returnFee: true,
+            customer: { select: { fullName: true } },
+          },
+          orderBy: { trackingNumber: 'asc' },
+        },
+      },
+    });
+    if (!record || (actor.shipperId && record.shipperId !== actor.shipperId)) throw notFound('Bordereau introuvable.');
+    const base = (await this.findById(record.id))!;
+    return {
+      ...base,
+      ...(actor.shipperId && record.status !== 'PAYE' && record.status !== 'ANNULE'
+        ? { withdrawalCode: record.withdrawalCode }
+        : {}),
+      colis: record.packages.map((p) => ({
+        id: p.id,
+        trackingNumber: p.trackingNumber,
+        status: p.status,
+        customerName: p.customer.fullName,
+        totalPrice: Number(p.totalPrice),
+        collectedAmount: Number(p.collectedAmount ?? 0),
+        deliveryFee: Number(p.deliveryFee ?? 0),
+        returnFee: Number(p.returnFee ?? 0),
+      })),
+    };
+  }
+
+  /** Annule un bordereau non réglé : ses colis redeviennent éligibles. */
+  async annulerBordereau(idOrNumber: string, actor: PaymentVoucherActor): Promise<PaymentVoucherDto> {
+    const prisma = getPrisma();
+    const uuid = asUuid(idOrNumber);
+    const v = await prisma.paymentVoucher.findFirst({ where: uuid ? { id: uuid } : { voucherNumber: idOrNumber } });
+    if (!v) throw notFound('Bordereau introuvable.');
+    await prisma.$transaction(async (tx) => {
+      const { count } = await tx.paymentVoucher.updateMany({
+        where: { id: v.id, status: { in: ['EN_ATTENTE', 'CONFIRME'] } },
+        data: { status: 'ANNULE' },
+      });
+      if (!count) throw conflict('Seul un bordereau non réglé peut être annulé.');
+      await tx.package.updateMany({ where: { paymentVoucherId: v.id }, data: { paymentVoucherId: null } });
+      await auditService.record(
+        {
+          entityType: 'PAYMENT_VOUCHER',
+          entityId: v.id,
+          action: 'PAYMENT_VOUCHER_CREE',
+          reason: `Bordereau ${v.voucherNumber} annulé`,
+          previousValues: { status: v.status },
+          newValues: { status: 'ANNULE' },
+          userId: actor.id ?? null,
+        },
+        tx
+      );
+    });
+    return (await this.findById(v.id))!;
   }
 }
 

@@ -43,6 +43,9 @@ export const AUDIT_ENTITY_TYPES = {
   PICKUP: 'Ramassage',
   USER: 'Utilisateur',
   CUSTOMER: 'Client',
+  DRIVER_PAYOUT: 'Paiement livreur',
+  PRICE_CHANGE: 'Demande de changement de prix',
+  RETURN_SLIP: 'Bon de retour expéditeur',
   REPORT: 'Rapport',
   ZONE: 'Zone de livraison',
 } as const;
@@ -154,6 +157,7 @@ export const AUDIT_ACTIONS: Readonly<Record<string, AuditActionDefinition>> = {
   // Codes écrits par le service des tournées : sans entrée ici, la famille
   // RUNSHEET_* les « humanisait » en « Tournée : Package added ».
   RUNSHEET_PACKAGE_ADDED: { label: 'Colis intégré à une tournée', category: 'TOURNEE' },
+  RUNSHEET_PACKAGE_REMOVED: { label: 'Colis retiré d’une tournée en cours', category: 'TOURNEE' },
   RUNSHEET_DEPART: { label: 'Départ en tournée', category: 'TOURNEE' },
   RUNSHEET_ANNULEE: { label: 'Tournée annulée', category: 'TOURNEE', critical: true },
   RUNSHEET_STATUT: { label: 'Statut de la tournée modifié', category: 'TOURNEE' },
@@ -189,6 +193,14 @@ export const AUDIT_ACTIONS: Readonly<Record<string, AuditActionDefinition>> = {
     critical: true,
     requiresReason: true,
   },
+  PAYMENT_VOUCHER_CREE: { label: 'Bordereau de paiement créé', category: 'FINANCE' },
+  DRIVER_PAYE: { label: 'Livreur payé (caisse)', category: 'FINANCE', critical: true },
+  PRICE_CHANGE_DEMANDE: { label: 'Changement de prix demandé', category: 'COLIS' },
+  PRICE_CHANGE_APPROUVE: { label: 'Changement de prix approuvé', category: 'COLIS', critical: true },
+  PRICE_CHANGE_REFUSE: { label: 'Changement de prix refusé', category: 'COLIS' },
+  RETURN_SLIP_CREE: { label: 'Bon de retour expéditeur préparé', category: 'LIVRAISON' },
+  RETURN_SLIP_REMIS: { label: 'Retours remis à l\'expéditeur', category: 'LIVRAISON', critical: true },
+  RETURN_SLIP_ANNULE: { label: 'Bon de retour annulé', category: 'LIVRAISON' },
   PAYMENT_REJECTED: {
     label: 'Paiement rejeté',
     category: 'FINANCE',

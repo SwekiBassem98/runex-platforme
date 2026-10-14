@@ -948,9 +948,181 @@ export const ramassagesApi = {
     request<PickupAppointmentDto>(`/ramassages/${encodeURIComponent(id)}/cancel`, { method: 'PATCH' }),
 };
 
+/** Caisse de la société (encaissements, net, frais, rémunération livreurs). */
+export interface ResumeCaisse {
+  periode: { from: string | null; to: string | null };
+  tarifLivreur: number;
+  encaisse: number;
+  encaisseValide: number;
+  encaisseEnAttente: number;
+  colisLivres: number;
+  colisRetournes: number;
+  fraisLivraison: number;
+  fraisRetour: number;
+  netExpediteurs: number;
+  payeExpediteurs: number;
+  resteExpediteurs: number;
+  ramassagesEffectues: number;
+  remunerationLivreurs: number;
+  payeLivreurs: number;
+  resteLivreurs: number;
+  margeNette: number;
+}
+
+export interface LigneCaisseLivreur {
+  driverId: string;
+  driverCode: string;
+  fullName: string;
+  depositName: string | null;
+  livres: number;
+  ramassages: number;
+  gainPeriode: number;
+  encaissePeriode: number;
+  especesNonValidees: number;
+  totalGagne: number;
+  totalPaye: number;
+  resteAPayer: number;
+  dernierPaiement: string | null;
+}
+
+export interface PaiementLivreur {
+  id: string;
+  reference: string;
+  amount: number;
+  deliveredCount: number;
+  pickupCount: number;
+  note: string | null;
+  paidAt: string;
+}
+
+export const caisseApi = {
+  resume: (params?: { from?: string; to?: string }) =>
+    requestData<ResumeCaisse>('/caisse/resume', { query: params }),
+  livreurs: (params?: { from?: string; to?: string }) =>
+    requestData<LigneCaisseLivreur[]>('/caisse/livreurs', { query: params }),
+  paiements: (driverId: string) =>
+    requestData<PaiementLivreur[]>(`/caisse/livreurs/${encodeURIComponent(driverId)}/paiements`),
+  payer: (driverId: string, payload: { amount?: number; note?: string }) =>
+    request<{ reference: string; amount: number; resteAPayer: number }>(
+      `/caisse/livreurs/${encodeURIComponent(driverId)}/paiements`,
+      { method: 'POST', body: payload }
+    ),
+};
+
+export interface DemandePrix {
+  id: string;
+  packageId: string;
+  trackingNumber: string;
+  status: 'EN_ATTENTE' | 'APPROUVEE' | 'REFUSEE';
+  packageStatus: string;
+  shipperId: string;
+  shipperName: string;
+  customerName: string;
+  previousGoodsPrice: number;
+  previousTotal: number;
+  newGoodsPrice: number;
+  newTotal: number;
+  deliveryFee: number;
+  reason: string | null;
+  requestedBy: string | null;
+  decidedBy: string | null;
+  decisionNote: string | null;
+  decidedAt: string | null;
+  createdAt: string;
+}
+
+/** Demandes de changement de prix des expéditeurs (approbation admin). */
+export const demandesPrixApi = {
+  list: (params?: { status?: string; packageId?: string }) =>
+    requestData<DemandePrix[]>('/colis/demandes-prix', { query: params }),
+  compteur: () => requestData<{ enAttente: number }>('/colis/demandes-prix/compteur'),
+  approuver: (id: string, note?: string) =>
+    request<DemandePrix>(`/colis/demandes-prix/${encodeURIComponent(id)}/approuver`, {
+      method: 'POST',
+      body: { note },
+    }),
+  refuser: (id: string, note?: string) =>
+    request<DemandePrix>(`/colis/demandes-prix/${encodeURIComponent(id)}/refuser`, {
+      method: 'POST',
+      body: { note },
+    }),
+};
+
+export interface ColisARendre {
+  id: string;
+  trackingNumber: string;
+  status: string;
+  customerName: string;
+  governorate: string | null;
+  pieceCount: number;
+  totalPrice: number;
+  returnFee: number;
+  reason: string | null;
+  depositName: string | null;
+  returnedAt: string;
+}
+
+export interface GroupeRetours {
+  shipperId: string;
+  shipperName: string;
+  shipperPhone: string | null;
+  colis: ColisARendre[];
+}
+
+export interface BonRetour {
+  id: string;
+  slipNumber: string;
+  status: 'PREPARE' | 'REMIS' | 'ANNULE';
+  shipperId: string;
+  shipperName: string;
+  shipperPhone: string | null;
+  shipperAddress: string | null;
+  packagesCount: number;
+  handoverCode?: string;
+  createdBy: string | null;
+  createdAt: string;
+  handedOverAt: string | null;
+  handedOverBy: string | null;
+  receiverName: string | null;
+  notes: string | null;
+  colis?: ColisARendre[];
+}
+
+/** Retours expéditeur : colis à rendre, bons de retour, remise par code. */
+export const retoursExpediteurApi = {
+  aRendre: (shipperId?: string) =>
+    requestData<GroupeRetours[]>('/retours-expediteur/a-rendre', { query: { shipperId } }),
+  bons: (params?: { status?: string; shipperId?: string }) =>
+    requestData<BonRetour[]>('/retours-expediteur/bons', { query: params }),
+  bon: (id: string) => requestData<BonRetour>(`/retours-expediteur/bons/${encodeURIComponent(id)}`),
+  creer: (payload: { shipperId: string; packageIds?: string[]; notes?: string }) =>
+    request<BonRetour>('/retours-expediteur/bons', { method: 'POST', body: payload }),
+  remettre: (id: string, payload: { code: string; receiverName?: string }) =>
+    request<BonRetour>(`/retours-expediteur/bons/${encodeURIComponent(id)}/remettre`, { method: 'POST', body: payload }),
+  annuler: (id: string) =>
+    request<BonRetour>(`/retours-expediteur/bons/${encodeURIComponent(id)}/annuler`, { method: 'POST' }),
+};
+
+export interface CandidatsBordereau {
+  shipperId: string;
+  shipperName: string;
+  livres: number;
+  retournes: number;
+  encaisse: number;
+  fraisLivraison: number;
+  fraisRetour: number;
+  netEstime: number;
+}
+
 export const paymentsApi = {
   list: (params?: Record<string, QueryValue>) =>
     request<PaymentVoucherDto[]>('/payments/vouchers', { query: params }),
+  candidats: () => requestData<CandidatsBordereau[]>('/payments/vouchers/candidats'),
+  creer: (payload: { shipperId: string; packageIds?: string[]; notes?: string }) =>
+    request<PaymentVoucherDto>('/payments/vouchers', { method: 'POST', body: payload }),
+  detail: (id: string) => requestData<PaymentVoucherDto>(`/payments/vouchers/${encodeURIComponent(id)}`),
+  annuler: (id: string) =>
+    request<PaymentVoucherDto>(`/payments/vouchers/${encodeURIComponent(id)}/annuler`, { method: 'POST' }),
   validate: (voucherNumber: string, payload: unknown) =>
     request<PaymentVoucherDto>(
       `/payments/vouchers/${encodeURIComponent(voucherNumber)}/validate`,

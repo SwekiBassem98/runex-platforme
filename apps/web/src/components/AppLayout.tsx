@@ -16,6 +16,8 @@ import { PasswordSettingsButton } from './PasswordSettingsButton';
 import {
   Activity,
   Archive,
+  Banknote,
+  PackageX,
   ArrowRightLeft,
   Barcode,
   BarChart3,
@@ -38,6 +40,7 @@ import {
 import { AppShell, type NavItem } from '@logixpress/ui';
 import { RoleType, PermissionCode } from '@logixpress/types';
 import { useAuth } from '@/lib/auth';
+import { demandesPrixApi } from '@/lib/api';
 
 /**
  * Table de correspondance identifiant de navigation ↔ route.
@@ -52,13 +55,16 @@ import { useAuth } from '@/lib/auth';
 const NAV_ROUTES: Record<string, string> = {
   dashboard: '/dashboard',
   colis: '/colis',
+  'demandes-prix': '/colis/demandes-prix',
   magasin: '/magasin',
   runsheets: '/runsheets',
   ramassages: '/ramassages',
   paiements: '/paiements',
   finance: '/finance',
+  caisse: '/caisse',
   'inter-depots': '/inter-depots',
   'inter-depots-retours': '/inter-depots/retours',
+  'retours-expediteur': '/retours-expediteur',
   inventaire: '/inventaire',
   rapports: '/rapports',
   audit: '/audit',
@@ -117,6 +123,29 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   // permission que celle que l'API exige — l'API restant seule décisive.
   const peutAdministrer = user?.permissions?.includes(PermissionCode.USER_READ) ?? false;
 
+  // Demandes de changement de prix des expéditeurs : à approuver par
+  // l'administration ; la pastille compte celles en attente.
+  const peutDeciderPrix = user?.role === RoleType.ADMIN || user?.role === RoleType.GESTIONNAIRE;
+  const peutRendreRetours = peutDeciderPrix || user?.role === RoleType.AGENT_DEPOT;
+  const [demandesPrix, setDemandesPrix] = React.useState(0);
+  React.useEffect(() => {
+    if (!peutDeciderPrix) return;
+    let actif = true;
+    const lire = () =>
+      demandesPrixApi
+        .compteur()
+        .then((r) => actif && setDemandesPrix(r.enAttente))
+        .catch(() => undefined);
+    void lire();
+    const minuterie = window.setInterval(lire, 60000);
+    window.addEventListener('runex:demandes-prix', lire);
+    return () => {
+      actif = false;
+      window.clearInterval(minuterie);
+      window.removeEventListener('runex:demandes-prix', lire);
+    };
+  }, [peutDeciderPrix, pathname, items.length]);
+
   const navItems: NavItem[] = [
     ...(isDriver
       ? []
@@ -132,6 +161,17 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       label: 'Gestion des Colis',
       icon: <Package className="w-4 h-4" />,
     },
+    ...(peutDeciderPrix
+      ? [
+          {
+            id: 'demandes-prix',
+            label: 'Demandes de prix',
+            icon: <Banknote className="w-4 h-4" />,
+            count: demandesPrix || undefined,
+            badgeVariant: 'warning' as const,
+          },
+        ]
+      : []),
     {
       id: 'magasin',
       label: 'Acceptation Magasin',
@@ -159,6 +199,11 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             label: 'Finance',
             icon: <Wallet className="w-4 h-4" />,
           },
+          {
+            id: 'caisse',
+            label: 'Caisse société & livreurs',
+            icon: <Wallet className="w-4 h-4" />,
+          },
         ]
       : []),
     {
@@ -171,6 +216,15 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       label: 'Inter dépôt retours et échanges',
       icon: <Undo2 className="w-4 h-4" />,
     },
+    ...(peutRendreRetours
+      ? [
+          {
+            id: 'retours-expediteur',
+            label: 'Retours expéditeur',
+            icon: <PackageX className="w-4 h-4" />,
+          },
+        ]
+      : []),
     ...(peutConsulterRapports
       ? [
           {
@@ -297,6 +351,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
  */
 const ACCES_ECRANS: { prefix: string; roles?: RoleType[]; permission?: PermissionCode }[] = [
   { prefix: '/dashboard', roles: [RoleType.ADMIN, RoleType.GESTIONNAIRE, RoleType.FINANCE, RoleType.AGENT_DEPOT] },
+  { prefix: '/colis/demandes-prix', roles: [RoleType.ADMIN, RoleType.GESTIONNAIRE] },
   { prefix: '/colis', permission: PermissionCode.COLIS_READ },
   { prefix: '/magasin', permission: PermissionCode.DEPOT_SCAN },
   { prefix: '/runsheets', permission: PermissionCode.RUNSHEET_READ },
@@ -306,6 +361,8 @@ const ACCES_ECRANS: { prefix: string; roles?: RoleType[]; permission?: Permissio
   { prefix: '/paiements/bordereaux', permission: PermissionCode.PAYMENT_READ },
   { prefix: '/paiements', permission: PermissionCode.PAYMENT_CASH_READ },
   { prefix: '/finance', permission: PermissionCode.PAYMENT_CASH_READ },
+  { prefix: '/caisse', permission: PermissionCode.PAYMENT_CASH_READ },
+  { prefix: '/retours-expediteur', roles: [RoleType.ADMIN, RoleType.GESTIONNAIRE, RoleType.AGENT_DEPOT] },
   { prefix: '/rapports', permission: PermissionCode.REPORT_READ },
   { prefix: '/recherche', permission: PermissionCode.SEARCH_GLOBAL },
   { prefix: '/audit', permission: PermissionCode.AUDIT_READ },

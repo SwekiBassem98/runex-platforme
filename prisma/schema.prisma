@@ -578,6 +578,7 @@ model Shipper {
   pickups         PickupAppointment[]
   paymentVouchers PaymentVoucher[]
   payments        Payment[]
+  returnSlips     ReturnSlip[]
 
   @@index([companyName])
   @@index([phone])
@@ -586,7 +587,7 @@ model Shipper {
 model ShipperConfig {
   id                   String   @id @default(uuid()) @db.Uuid
   shipperId            String   @unique @db.Uuid
-  defaultDeliveryFee   Decimal  @default(7.000) @db.Decimal(10, 3) // Frais standards en TND
+  defaultDeliveryFee   Decimal  @default(8.000) @db.Decimal(10, 3) // Frais standards en TND (8 DT, ajoutés au prix du colis)
   defaultReturnFee     Decimal  @default(3.000) @db.Decimal(10, 3) // Frais de retour en TND
   defaultExchangeFee   Decimal  @default(8.000) @db.Decimal(10, 3) // Frais échange en TND
   withholdingTaxRate   Decimal  @default(0.010) @db.Decimal(5, 4) // R.A.S (1% = 0.0100)
@@ -701,6 +702,7 @@ model Driver {
   user             User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   assignedPackages Package[]            @relation("DriverPackages")
   runsheets        Runsheet[]
+  payouts          DriverPayout[]
   pickupJobs       PickupAppointment[]
   interDepotDrives InterDepotTransfer[]
   deliveryAttempts DeliveryAttempt[]
@@ -739,6 +741,8 @@ model Package {
   currentRunsheetId    String? @db.Uuid
   interDepotTransferId String? @db.Uuid
   paymentVoucherId     String? @db.Uuid
+  /// Bon de retour expéditeur qui restitue ce colis (« Retours expéditeur »).
+  returnSlipId         String? @db.Uuid
 
   // Ramassage : rendez-vous de collecte chez l'expéditeur dont ce colis
   // fait partie. C'est la trace de « quel colis a été réellement collecté » :
@@ -800,6 +804,8 @@ model Package {
   interDepotTransfer InterDepotTransfer? @relation(fields: [interDepotTransferId], references: [id], onDelete: SetNull)
   pickupAppointment  PickupAppointment?  @relation(fields: [pickupAppointmentId], references: [id], onDelete: SetNull)
   paymentVoucher     PaymentVoucher?     @relation(fields: [paymentVoucherId], references: [id], onDelete: SetNull)
+  returnSlip         ReturnSlip?         @relation(fields: [returnSlipId], references: [id], onDelete: SetNull)
+  priceChangeRequests PriceChangeRequest[]
 
   items            PackageItem[]
   runsheetItems    RunsheetItem[]
@@ -820,6 +826,7 @@ model Package {
   @@index([currentDepositId])
   @@index([currentRunsheetId])
   @@index([paymentVoucherId])
+  @@index([returnSlipId])
   @@index([pickupAppointmentId])
   @@index([createdAt])
   // Déclarés ici pour que `prisma migrate dev` ne les supprime plus comme dérive
@@ -1173,6 +1180,9 @@ model PaymentVoucher {
   netPayable           Decimal @db.Decimal(12, 3) // Montant Net à débourser
 
   // Sécurité & Validation Décaissement
+  /// Code de retrait du bordereau : visible du seul expéditeur (portail), il le
+  /// communique à la caisse qui le saisit pour régler (comme chez ADEX).
+  withdrawalCode     String?   @db.VarChar(12)
   secretCodeVerified Boolean   @default(false)
   transactionRef     String?   @db.VarChar(100) // N° Chèque ou N° Virement
   paidAt             DateTime? @db.Timestamptz(6)
@@ -1317,4 +1327,96 @@ model AuditLog {
   @@index([timestamp])
   @@index([entityType, entityId, timestamp(sort: Desc)])
   @@index([userId, timestamp(sort: Desc)])
+}
+
+// ==============================================================================
+// CAISSE — RÉMUNÉRATION DES LIVREURS
+// ==============================================================================
+
+/// Paiement d'un livreur : sa rémunération (3 DT par colis livré ou ramassage
+/// effectué) réglée par la caisse. Le reste à payer = gagné − payé.
+model DriverPayout {
+  id             String    @id @default(uuid()) @db.Uuid
+  reference      String    @unique @db.VarChar(40) // PAI-LIV-20261015-0001
+  driverId       String    @db.Uuid
+  amount         Decimal   @db.Decimal(10, 3)
+  deliveredCount Int       @default(0)
+  pickupCount    Int       @default(0)
+  periodStart    DateTime? @db.Date
+  periodEnd      DateTime? @db.Date
+  note           String?   @db.VarChar(255)
+  paidByUserId   String?   @db.Uuid
+  paidAt         DateTime  @default(now()) @db.Timestamptz(6)
+
+  driver Driver @relation(fields: [driverId], references: [id], onDelete: Restrict)
+
+  @@index([driverId])
+  @@index([paidAt])
+}
+
+// ==============================================================================
+// CHANGEMENT DE PRIX SOUMIS À APPROBATION
+// ==============================================================================
+
+enum PriceChangeStatus {
+  EN_ATTENTE
+  APPROUVEE
+  REFUSEE
+}
+
+/// Demande de l'expéditeur pour changer le prix d'un colis déjà créé : le
+/// prix ne change qu'après approbation d'un administrateur.
+model PriceChangeRequest {
+  id                 String            @id @default(uuid()) @db.Uuid
+  packageId          String            @db.Uuid
+  status             PriceChangeStatus @default(EN_ATTENTE)
+  previousGoodsPrice Decimal           @db.Decimal(10, 3)
+  previousTotal      Decimal           @db.Decimal(10, 3)
+  newGoodsPrice      Decimal           @db.Decimal(10, 3)
+  newTotal           Decimal           @db.Decimal(10, 3)
+  reason             String?           @db.VarChar(255)
+  requestedByUserId  String?           @db.Uuid
+  decidedByUserId    String?           @db.Uuid
+  decisionNote       String?           @db.VarChar(255)
+  decidedAt          DateTime?         @db.Timestamptz(6)
+  createdAt          DateTime          @default(now()) @db.Timestamptz(6)
+
+  package Package @relation(fields: [packageId], references: [id], onDelete: Cascade)
+
+  @@index([packageId])
+  @@index([status])
+}
+
+// ==============================================================================
+// RETOURS EXPÉDITEUR (BONS DE RETOUR)
+// ==============================================================================
+
+enum ReturnSlipStatus {
+  PREPARE
+  REMIS
+  ANNULE
+}
+
+/// Bon de retour : les colis retournés rendus ensemble à un expéditeur. La
+/// remise est confirmée par le code que l'expéditeur lit dans son portail.
+model ReturnSlip {
+  id               String           @id @default(uuid()) @db.Uuid
+  slipNumber       String           @unique @db.VarChar(40) // BR-20261015-0001
+  shipperId        String           @db.Uuid
+  status           ReturnSlipStatus @default(PREPARE)
+  handoverCode     String           @db.VarChar(12)
+  packagesCount    Int              @default(0)
+  createdByUserId  String?          @db.Uuid
+  handedOverAt     DateTime?        @db.Timestamptz(6)
+  handedOverById   String?          @db.Uuid
+  receiverName     String?          @db.VarChar(150)
+  notes            String?          @db.VarChar(255)
+  createdAt        DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime         @updatedAt @db.Timestamptz(6)
+
+  shipper  Shipper   @relation(fields: [shipperId], references: [id], onDelete: Restrict)
+  packages Package[]
+
+  @@index([shipperId])
+  @@index([status])
 }

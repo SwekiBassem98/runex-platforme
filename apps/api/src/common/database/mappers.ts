@@ -42,6 +42,12 @@ export const PACKAGE_INCLUDE = {
     orderBy: { attemptedAt: 'desc' as const },
     include: { driver: { include: { user: true } } },
   },
+  // Demande de changement de prix en attente d'approbation (au plus une).
+  priceChangeRequests: {
+    where: { status: 'EN_ATTENTE' as const },
+    take: 1,
+    select: { id: true, newGoodsPrice: true, newTotal: true, createdAt: true, reason: true },
+  },
 } as const;
 
 /** Types Prisma enrichis des relations nécessaires à l'hydratation d'un colis. */
@@ -120,6 +126,16 @@ export function toPackageDto(record: PackageWithRelations): PackageDto {
     totalPrice: toNumber(record.totalPrice),
     collectedAmount: toNumber(record.collectedAmount),
     deliveryFee: toNumber(record.deliveryFee),
+    goodsPrice: toNumber(record.declaredValue),
+    pendingPriceChange: record.priceChangeRequests?.[0]
+      ? {
+          id: record.priceChangeRequests[0].id,
+          newGoodsPrice: toNumber(record.priceChangeRequests[0].newGoodsPrice),
+          newTotal: toNumber(record.priceChangeRequests[0].newTotal),
+          reason: record.priceChangeRequests[0].reason,
+          createdAt: record.priceChangeRequests[0].createdAt.toISOString(),
+        }
+      : null,
     shipperId: record.shipperId,
     shipperName: record.shipper.brandName ?? record.shipper.companyName,
     assignedDriverId: record.assignedDriverId ?? undefined,

@@ -14,7 +14,7 @@
 const puppeteer=(await import(process.env.PUPPETEER_CORE)).default;
 const W='http://localhost:3000'; const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const b=await puppeteer.launch({executablePath:process.env.CHROME,headless:'new',args:['--no-sandbox']});
-const STAFF=['/dashboard','/colis','/runsheets','/ramassages','/paiements','/paiements/bordereaux','/paiements/expediteurs','/paiements/livreurs','/inter-depots','/inter-depots/acceptation','/inter-depots/retours','/inventaire','/magasin','/audit','/rapports','/admin/utilisateurs','/admin/livreurs','/admin/expediteurs','/admin/zones','/finance','/recherche?q=2610'];
+const STAFF=['/dashboard','/colis','/colis/demandes-prix','/caisse','/retours-expediteur','/runsheets','/ramassages','/paiements','/paiements/bordereaux','/paiements/expediteurs','/paiements/livreurs','/inter-depots','/inter-depots/acceptation','/inter-depots/retours','/inventaire','/magasin','/audit','/rapports','/admin/utilisateurs','/admin/livreurs','/admin/expediteurs','/admin/zones','/finance','/recherche?q=2610'];
 const PORTAL=['/expediteur/tableau-de-bord','/expediteur/suivi','/expediteur/notifications','/expediteur/profil','/expediteur/colis','/expediteur/ramassages','/expediteur/bordereaux','/expediteur/retours','/expediteur/echanges','/expediteur/activites'];
 const dump=process.argv[2]==='dump';
 async function audit(p,path,width){

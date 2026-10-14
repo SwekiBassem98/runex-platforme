@@ -93,10 +93,12 @@ import {
   type TrackingTimelineEvent,
   type DeliveryAttempt,
   type AuditModificationLog,
+  PACKAGE_STATUS_LABELS,
 } from '@logixpress/types';
-import { colisApi, createApiFetch, runsheetsApi, searchApi, shippersApi, zonesApi, type DriverSuggestions, type ZoneDto } from '@/lib/api';
+import { colisApi, createApiFetch, driversApi, runsheetsApi, searchApi, shippersApi, zonesApi, type DriverSuggestions, type ZoneDto } from '@/lib/api';
 import { GOUVERNORATS } from '@/features/expediteur/lib/libelles';
 import { estZoneConnue, useDelegationsConnues } from '@/features/zones/useDelegationsConnues';
+import { totalAEncaisser, useAgencesLivraison } from '@/features/colis/useAgencesLivraison';
 import { imprimerBonsLivraison } from '@/features/colis/bonLivraison';
 
 // Les requêtes de ce module passent par le client API commun : aucune URL
@@ -149,6 +151,21 @@ type ActionPayload = Partial<PackageDto> & {
   returnedQuantity?: number;
 };
 
+/** Types de colis, en clair (filtre et résumé). */
+const LIBELLE_TYPE: Record<string, string> = {
+  NORMAL: 'Normal',
+  EXCHANGE: 'Échange',
+  REPORTED: 'Signalé',
+  RETURN: 'Retour',
+};
+
+/** Règlement à l'expéditeur : bordereau de paiement. */
+const LIBELLE_REGLEMENT: Record<string, string> = {
+  NON_REGLE: 'Non réglé (hors bordereau)',
+  EN_BORDEREAU: 'En bordereau',
+  PAYE: 'Payé à l’expéditeur',
+};
+
 export function ColisManagementModule({ currentUser, token, initialColisId = null }: ColisManagementModuleProps) {
   const { addToast } = useToast();
 
@@ -189,6 +206,10 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
   const [zoneFilter, setZoneFilter] = useState('ALL');
   const [zonesOptions, setZonesOptions] = useState<ZoneDto[]>([]);
   const [driverFilter, setDriverFilter] = useState('ALL');
+  const [shipperFilter, setShipperFilter] = useState('ALL');
+  /** Listes des filtres Livreur et Expéditeur, lues sur l'API (et non écrites en dur). */
+  const [livreursFiltre, setLivreursFiltre] = useState<{ value: string; label: string }[]>([]);
+  const [expediteursFiltre, setExpediteursFiltre] = useState<{ value: string; label: string }[]>([]);
   const [typeFilter, setTypeFilter] = useState('ALL');
   const [paymentStatusFilter, setPaymentStatusFilter] = useState('ALL');
   const [dateFilter, setDateFilter] = useState('');
@@ -215,17 +236,10 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
   const [isSubmittingAction, setIsSubmittingAction] = useState(false);
 
   /** Libellé humain d'un statut, pour le résumé de filtres. */
-  const LIBELLE_STATUT: Record<string, string> = {
-    CREE: 'créé',
-    RECU_DEPOT: 'reçu au dépôt',
-    AFFECTE_RUNSHEET: 'affecté à une tournée',
-    EN_COURS_LIVRAISON: 'en cours de livraison',
-    LIVRE: 'livré',
-    LIVRAISON_PARTIELLE: 'livraison partielle',
-    REPORTE: 'reporté',
-    RETOUR_DEPOT: 'retour dépôt',
-    ANNULE: 'annulé',
-  };
+  const LIBELLE_STATUT: Record<string, string> = Object.fromEntries(
+    Object.entries(PACKAGE_STATUS_LABELS).map(([code, libelle]) => [code, String(libelle).toLowerCase()])
+  );
+
 
   /** Un filtre est posé dès qu'un critère s'écarte de sa valeur neutre. */
   const hasFiltres =
@@ -234,6 +248,7 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
     cityFilter !== 'ALL' ||
     zoneFilter !== 'ALL' ||
     driverFilter !== 'ALL' ||
+    shipperFilter !== 'ALL' ||
     typeFilter !== 'ALL' ||
     paymentStatusFilter !== 'ALL' ||
     Boolean(dateFilter);
@@ -244,6 +259,7 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
     setCityFilter('ALL');
     setZoneFilter('ALL');
     setDriverFilter('ALL');
+    setShipperFilter('ALL');
     setTypeFilter('ALL');
     setPaymentStatusFilter('ALL');
     setDateFilter('');
@@ -262,9 +278,10 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
     statusFilter !== 'ALL' ? `statut ${LIBELLE_STATUT[statusFilter] ?? statusFilter}` : null,
     cityFilter !== 'ALL' ? `gouvernorat ${cityFilter}` : null,
     zoneFilter !== 'ALL' ? `zone ${zonesOptions.find((z) => z.id === zoneFilter)?.name ?? ''}` : null,
-    driverFilter !== 'ALL' ? `livreur ${driverFilter}` : null,
-    typeFilter !== 'ALL' ? `type ${typeFilter}` : null,
-    paymentStatusFilter !== 'ALL' ? `paiement ${paymentStatusFilter}` : null,
+    driverFilter !== 'ALL' ? `livreur ${livreursFiltre.find((l) => l.value === driverFilter)?.label ?? driverFilter}` : null,
+    shipperFilter !== 'ALL' ? `expéditeur ${expediteursFiltre.find((l) => l.value === shipperFilter)?.label ?? ''}` : null,
+    typeFilter !== 'ALL' ? `type ${LIBELLE_TYPE[typeFilter] ?? typeFilter}` : null,
+    paymentStatusFilter !== 'ALL' ? `règlement ${LIBELLE_REGLEMENT[paymentStatusFilter] ?? paymentStatusFilter}` : null,
     dateFilter ? `le ${dateFilter}` : null,
   ]
     .filter(Boolean)
@@ -289,7 +306,9 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
     governorate: 'Ben Arous',
     delegation: 'Ben Arous',
     address: '',
-    totalPrice: 65.000,
+    // Prix de la marchandise : les frais de livraison s'y ajoutent (API).
+    goodsPrice: '' as string,
+    destinationDepositId: '',
     pieceCount: 1,
     sizeCategory: PackageSize.LEGERE,
     packageType: PackageType.NORMAL,
@@ -302,6 +321,14 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
     shipperId: '',
   });
   const delegationsConnues = useDelegationsConnues(newColisForm.governorate);
+  const livraison = useAgencesLivraison(
+    newColisForm.governorate,
+    newColisForm.delegation,
+    newColisForm.shipperId || null
+  );
+  const [agenceChoisie, setAgenceChoisie] = useState(false);
+  const agenceSortie = agenceChoisie ? newColisForm.destinationDepositId : (livraison.suggestion ?? '');
+  const totalNouveau = totalAEncaisser(newColisForm.goodsPrice, livraison.frais);
 
   // Un compte sans expéditeur (exploitation) doit en désigner un.
   const saisiePourExpediteur = !currentUser.shipperId;
@@ -352,6 +379,21 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
     // `/colis?zone=<id>` : ouvert depuis l'écran des zones.
     const zone = query.get('zone');
     if (zone) setZoneFilter(zone);
+    // `/colis?expediteur=<id>` : ouvert depuis la fiche d'un expéditeur.
+    const expediteur = query.get('expediteur');
+    if (expediteur) setShipperFilter(expediteur);
+    void driversApi
+      .list({ limit: 200 })
+      .then((r) =>
+        setLivreursFiltre(
+          r.items.map((d) => ({ value: d.driverCode, label: `${d.user?.fullName ?? d.driverCode} (${d.driverCode})` }))
+        )
+      )
+      .catch(() => setLivreursFiltre([]));
+    void shippersApi
+      .list({ limit: 200 })
+      .then((r) => setExpediteursFiltre(r.items.map((e) => ({ value: e.id, label: e.companyName }))))
+      .catch(() => setExpediteursFiltre([]));
     void zonesApi
       .list({ active: 'true' })
       .then(setZonesOptions)
@@ -436,6 +478,7 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
       if (cityFilter !== 'ALL') params.append('city', cityFilter);
       if (zoneFilter !== 'ALL') params.append('zone', zoneFilter);
       if (driverFilter !== 'ALL') params.append('driver', driverFilter);
+      if (shipperFilter !== 'ALL') params.append('shipper', shipperFilter);
       if (typeFilter !== 'ALL') params.append('type', typeFilter);
       if (paymentStatusFilter !== 'ALL') params.append('paymentStatus', paymentStatusFilter);
       if (dateFilter) params.append('date', dateFilter);
@@ -510,6 +553,7 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
     cityFilter,
     zoneFilter,
     driverFilter,
+    shipperFilter,
     typeFilter,
     paymentStatusFilter,
     dateFilter,
@@ -593,7 +637,11 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify(newColisForm),
+        body: JSON.stringify({
+          ...newColisForm,
+          goodsPrice: Number(newColisForm.goodsPrice),
+          destinationDepositId: agenceSortie || undefined,
+        }),
       });
       const data = await res.json();
       if (data.success) {
@@ -689,26 +737,9 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
           <div className="px-4 sm:px-6 space-y-4">
             {/* Barre de Filtres Complète */}
             <FilterBar
-              hasActiveFilters={Boolean(
-                searchTerm ||
-                  statusFilter !== 'ALL' ||
-                  cityFilter !== 'ALL' ||
-                  driverFilter !== 'ALL' ||
-                  typeFilter !== 'ALL' ||
-                  paymentStatusFilter !== 'ALL' ||
-                  dateFilter
-              )}
+              hasActiveFilters={hasFiltres}
               resume={resumeFiltres}
-              onReset={() => {
-                setSearchTerm('');
-                setStatusFilter('ALL');
-                setCityFilter('ALL');
-                setDriverFilter('ALL');
-                setTypeFilter('ALL');
-                setPaymentStatusFilter('ALL');
-                setDateFilter('');
-                setCurrentPage(1);
-              }}
+              onReset={reinitialiserFiltres}
             >
               <div className="w-full sm:w-64">
                 <SearchInput
@@ -731,15 +762,7 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
                 }}
                 options={[
                   { label: 'Tous les statuts', value: 'ALL' },
-                  { label: 'Créé', value: 'CREE' },
-                  { label: 'Reçu Dépôt', value: 'RECU_DEPOT' },
-                  { label: 'Affecté Runsheet', value: 'AFFECTE_RUNSHEET' },
-                  { label: 'En cours livraison', value: 'EN_COURS_LIVRAISON' },
-                  { label: 'Livré', value: 'LIVRE' },
-                  { label: 'Livraison Partielle', value: 'LIVRAISON_PARTIELLE' },
-                  { label: 'Reporté', value: 'REPORTE' },
-                  { label: 'Retour Dépôt', value: 'RETOUR_DEPOT' },
-                  { label: 'Annulé', value: 'ANNULE' },
+                  ...Object.entries(PACKAGE_STATUS_LABELS).map(([value, label]) => ({ value, label: String(label) })),
                 ]}
               />
 
@@ -775,11 +798,17 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
                   setDriverFilter(val);
                   setCurrentPage(1);
                 }}
-                options={[
-                  { label: 'Tous les chauffeurs', value: 'ALL' },
-                  { label: 'Hamza Ben Dhif', value: 'Hamza Ben Dhif' },
-                  { label: 'Ghassan Mghirbi', value: 'Ghassan Mghirbi' },
-                ]}
+                options={[{ label: 'Tous les livreurs', value: 'ALL' }, ...livreursFiltre]}
+              />
+
+              <FilterSelect
+                label="Expéditeur"
+                selectedValue={shipperFilter}
+                onChange={(val) => {
+                  setShipperFilter(val);
+                  setCurrentPage(1);
+                }}
+                options={[{ label: 'Tous les expéditeurs', value: 'ALL' }, ...expediteursFiltre]}
               />
 
               <FilterSelect
@@ -789,29 +818,32 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
                   setTypeFilter(val);
                   setCurrentPage(1);
                 }}
-                options={[
-                  { label: 'Tous', value: 'ALL' },
-                  { label: 'Normal', value: 'NORMAL' },
-                  { label: 'Échange', value: 'EXCHANGE' },
-                  { label: 'Reporté', value: 'REPORTED' },
-                  { label: 'Retour', value: 'RETURN' },
-                ]}
+                options={[{ label: 'Tous', value: 'ALL' }, ...Object.entries(LIBELLE_TYPE).map(([value, label]) => ({ value, label }))]}
               />
 
               <FilterSelect
-                label="Paiement"
+                label="Règlement expéditeur"
                 selectedValue={paymentStatusFilter}
                 onChange={(val) => {
                   setPaymentStatusFilter(val);
                   setCurrentPage(1);
                 }}
-                options={[
-                  { label: 'Tous', value: 'ALL' },
-                  { label: 'Non réglé', value: 'NON_REGLE' },
-                  { label: 'En bordereau', value: 'EN_BORDEREAU' },
-                  { label: 'Payé', value: 'PAYE' },
-                ]}
+                options={[{ label: 'Tous', value: 'ALL' }, ...Object.entries(LIBELLE_REGLEMENT).map(([value, label]) => ({ value, label }))]}
               />
+
+              <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                Créé le
+                <input
+                  type="date"
+                  value={dateFilter}
+                  onChange={(e) => {
+                    setDateFilter(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                  className="px-2.5 py-2 border border-slate-300 rounded-md text-sm normal-case font-normal text-slate-800 bg-white"
+                  data-testid="filtre-date"
+                />
+              </label>
             </FilterBar>
 
             {/* Table des Colis */}
@@ -1097,15 +1129,51 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
                     </FormField>
                   </div>
 
-                  <FormField label="Montant à encaisser (TND) *" required>
+                  <FormField
+                    label="Prix du colis (TND) *"
+                    required
+                    helpText={`Les frais de livraison (${livraison.frais.toFixed(3)} DT) s’ajoutent automatiquement.`}
+                  >
                     <Input
                       type="number"
                       step="0.001"
+                      min="0"
                       required
-                      value={newColisForm.totalPrice}
-                      onChange={(e) => setNewColisForm({ ...newColisForm, totalPrice: parseFloat(e.target.value) || 0 })}
-                      className="font-mono font-bold text-red-600"
+                      value={newColisForm.goodsPrice}
+                      onChange={(e) => setNewColisForm({ ...newColisForm, goodsPrice: e.target.value })}
+                      className="font-mono font-bold"
+                      data-testid="prix-colis"
                     />
+                  </FormField>
+
+                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs" data-testid="total-encaisser">
+                    <p className="flex justify-between text-red-900">
+                      <span>Frais de livraison</span>
+                      <span className="font-mono">+ {livraison.frais.toFixed(3)} DT</span>
+                    </p>
+                    <p className="flex justify-between font-bold text-red-700 mt-1 text-sm">
+                      <span>Montant à encaisser</span>
+                      <span className="font-mono">{totalNouveau === null ? '—' : `${totalNouveau.toFixed(3)} DT`}</span>
+                    </p>
+                  </div>
+
+                  <FormField label="Agence de sortie" helpText="Agence qui livrera le colis — proposée d’après l’adresse.">
+                    <Select
+                      value={agenceSortie}
+                      onChange={(e) => {
+                        setAgenceChoisie(true);
+                        setNewColisForm({ ...newColisForm, destinationDepositId: e.target.value });
+                      }}
+                      data-testid="agence-sortie"
+                    >
+                      {!agenceSortie && <option value="">—</option>}
+                      {livraison.agences.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.name}
+                          {a.id === livraison.suggestion ? ' (proposée)' : ''}
+                        </option>
+                      ))}
+                    </Select>
                   </FormField>
 
                   <FormField label="Nombre de pièces *" required>
@@ -1535,6 +1603,23 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
             {/* C. FINANCIAL */}
             <Card title="Données Financières (Financial)">
               <div className="space-y-2.5 text-xs">
+                {colis.pendingPriceChange && (
+                  <div className="p-2.5 rounded-md bg-amber-50 border border-amber-200 text-amber-900" data-testid="prix-en-attente-staff">
+                    L&apos;expéditeur demande un nouveau prix : <strong>{formatTND(colis.pendingPriceChange.newGoodsPrice)}</strong>{' '}
+                    (à encaisser {formatTND(colis.pendingPriceChange.newTotal)}).{' '}
+                    {(currentUser.role === RoleType.ADMIN || currentUser.role === RoleType.GESTIONNAIRE) && (
+                      <a href="/colis/demandes-prix" className="underline font-semibold">
+                        Approuver ou refuser
+                      </a>
+                    )}
+                  </div>
+                )}
+                <div className="flex justify-between items-center py-1 border-b border-slate-100">
+                  <span className="text-slate-500">Prix du colis :</span>
+                  <span className="font-mono text-slate-900">
+                    {formatTND(colis.goodsPrice ?? Math.max(0, colis.totalPrice - colis.deliveryFee))}
+                  </span>
+                </div>
                 <div className="flex justify-between items-center py-1 border-b border-slate-100">
                   <span className="text-slate-500">Montant à Encaisser (CRBT) :</span>
                   <span className="font-mono font-bold text-slate-900 text-sm">{formatTND(colis.totalPrice)}</span>

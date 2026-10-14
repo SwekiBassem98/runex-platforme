@@ -63,6 +63,44 @@ export class PaymentsController {
     });
   }
 
+  /** `GET /payments/vouchers/candidats?shipperId=` — à régler, par expéditeur. */
+  async candidats(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const shipperId = typeof req.query.shipperId === 'string' ? req.query.shipperId : undefined;
+    res.json({ success: true, data: await paymentsService.candidats(shipperId) });
+  }
+
+  /** `POST /payments/vouchers` — `{ shipperId, packageIds?, notes? }`. */
+  async creer(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const data = await paymentsService.creerBordereau(req.body ?? {}, {
+      id: req.user?.id,
+      fullName: req.user?.fullName || '',
+    });
+    res.status(201).json({
+      success: true,
+      data,
+      message: `Bordereau ${data.voucherNumber} créé : ${data.netPayable.toFixed(3)} DT net pour ${data.shipperName}.`,
+    });
+  }
+
+  /** `GET /payments/vouchers/:id` — fiche avec colis (l'expéditeur : les siens). */
+  async detail(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const data = await paymentsService.detail(String(req.params.id), {
+      id: req.user?.id,
+      fullName: req.user?.fullName || '',
+      shipperId: req.user?.shipperId,
+    });
+    res.json({ success: true, data });
+  }
+
+  /** `POST /payments/vouchers/:id/annuler` */
+  async annuler(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const data = await paymentsService.annulerBordereau(String(req.params.id), {
+      id: req.user?.id,
+      fullName: req.user?.fullName || '',
+    });
+    res.json({ success: true, data, message: `Bordereau ${data.voucherNumber} annulé.` });
+  }
+
   /**
    * Décaissement d'un bordereau, gardé sous son ancien chemin.
    *

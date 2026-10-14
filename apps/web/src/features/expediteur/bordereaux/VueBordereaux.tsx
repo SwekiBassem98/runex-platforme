@@ -235,6 +235,18 @@ export function VueBordereaux() {
                   </Badge>
                 </div>
 
+                {b.withdrawalCode && (
+                  <div
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-emerald-50 border border-emerald-200 px-3 py-2"
+                    data-testid="code-retrait"
+                  >
+                    <span className="text-xs text-emerald-900">{t('bordereaux.code.aide')}</span>
+                    <span className="font-mono text-lg font-bold tracking-[0.3em] text-emerald-800" dir="ltr">
+                      {b.withdrawalCode}
+                    </span>
+                  </div>
+                )}
+
                 <dl className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1.5 text-xs border-t border-slate-100 pt-2">
                   <Montant
                     libelle={t('bordereaux.montant.especes')}

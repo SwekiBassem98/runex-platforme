@@ -59,12 +59,13 @@ import { auditService } from '../../common/audit/audit.service';
 import { zonesService } from '../zones/zones.service';
 import { notificationService } from '../../common/notifications/notification.service';
 import { notificationDispatcher } from '../notifications/notification.dispatcher';
-import { BusinessRuleError } from '../../common/errors/api-error';
+import { BusinessRuleError, asUuid } from '../../common/errors/api-error';
 import {
   packageWorkflowService,
   type TransitionCommand,
 } from './package-workflow.service';
 import { generateBusinessNumber, barcodeFor } from '../depot/package-identity';
+import { priceChangeService, type PriceChangeDto } from '../prix/price-change.service';
 
 export interface ScopeFilter {
   shipperId?: string;
@@ -79,6 +80,8 @@ export interface ColisFilterParams {
   /** Zone de livraison (identifiant). */
   zone?: string;
   driver?: string;
+  /** Expéditeur (identifiant). */
+  shipper?: string;
   type?: string;
   paymentStatus?: string;
   date?: string;
@@ -239,6 +242,42 @@ function assertDriverOwnsPackage(pkg: { assignedDriverId: string | null }, user:
   }
 }
 
+/** Frais de livraison ajoutés au prix d'un colis quand l'expéditeur n'a pas de tarif propre. */
+export const DEFAULT_DELIVERY_FEE = 8;
+
+/**
+ * Montants d'un colis. Avec `goodsPrice` (prix de la marchandise), le total à
+ * encaisser est `goodsPrice + frais`. Sans lui, `totalPrice` est le total déjà
+ * calculé (ancien contrat de l'API) et le prix de la marchandise s'en déduit.
+ */
+export function calculerTarif(
+  payload: Record<string, unknown>,
+  deliveryFee: number
+): { goodsPrice: number; deliveryFee: number; totalPrice: number } {
+  const fee = Number.isFinite(deliveryFee) && deliveryFee >= 0 ? deliveryFee : DEFAULT_DELIVERY_FEE;
+  const arrondi = (n: number) => Math.round(n * 1000) / 1000;
+  if (payload.goodsPrice !== undefined && payload.goodsPrice !== null && payload.goodsPrice !== '') {
+    const goods = Number(payload.goodsPrice);
+    if (!Number.isFinite(goods) || goods < 0) {
+      throw new BusinessRuleError('Le prix du colis doit être un nombre positif.', 400);
+    }
+    return { goodsPrice: arrondi(goods), deliveryFee: fee, totalPrice: arrondi(goods + fee) };
+  }
+  const total = Number(payload.totalPrice ?? 0);
+  const totalPrice = Number.isFinite(total) && total >= 0 ? arrondi(total) : 0;
+  return { goodsPrice: arrondi(Math.max(totalPrice - fee, 0)), deliveryFee: fee, totalPrice };
+}
+
+/** Agence de sortie demandée à la saisie : un dépôt actif, sinon refus explicite. */
+async function agenceDeSortieChoisie(tx: Prisma.TransactionClient, valeur: unknown): Promise<string | null> {
+  if (valeur === undefined || valeur === null || valeur === '') return null;
+  const id = asUuid(String(valeur));
+  if (!id) throw new BusinessRuleError('Agence de sortie invalide.', 400);
+  const depot = await tx.deposit.findFirst({ where: { id, isActive: true }, select: { id: true } });
+  if (!depot) throw new BusinessRuleError("L'agence de sortie choisie n'existe pas ou est fermée.", 400);
+  return depot.id;
+}
+
 export class ColisService {
   private get prisma() {
     return getPrisma();
@@ -297,11 +336,17 @@ export class ColisService {
         and.push({ id: '00000000-0000-0000-0000-000000000000' });
       }
     }
+    const aucun: Prisma.PackageWhereInput = { id: '00000000-0000-0000-0000-000000000000' };
     if (params.type && params.type !== 'ALL') {
-      and.push({ packageType: params.type as PackageType });
+      // Valeur hors énumération : aucun résultat, jamais une erreur 500.
+      and.push((Object.values(PackageType) as string[]).includes(params.type) ? { packageType: params.type as PackageType } : aucun);
     }
     if (params.city && params.city !== 'ALL') {
-      and.push({ customerAddress: { governorate: params.city } });
+      // Insensible à la casse : « ben arous » et « Ben Arous » désignent le même gouvernorat.
+      and.push({ customerAddress: { governorate: { equals: params.city.trim(), mode: 'insensitive' } } });
+    }
+    if (params.shipper && params.shipper !== 'ALL') {
+      and.push(/^[0-9a-f-]{36}$/i.test(params.shipper) ? { shipperId: params.shipper } : aucun);
     }
     if (params.zone && params.zone !== 'ALL') {
       // Identifiant non UUID : aucun résultat plutôt qu'une erreur SQL.
@@ -312,7 +357,12 @@ export class ColisService {
       );
     }
     if (params.driver && params.driver !== 'ALL') {
-      and.push({ assignedDriver: { driverCode: params.driver } });
+      // Code livreur (LIV-BEN-001) ou identifiant de la fiche.
+      and.push(
+        /^[0-9a-f-]{36}$/i.test(params.driver)
+          ? { assignedDriverId: params.driver }
+          : { assignedDriver: { driverCode: { equals: params.driver, mode: 'insensitive' } } }
+      );
     }
     // Ce filtre était lu par le contrôleur puis ignoré : la liste affichait
     // tous les colis en laissant croire qu'elle était filtrée. Un filtre
@@ -320,6 +370,13 @@ export class ColisService {
     if (params.paymentStatus && params.paymentStatus !== 'ALL') {
       if (params.paymentStatus === 'TOUS') {
         and.push({ payment: { is: null } });
+      } else if (params.paymentStatus === 'NON_REGLE') {
+        // Règlement à l'expéditeur : pas encore dans un bordereau.
+        and.push({ paymentVoucherId: null });
+      } else if (params.paymentStatus === 'EN_BORDEREAU') {
+        and.push({ paymentVoucher: { is: { status: { in: ['EN_ATTENTE', 'CONFIRME'] } } } });
+      } else if (params.paymentStatus === 'PAYE') {
+        and.push({ paymentVoucher: { is: { status: 'PAYE' } } });
       } else if (Object.values(PaymentStatus).includes(params.paymentStatus as PaymentStatus)) {
         and.push({ payment: { is: { status: params.paymentStatus as PaymentStatus } } });
       } else {
@@ -744,7 +801,12 @@ export class ColisService {
     // laisser choisir une étiquette sans clé, illisible au premier scan.
     const barcode = barcodeFor(trackingNumber);
 
-    const totalPrice = Number(payload.totalPrice ?? 0);
+    // Tarif : l'expéditeur saisit le prix de sa marchandise (`goodsPrice`) ;
+    // les frais de livraison (8 DT par défaut, ou le tarif de l'expéditeur)
+    // s'y ajoutent automatiquement et le livreur encaisse le total. L'ancien
+    // champ `totalPrice` (montant à encaisser déjà calculé) reste accepté.
+    const deliveryFee = Number(shipper.config?.defaultDeliveryFee ?? DEFAULT_DELIVERY_FEE);
+    const tarif = calculerTarif(payload, deliveryFee);
     const pieceCount = Number(payload.pieceCount ?? 1);
 
     const packageTypes = Object.values(PackageType) as string[];
@@ -765,8 +827,12 @@ export class ColisService {
         select: { governorate: true, delegation: true },
       });
       const originId = (await resolveShipperDepositId(tx, shipper.governorate)) ?? deposit.id;
+      // Agence de sortie (celle qui livre) : choisie à la saisie, sinon déduite
+      // de l'adresse.
       const destinationId =
-        (await resolveDestinationDepositId(tx, address?.governorate, address?.delegation)) ?? deposit.id;
+        (await agenceDeSortieChoisie(tx, payload.destinationDepositId)) ??
+        (await resolveDestinationDepositId(tx, address?.governorate, address?.delegation)) ??
+        deposit.id;
       return tx.package.create({
         data: {
           trackingNumber,
@@ -784,8 +850,9 @@ export class ColisService {
           contentSummary: String(payload.contentSummary ?? 'Colis sans description'),
           allowOpen: payload.allowOpen === true,
           isFragile: payload.isFragile === true,
-          totalPrice: Number.isFinite(totalPrice) ? totalPrice : 0,
-          deliveryFee: shipper.config?.defaultDeliveryFee ?? 7,
+          declaredValue: tarif.goodsPrice,
+          totalPrice: tarif.totalPrice,
+          deliveryFee: tarif.deliveryFee,
           shipperNotes: payload.notes ? String(payload.notes) : null,
           items: {
             create: {
@@ -842,6 +909,7 @@ export class ColisService {
     package: PackageDto;
     driverNotified: boolean;
     notificationMessage?: string;
+    priceChangeRequest?: PriceChangeDto | null;
   }> {
     const record = await this.findRecord(idOrTracking);
 
@@ -869,6 +937,51 @@ export class ColisService {
         409
       );
     }
+
+    // Prix du colis : l'expéditeur demande, l'administration approuve. Le prix
+    // n'est pas modifié ici ; une demande est créée et les admins notifiés.
+    const fraisColis = Number(record.deliveryFee);
+    if (payload.goodsPrice !== undefined && payload.goodsPrice !== null && payload.goodsPrice !== '') {
+      const goods = Number(payload.goodsPrice);
+      if (!Number.isFinite(goods) || goods < 0) {
+        throw new BusinessRuleError('Le prix du colis doit être un nombre positif ou nul.', 400);
+      }
+      payload = { ...payload, totalPrice: Math.round((goods + fraisColis) * 1000) / 1000 };
+    }
+    const { goodsPrice: _g, ...sansPrix } = payload;
+    void _g;
+    payload = sansPrix;
+    if (isShipper && payload.totalPrice !== undefined) {
+      const total = Number(payload.totalPrice);
+      if (!Number.isFinite(total) || total < 0) {
+        throw new BusinessRuleError('Le montant à encaisser doit être un nombre positif ou nul.', 400);
+      }
+      const { totalPrice: _t, ...reste } = payload;
+      void _t;
+      payload = reste;
+      let demande: Awaited<ReturnType<typeof priceChangeService.demander>> = null;
+      if (Math.round(total * 1000) !== Math.round(Number(record.totalPrice) * 1000)) {
+        demande = await priceChangeService.demander(
+          record.id,
+          Math.max(total - fraisColis, 0),
+          typeof payload.priceChangeReason === 'string' ? payload.priceChangeReason : null,
+          user
+        );
+      }
+      delete (payload as Record<string, unknown>).priceChangeReason;
+      const autres = Object.keys(payload).length > 0;
+      const resultat = autres
+        ? await this.update(record.id, payload, user)
+        : { package: toPackageDto(await this.findRecord(record.id)), driverNotified: false };
+      return {
+        ...resultat,
+        priceChangeRequest: demande,
+        notificationMessage: demande
+          ? `Nouveau prix (${demande.newGoodsPrice.toFixed(3)} DT) envoyé à l'administration pour approbation. Le prix actuel reste appliqué en attendant.`
+          : resultat.notificationMessage,
+      };
+    }
+    delete (payload as Record<string, unknown>).priceChangeReason;
 
     // L'expéditeur ne peut plus intervenir une fois le colis engagé.
     if (isShipper && !isFullyEditableByShipper(record.status as PackageStatus)) {
@@ -963,6 +1076,8 @@ export class ColisService {
 
     if (amountChanged) {
       data.totalPrice = Number(payload.totalPrice);
+      // Le prix du colis suit : montant à encaisser − frais de livraison.
+      data.declaredValue = Math.max(Math.round((Number(payload.totalPrice) - Number(record.deliveryFee)) * 1000) / 1000, 0);
       criticalChanges.push(FIELD_LABELS.totalPrice!);
     }
     if (quantityChanged) {
@@ -1013,6 +1128,16 @@ export class ColisService {
             String(payload.delegation ?? record.customerAddress.delegation)
           );
           if (destinationId) data.destinationDepositId = destinationId;
+        }
+      }
+      // L'attendu de la tournée suit le montant à encaisser.
+      if (amountChanged && record.currentRunsheetId && record.status !== 'ANNULE') {
+        const delta = Math.round((Number(payload.totalPrice) - Number(record.totalPrice)) * 1000) / 1000;
+        if (delta !== 0) {
+          await tx.runsheet.update({
+            where: { id: record.currentRunsheetId },
+            data: { expectedCash: { increment: new Prisma.Decimal(delta) } },
+          });
         }
       }
       return tx.package.update({
@@ -1264,7 +1389,7 @@ export class ColisService {
         409
       );
     }
-    if (runsheet && runsheet.status !== 'EN_ATTENTE' && runsheet.status !== 'BROUILLON') {
+    if (runsheet && !['BROUILLON', 'EN_ATTENTE', 'VALIDEE_DEPART', 'EN_COURS'].includes(runsheet.status)) {
       throw new BusinessRuleError(
         `La tournée ${runsheet.runsheetNumber} n'est plus modifiable (statut ${runsheet.status}).`,
         409
@@ -1290,12 +1415,30 @@ export class ColisService {
     }
 
     const location = packageLocation(record);
+    let tournee: { id: string; runsheetNumber: string; created: boolean } | null = runsheet
+      ? { id: runsheet.id, runsheetNumber: runsheet.runsheetNumber, created: false }
+      : null;
     await this.prisma.$transaction(async (tx) => {
       if (record.assignedDriverId !== driver.id) {
         await tx.package.update({ where: { id: record.id }, data: { assignedDriverId: driver.id } });
       }
       if (runsheet) {
         await runsheetsService.attachPackage(tx, runsheet, record.id, { id: user.id, fullName: user.fullName });
+        return;
+      }
+      // Sans tournée désignée : le colis rejoint la tournée ouverte du livreur
+      // (ou une tournée du jour créée pour l'occasion). Un colis « affecté sans
+      // tournée » n'apparaissait pas dans l'application du livreur alors qu'il
+      // en recevait la notification.
+      const dejaDansUneTournee =
+        record.currentRunsheetId &&
+        (await tx.runsheet.count({
+          where: { id: record.currentRunsheetId, driverId: driver.id, status: { in: ['BROUILLON', 'EN_ATTENTE', 'VALIDEE_DEPART', 'EN_COURS'] } },
+        })) > 0;
+      if (!dejaDansUneTournee && (status === PackageStatus.AFFECTE_RUNSHEET || canTransition(status, PackageStatus.AFFECTE_RUNSHEET))) {
+        const ouverte = await runsheetsService.ensureOpenRunsheet(tx, driver.id, record.currentDepositId ?? null);
+        await runsheetsService.attachPackage(tx, ouverte, record.id, { id: user.id, fullName: user.fullName });
+        tournee = ouverte;
         return;
       }
       if (status !== PackageStatus.AFFECTE_RUNSHEET && canTransition(status, PackageStatus.AFFECTE_RUNSHEET)) {
@@ -1324,11 +1467,15 @@ export class ColisService {
       });
     });
 
+    // `tournee` est fixée dans la transaction : TypeScript ne suit pas
+    // l'affectation faite dans le rappel.
+    const rejointe = tournee as { id: string; runsheetNumber: string; created: boolean } | null;
+
     // Le livreur reçoit sa nouvelle affectation.
     await notificationDispatcher.notify({
       event: NotificationEvent.COLIS_ASSIGNED,
       title: 'Nouvelle livraison à effectuer',
-      content: `${user.fullName} vous a affecté le colis #${record.trackingNumber}${runsheet ? ` sur la tournée ${runsheet.runsheetNumber}` : ''}.`,
+      content: `${user.fullName} vous a affecté le colis #${record.trackingNumber}${rejointe ? ` sur la tournée ${rejointe.runsheetNumber}` : ''}.`,
       relatedEntity: 'PACKAGE',
       relatedEntityId: record.id,
       packageId: record.id,
@@ -1337,15 +1484,17 @@ export class ColisService {
 
     // Un colis qui rejoint une tournée est aussi une information pour celui qui
     // suit le flux des tournées.
-    if (runsheet) {
+    if (rejointe) {
       await notificationDispatcher
         .notify({
           event: NotificationEvent.RUNSHEET_ASSIGNED,
-          title: 'Colis intégré à une tournée',
-          content: `Le colis #${record.trackingNumber} a rejoint la tournée ${runsheet.runsheetNumber} de ${driver.user.fullName}.`,
+          title: rejointe.created ? 'Nouvelle tournée' : 'Colis intégré à une tournée',
+          content: rejointe.created
+            ? `La tournée ${rejointe.runsheetNumber} vous est affectée avec le colis #${record.trackingNumber}.`
+            : `Le colis #${record.trackingNumber} a rejoint la tournée ${rejointe.runsheetNumber} de ${driver.user.fullName}.`,
           relatedEntity: 'RUNSHEET',
-          relatedEntityId: runsheet.id,
-          runsheetId: runsheet.id,
+          relatedEntityId: rejointe.id,
+          runsheetId: rejointe.id,
           userIds: [driver.userId],
         })
         .catch(() => undefined);
@@ -1796,6 +1945,20 @@ export class ColisService {
     const rescheduled = parseOptionalDate(payload.rescheduledDate, 'date de report');
     const customerNote = payload.customerNote?.trim() || null;
 
+    // Troisième tentative sans livraison : le système retourne le colis.
+    if (attempts + 1 >= MAX_DELIVERY_ATTEMPTS) {
+      return this.executeReturn(
+        record,
+        {
+          reason: `Retour automatique : ${MAX_DELIVERY_ATTEMPTS} tentatives sans livraison (dernier motif : ${payload.reason}).`,
+          driverNote: payload.driverNote,
+        },
+        user,
+        { result: 'REPORTEE', comment: payload.driverNote?.trim() || payload.reason, customerNote },
+        true
+      );
+    }
+
     await this.prisma.$transaction(async (tx) => {
       await this.applyStatusChange(record.id, PackageStatus.REPORTE, {
         actorName: user.fullName,
@@ -1884,15 +2047,27 @@ export class ColisService {
     }
 
     const definitive = payload.definitive ?? DEFENSIVE_REASONS.has(payload.reasonCode);
-    if (definitive && attempts + 1 >= MAX_DELIVERY_ATTEMPTS) {
-      throw new BusinessRuleError(
-        `Dernière tentative autorisée (${MAX_DELIVERY_ATTEMPTS}) : déclarez plutôt un ` +
-          'retour au dépôt, le colis ne peut plus être retenté.',
-        409
+    const rescheduled = parseOptionalDate(payload.rescheduledFor, 'date de nouvelle tentative');
+
+    // Troisième tentative sans livraison : le système retourne le colis.
+    if (attempts + 1 >= MAX_DELIVERY_ATTEMPTS) {
+      return this.executeReturn(
+        record,
+        {
+          reason: `Retour automatique : ${MAX_DELIVERY_ATTEMPTS} tentatives sans livraison (dernier motif : ${FAILED_DELIVERY_LABELS[payload.reasonCode]}).`,
+          driverNote: payload.comment,
+        },
+        user,
+        {
+          result: payload.reasonCode,
+          reasonCode: payload.reasonCode,
+          comment: payload.comment,
+          rescheduledFor: rescheduled,
+        },
+        true
       );
     }
 
-    const rescheduled = parseOptionalDate(payload.rescheduledFor, 'date de nouvelle tentative');
     const target = definitive ? PackageStatus.ECHEC_LIVRAISON : PackageStatus.REPORTE;
     const location = `${record.customerAddress.delegation}, ${record.customerAddress.governorate}`;
     const reason = FAILED_DELIVERY_LABELS[payload.reasonCode];
@@ -1942,6 +2117,26 @@ export class ColisService {
   ): Promise<PackageDto> {
     const record = await this.findRecord(identifier);
     assertDriverOwnsPackage(record, user);
+    return this.executeReturn(record, payload, user, { result: 'REFUSEE', comment: payload.reason });
+  }
+
+  /**
+   * Retour au dépôt, partagé par le retour déclaré par le livreur et le retour
+   * automatique après la dernière tentative autorisée.
+   */
+  private async executeReturn(
+    record: Awaited<ReturnType<ColisService['findRecord']>>,
+    payload: ReturnRequest,
+    user: DriverActor,
+    attempt: {
+      result: 'REFUSEE' | 'REPORTEE' | FailedDeliveryReason;
+      comment?: string;
+      reasonCode?: FailedDeliveryReason;
+      rescheduledFor?: Date | null;
+      customerNote?: string | null;
+    },
+    automatic = false
+  ): Promise<PackageDto> {
     await this.assertTransitionPossible(record.id, PackageStatus.RETOUR_DEPOT);
     const driverId = this.fieldDriverId(record, user);
 
@@ -1972,7 +2167,7 @@ export class ColisService {
         actorId: user.id,
         role: user.role,
         driverId: user.driverId,
-        title: 'Colis retourné au dépôt',
+        title: automatic ? 'Retour automatique au dépôt' : 'Colis retourné au dépôt',
         reason: payload.reason,
         note: payload.driverNote,
         locationName: deposit?.name ?? packageLocation(record),
@@ -1988,7 +2183,12 @@ export class ColisService {
         client: tx,
       });
 
-      await this.recordAttempt(tx, record, driverId, 'REFUSEE', { comment: payload.reason });
+      await this.recordAttempt(tx, record, driverId, attempt.result, {
+        comment: attempt.comment,
+        reasonCode: attempt.reasonCode,
+        rescheduledFor: attempt.rescheduledFor ?? null,
+        customerNote: attempt.customerNote ?? null,
+      });
 
       // Rendre un colis après avoir pris l'argent, c'est rembourser. Un retour
       // sur un colis jamais encaissé n'a rien à rembourser.
@@ -2032,6 +2232,19 @@ export class ColisService {
     });
 
     await this.notifyStatusChanged(record.id, PackageStatus.RETOUR_DEPOT, user.fullName, user.id);
+    if (automatic) {
+      // L'expéditeur et l'exploitation apprennent que le colis revient, sans
+      // attendre que quelqu'un le déclare.
+      await notificationDispatcher.notify({
+        event: NotificationEvent.DELIVERY_POSTPONED,
+        title: 'Retour automatique',
+        content: `Le colis #${record.trackingNumber} n'a pas pu être livré après ${MAX_DELIVERY_ATTEMPTS} tentatives : il est retourné au dépôt.`,
+        relatedEntity: 'PACKAGE',
+        relatedEntityId: record.id,
+        packageId: record.id,
+        actorUserId: user.id ?? null,
+      });
+    }
 
     const fresh = await this.findRecord(record.id);
     return toPackageDto(fresh);
