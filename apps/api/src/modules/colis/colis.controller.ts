@@ -135,7 +135,18 @@ export class ColisController {
         res.status(400).json({ success: false, message: 'Identifiant expéditeur invalide.' });
         return;
       }
-      const pkg = await colisService.create(req.body, {
+      // Un expéditeur ne choisit pas les agences : le départ est l'agence qui
+      // dessert l'adresse de son compte (gouvernorat saisi à la création du
+      // compte), la sortie celle qui dessert l'adresse du destinataire.
+      const corps = staff
+        ? req.body
+        : (() => {
+            const { originDepositId: _o, destinationDepositId: _d, ...reste } = (req.body ?? {}) as Record<string, unknown>;
+            void _o;
+            void _d;
+            return reste;
+          })();
+      const pkg = await colisService.create(corps, {
         shipperId: onBehalf || req.user?.shipperId,
         shipperName: onBehalf ? undefined : req.user?.shipperName,
         fullName: req.user?.fullName,

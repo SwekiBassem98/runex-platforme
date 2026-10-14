@@ -1,7 +1,7 @@
 /**
  * QA 35 (écrans) — tournée : ajouter/retirer un colis au scan (comme le bon
  * de retour) ; menu : ouverture instantanée avec écran d'ouverture ;
- * création de colis : agence de départ et trajet imprimé sur le bon.
+ * création de colis : trajet automatique (expéditeur) imprimé sur le bon.
  *
  *   PUPPETEER_CORE=…/puppeteer-core.js CHROME=…/chrome SHOTS=/tmp/shots node qa/qa-tournee-nav-bon-35.mjs
  * Web sur :3000 (build de production), API sur :4000, base de démonstration.
@@ -84,7 +84,7 @@ await p.evaluate((n) => document.querySelector(`button[aria-label="Retirer le co
 await sleep(1500);
 ok(!(await ja(liv, 'GET', '/runsheets/driver/active')).d?.packages?.some((x) => x.id === A.id), 'retrait direct depuis la ligne (×)');
 
-console.log('3. Création de colis : agence de départ et trajet');
+console.log('3. Création de colis (expéditeur) : trajet automatique');
 await p.goto(W + '/expediteur/login', { waitUntil: 'networkidle2' });
 const ctx = await b.createBrowserContext(); const e = await ctx.newPage(); await e.setViewport({ width: 1280, height: 1000 });
 await e.goto(W + '/expediteur/login', { waitUntil: 'networkidle2' });
@@ -94,12 +94,9 @@ await e.goto(W + '/expediteur/colis/nouveau', { waitUntil: 'networkidle2' }); aw
 const gouv = await e.$('select');
 if (gouv) await e.evaluate(() => { const s = [...document.querySelectorAll('select')].find((x) => [...x.options].some((o) => o.value === 'Sfax')); if (s) { const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set; set.call(s, 'Sfax'); s.dispatchEvent(new Event('change', { bubbles: true })); } });
 await sleep(1200);
-const depart = await e.$eval('[data-testid=agence-depart]', (x) => x.options[x.selectedIndex]?.text ?? '').catch(() => '');
-ok(depart.length > 1, 'agence de départ pré-remplie', depart);
-await e.select('[data-testid=agence-depart]', await e.$eval('[data-testid=agence-depart]', (x) => [...x.options].find((o) => o.text.startsWith('Agence Nabeul'))?.value ?? ''));
-await sleep(400);
+ok(!(await e.$('[data-testid=agence-depart]')) && !(await e.$('[data-testid=agence-sortie]')), 'expéditeur : pas de choix d’agence (automatique)');
 const trajet = await e.$eval('[data-testid=trajet-bon]', (x) => x.innerText).catch(() => '');
-ok(/Agence Nabeul => Agence Sfax => Sfax/.test(trajet), 'trajet du bon affiché', trajet);
+ok(/=> Agence Sfax => Sfax/.test(trajet) && /automatiquement/i.test(trajet), 'trajet du bon affiché, déterminé automatiquement', trajet);
 await e.screenshot({ path: `${SHOTS}/35-creation.png`, fullPage: true });
 ok(!errs.length, 'aucune erreur JavaScript', errs.join(' | '));
 console.log(`\n${pass} réussis, ${fail} échoués`);
