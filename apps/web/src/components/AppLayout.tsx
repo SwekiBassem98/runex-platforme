@@ -41,6 +41,7 @@ import { AppShell, type NavItem } from '@logixpress/ui';
 import { RoleType, PermissionCode } from '@logixpress/types';
 import { useAuth } from '@/lib/auth';
 import { demandesPrixApi } from '@/lib/api';
+import { BarreNavigation, PageEnChargement } from '@/components/PageEnChargement';
 
 /**
  * Table de correspondance identifiant de navigation ↔ route.
@@ -145,6 +146,26 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       window.removeEventListener('runex:demandes-prix', lire);
     };
   }, [peutDeciderPrix, pathname, items.length]);
+
+  // Navigation instantanée : au clic, le menu bascule tout de suite et un
+  // écran d'ouverture remplace la page, le temps que la nouvelle arrive.
+  // Les routes du menu sont préchargées dès l'ouverture de la session.
+  const [navEnCours, setNavEnCours] = React.useState<{ id: string; route: string } | null>(null);
+  React.useEffect(() => {
+    setNavEnCours(null);
+  }, [pathname]);
+  React.useEffect(() => {
+    if (!navEnCours) return;
+    // Filet : une navigation qui n'aboutit pas ne bloque pas l'écran.
+    const t = window.setTimeout(() => setNavEnCours(null), 15000);
+    return () => window.clearTimeout(t);
+  }, [navEnCours]);
+  React.useEffect(() => {
+    const precharger = () => Object.values(NAV_ROUTES).forEach((r) => router.prefetch(r));
+    const w = window as Window & { requestIdleCallback?: (cb: () => void) => number };
+    if (w.requestIdleCallback) w.requestIdleCallback(precharger);
+    else window.setTimeout(precharger, 1200);
+  }, [router]);
 
   const navItems: NavItem[] = [
     ...(isDriver
@@ -303,10 +324,12 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <AppShell
       navItems={navItems}
-      activeNavId={navIdForPath(pathname)}
+      activeNavId={navEnCours?.id ?? navIdForPath(pathname)}
       onSelectNav={(id) => {
         const route = NAV_ROUTES[id];
-        if (route && route !== pathname) router.push(route);
+        if (!route || route === pathname) return;
+        setNavEnCours({ id, route });
+        router.push(route);
       }}
       activeDepositName="Hub Central — Ben Arous"
       userName={user?.fullName}
@@ -333,7 +356,8 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         </>
       }
     >
-      {children}
+      <BarreNavigation active={!!navEnCours} />
+      {navEnCours ? <PageEnChargement titre={navItems.find((n) => n.id === navEnCours.id)?.label} /> : children}
       {dialogueDeconnexion}
     </AppShell>
   );

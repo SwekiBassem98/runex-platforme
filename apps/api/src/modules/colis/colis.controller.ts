@@ -1,6 +1,6 @@
 import { colisService, DEFAULT_DELIVERY_FEE } from './colis.service';
 import { getPrisma } from '../../common/database/prisma-context';
-import { resolveDestinationDepositId } from '../../common/routing/deposit-routing';
+import { resolveDestinationDepositId, resolveShipperDepositId } from '../../common/routing/deposit-routing';
 import { auditService } from '../../common/audit/audit.service';
 import { receptionService } from '../depot/reception.service';
 import type { Response } from 'express';
@@ -90,6 +90,11 @@ export class ColisController {
       ? await prisma.shipperConfig.findUnique({ where: { shipperId }, select: { defaultDeliveryFee: true } })
       : null;
     const deliveryFee = config ? Number(config.defaultDeliveryFee) : DEFAULT_DELIVERY_FEE;
+    // Agence de départ proposée : celle qui dessert l'adresse de l'expéditeur.
+    const shipper = shipperId
+      ? await prisma.shipper.findUnique({ where: { id: shipperId }, select: { governorate: true } })
+      : null;
+    const suggestionDepart = shipper?.governorate ? await resolveShipperDepositId(prisma, shipper.governorate) : null;
     const [agences, suggestion] = await Promise.all([
       prisma.deposit.findMany({
         where: { isActive: true, status: { not: 'FERME' } },
@@ -100,7 +105,7 @@ export class ColisController {
         ? resolveDestinationDepositId(prisma, String(req.query.governorate), req.query.delegation ? String(req.query.delegation) : null)
         : Promise.resolve(null),
     ]);
-    res.json({ success: true, data: { agences, suggestion, deliveryFee } });
+    res.json({ success: true, data: { agences, suggestion, suggestionDepart, deliveryFee } });
   }
 
   async create(req: AuthenticatedRequest, res: Response): Promise<void> {

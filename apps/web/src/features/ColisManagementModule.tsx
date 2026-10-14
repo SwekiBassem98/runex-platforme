@@ -98,7 +98,7 @@ import {
 import { colisApi, createApiFetch, driversApi, runsheetsApi, searchApi, shippersApi, zonesApi, type DriverSuggestions, type ZoneDto } from '@/lib/api';
 import { GOUVERNORATS } from '@/features/expediteur/lib/libelles';
 import { estZoneConnue, useDelegationsConnues } from '@/features/zones/useDelegationsConnues';
-import { totalAEncaisser, useAgencesLivraison } from '@/features/colis/useAgencesLivraison';
+import { libelleTrajet, totalAEncaisser, useAgencesLivraison } from '@/features/colis/useAgencesLivraison';
 import { imprimerBonsLivraison } from '@/features/colis/bonLivraison';
 
 // Les requêtes de ce module passent par le client API commun : aucune URL
@@ -309,6 +309,7 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
     // Prix de la marchandise : les frais de livraison s'y ajoutent (API).
     goodsPrice: '' as string,
     destinationDepositId: '',
+    originDepositId: '',
     pieceCount: 1,
     sizeCategory: PackageSize.LEGERE,
     packageType: PackageType.NORMAL,
@@ -328,6 +329,10 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
   );
   const [agenceChoisie, setAgenceChoisie] = useState(false);
   const agenceSortie = agenceChoisie ? newColisForm.destinationDepositId : (livraison.suggestion ?? '');
+  // Agence de départ : celle de l'expéditeur, modifiable ; imprimée sur le bon de livraison.
+  const [departChoisi, setDepartChoisi] = useState(false);
+  const agenceDepart = departChoisi ? newColisForm.originDepositId : (livraison.suggestionDepart ?? '');
+  const trajetNouveau = libelleTrajet(livraison.agences, agenceDepart, agenceSortie, newColisForm.governorate, newColisForm.delegation);
   const totalNouveau = totalAEncaisser(newColisForm.goodsPrice, livraison.frais);
 
   // Un compte sans expéditeur (exploitation) doit en désigner un.
@@ -641,6 +646,7 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
           ...newColisForm,
           goodsPrice: Number(newColisForm.goodsPrice),
           destinationDepositId: agenceSortie || undefined,
+          originDepositId: agenceDepart || undefined,
         }),
       });
       const data = await res.json();
@@ -1157,6 +1163,25 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
                     </p>
                   </div>
 
+                  <FormField label="Agence de départ" helpText="D’où part le colis — proposée d’après l’expéditeur, imprimée sur le bon.">
+                    <Select
+                      value={agenceDepart}
+                      onChange={(e) => {
+                        setDepartChoisi(true);
+                        setNewColisForm({ ...newColisForm, originDepositId: e.target.value });
+                      }}
+                      data-testid="agence-depart"
+                    >
+                      {!agenceDepart && <option value="">—</option>}
+                      {livraison.agences.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.name}
+                          {a.id === livraison.suggestionDepart ? ' (proposée)' : ''}
+                        </option>
+                      ))}
+                    </Select>
+                  </FormField>
+
                   <FormField label="Agence de sortie" helpText="Agence qui livrera le colis — proposée d’après l’adresse.">
                     <Select
                       value={agenceSortie}
@@ -1175,6 +1200,12 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
                       ))}
                     </Select>
                   </FormField>
+
+                  {trajetNouveau && (
+                    <p className="md:col-span-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700" data-testid="trajet-bon">
+                      <span className="font-semibold">Trajet sur le bon :</span> <span className="font-mono">{trajetNouveau}</span>
+                    </p>
+                  )}
 
                   <FormField label="Nombre de pièces *" required>
                     <Input

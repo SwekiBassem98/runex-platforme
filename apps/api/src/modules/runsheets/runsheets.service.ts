@@ -663,12 +663,39 @@ export class RunsheetsService {
           client: tx,
         });
       } else {
-        // Le colis reste affecté au livreur (« affecté sans tournée ») : il peut
-        // être réaffecté ou intégré à une autre tournée.
+        // Retiré avant d'être parti : le colis revient en stock, sans livreur,
+        // dans l'état qu'il avait avant d'entrer dans la tournée (reçu au
+        // dépôt, le plus souvent). Le laisser « affecté sans tournée » le
+        // rendait invisible dans l'application du livreur comme au dépôt.
+        const historique = await tx.packageTimeline.findMany({
+          where: { packageId: item.packageId },
+          orderBy: { createdAt: 'desc' },
+          select: { status: true },
+          take: 30,
+        });
+        const avant = historique.find((h) => h.status !== 'AFFECTE_RUNSHEET')?.status;
+        const STOCK = ['CREE', 'RAMASSAGE_PROGRAMME', 'RAMASSE', 'RECU_DEPOT', 'RECU_DEPOT_DESTINATION'];
+        const retour = (avant && STOCK.includes(avant) ? avant : 'RECU_DEPOT') as typeof avant & string;
+        const libre = item.package.status === 'AFFECTE_RUNSHEET';
         await tx.package.update({
           where: { id: item.packageId },
-          data: { currentRunsheetId: null },
+          data: {
+            currentRunsheetId: null,
+            ...(libre ? { status: retour as never, assignedDriverId: null } : {}),
+          },
         });
+        if (libre) {
+          await tx.packageTimeline.create({
+            data: {
+              packageId: item.packageId,
+              status: retour as never,
+              title: `Retiré de la tournée ${runsheet.runsheetNumber}`,
+              description: 'Remis en stock, sans livreur : il peut être affecté à une autre tournée.',
+              locationName: runsheet.deposit?.name ?? 'Dépôt',
+              operatorName: user.fullName,
+            },
+          });
+        }
       }
       await auditService.record(
         {

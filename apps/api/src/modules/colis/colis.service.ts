@@ -269,12 +269,16 @@ export function calculerTarif(
 }
 
 /** Agence de sortie demandée à la saisie : un dépôt actif, sinon refus explicite. */
-async function agenceDeSortieChoisie(tx: Prisma.TransactionClient, valeur: unknown): Promise<string | null> {
+async function agenceDeSortieChoisie(
+  tx: Prisma.TransactionClient,
+  valeur: unknown,
+  libelle = 'de sortie'
+): Promise<string | null> {
   if (valeur === undefined || valeur === null || valeur === '') return null;
   const id = asUuid(String(valeur));
-  if (!id) throw new BusinessRuleError('Agence de sortie invalide.', 400);
+  if (!id) throw new BusinessRuleError(`Agence ${libelle} invalide.`, 400);
   const depot = await tx.deposit.findFirst({ where: { id, isActive: true }, select: { id: true } });
-  if (!depot) throw new BusinessRuleError("L'agence de sortie choisie n'existe pas ou est fermée.", 400);
+  if (!depot) throw new BusinessRuleError(`L'agence ${libelle} choisie n'existe pas ou est fermée.`, 400);
   return depot.id;
 }
 
@@ -826,7 +830,13 @@ export class ColisService {
         where: { id: addressId },
         select: { governorate: true, delegation: true },
       });
-      const originId = (await resolveShipperDepositId(tx, shipper.governorate)) ?? deposit.id;
+      // Agence de départ : celle indiquée à la saisie, sinon l'agence qui
+      // dessert l'adresse de l'expéditeur. Le bon de livraison l'imprime telle
+      // quelle (départ => agence de sortie => gouvernorat/délégation).
+      const originId =
+        (await agenceDeSortieChoisie(tx, payload.originDepositId, 'de départ')) ??
+        (await resolveShipperDepositId(tx, shipper.governorate)) ??
+        deposit.id;
       // Agence de sortie (celle qui livre) : choisie à la saisie, sinon déduite
       // de l'adresse.
       const destinationId =
@@ -1121,13 +1131,22 @@ export class ColisService {
         data.customerAddressId = addressId;
         // Nouvelle adresse, nouvelle agence de livraison — tant que le colis
         // n'a pas déjà pris la route.
+        // L'agence de sortie choisie à la saisie est conservée : elle ne suit
+        // la nouvelle adresse que si elle était celle déduite de l'ancienne.
         if (['CREE', 'RAMASSAGE_PROGRAMME', 'RAMASSE', 'RECU_DEPOT'].includes(record.status)) {
-          const destinationId = await resolveDestinationDepositId(
+          const deduiteAvant = await resolveDestinationDepositId(
             tx,
-            String(payload.governorate ?? record.customerAddress.governorate),
-            String(payload.delegation ?? record.customerAddress.delegation)
+            record.customerAddress.governorate,
+            record.customerAddress.delegation
           );
-          if (destinationId) data.destinationDepositId = destinationId;
+          if (!record.destinationDepositId || record.destinationDepositId === deduiteAvant) {
+            const destinationId = await resolveDestinationDepositId(
+              tx,
+              String(payload.governorate ?? record.customerAddress.governorate),
+              String(payload.delegation ?? record.customerAddress.delegation)
+            );
+            if (destinationId) data.destinationDepositId = destinationId;
+          }
         }
       }
       // L'attendu de la tournée suit le montant à encaisser.

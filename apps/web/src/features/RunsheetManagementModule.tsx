@@ -39,6 +39,7 @@ import {
   Trash2,
   Eye,
   Save,
+  X,
 } from 'lucide-react';
 
 import {
@@ -87,6 +88,8 @@ import {
   type AuthUser,
 } from '@logixpress/types';
 import { createApiFetch } from '@/lib/api';
+import { playFeedback } from '@/lib/feedback';
+import { CarteScanAjoutRetrait, type ModeScan } from '@/features/scan/CarteScanAjoutRetrait';
 import { PermissionCode } from '@logixpress/types';
 
 // Les requêtes de ce module passent par le client API commun : aucune URL
@@ -150,7 +153,6 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
   /** Transition de statut en attente de confirmation : indissociable du geste. */
   const [transitionAConfirmer, setTransitionAConfirmer] = useState<{ status: string; label: string } | null>(null);
   /** Colis à retirer de la tournée, en attente de confirmation. */
-  const [retraitAConfirmer, setRetraitAConfirmer] = useState<{ trackingNumber: string; client: string } | null>(null);
   /** Runsheet à supprimer, en attente de confirmation. */
   const [suppressionAConfirmer, setSuppressionAConfirmer] = useState<RunsheetSummaryDto | null>(null);
   /** Runsheet en édition */
@@ -418,6 +420,40 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
       addToast({ type: 'error', title: 'Erreur', message: 'Échec d\'ajout du colis.' });
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  // Scan « Ajouter / Retirer » (comme le bon de retour) : le résultat
+  // s'affiche sous le champ, sans fenêtre de confirmation.
+  const scannerTournee = async (code: string, mode: ModeScan): Promise<{ ok: boolean; message: string }> => {
+    if (!runsheet) return { ok: false, message: 'Aucune tournée ouverte.' };
+    const action = mode === 'ajouter' ? 'add-package' : 'remove-package';
+    try {
+      const res = await fetch(`/api/v1/runsheets/${runsheet.runsheetNumber}/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ packageIdentifier: code }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        playFeedback('error');
+        return { ok: false, message: data.message ?? 'Code refusé.' };
+      }
+      setRunsheet(data.data);
+      loadAvailablePackages();
+      loadRunsheets();
+      playFeedback(mode === 'ajouter' ? 'scan' : 'remove');
+      const enCours = String(runsheet.status) === 'EN_COURS';
+      return {
+        ok: true,
+        message:
+          mode === 'ajouter'
+            ? `Colis ${code} ajouté à la tournée${enCours ? ' en cours : le livreur est prévenu' : ''}.`
+            : `Colis ${code} retiré de la tournée${enCours ? ' : le livreur est prévenu (s’il l’a déjà pris, il le rapporte au dépôt)' : ', remis en stock au dépôt'}.`,
+      };
+    } catch {
+      playFeedback('error');
+      return { ok: false, message: 'Serveur injoignable : réessayez.' };
     }
   };
 
@@ -1241,6 +1277,23 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
             </div>
           </div>
 
+          {/* Scan : ajouter ou retirer un colis, comme dans le bon de retour */}
+          {TOURNEE_MODIFIABLE.includes(String(runsheet.status)) && (
+            <CarteScanAjoutRetrait
+              titreAjouter={String(runsheet.status) === 'EN_COURS' ? 'Ajouter des colis à la tournée en cours' : 'Ajouter des colis à la tournée'}
+              titreRetirer="Retirer des colis de la tournée"
+              libelleAjouter="Ajouter à la tournée"
+              libelleRetirer="Retirer de la tournée"
+              onScan={scannerTournee}
+              testIdPrefix="tournee-scan"
+              aide={
+                String(runsheet.status) === 'EN_COURS'
+                  ? 'Tournée en cours : un colis retiré est rapporté au dépôt par le livreur, qui est prévenu.'
+                  : 'Scannez le code-barres ou le numéro du colis. Basculez sur « Retirer » pour enlever un colis.'
+              }
+            />
+          )}
+
           {/* TABLEAU DES COLIS DE LA RUNSHEET */}
           <div className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1359,23 +1412,18 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
                               {badge.label}
                             </span>
                           </Td>
-                          {/* Le retrait est confirmé : le colis sort du chargement
-                              sans retour possible depuis cet écran. */}
+                          {/* Retrait direct, comme dans le bon de retour (×). */}
                           <Td align="right">
                             {canRemove && (
                               <button
                                 type="button"
-                                onClick={() =>
-                                  setRetraitAConfirmer({
-                                    trackingNumber: pkg.trackingNumber,
-                                    client: pkg.customerName,
-                                  })
-                                }
+                                onClick={() => void handleRemovePackage(pkg.trackingNumber)}
+                                disabled={isSubmitting}
                                 aria-label={`Retirer le colis ${pkg.trackingNumber} de la tournée`}
-                                title="Retirer ce colis avant le départ de tournée"
-                                className="px-2 py-1 text-xs text-red-700 bg-red-50 hover:bg-red-100 rounded border border-red-200 transition cursor-pointer"
+                                title="Retirer de la tournée"
+                                className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40 cursor-pointer"
                               >
-                                Retirer
+                                <X className="w-4 h-4" aria-hidden="true" />
                               </button>
                             )}
                           </Td>
@@ -1410,25 +1458,6 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
         message={`${transitionAConfirmer?.label ?? ''} pour ${runsheet?.runsheetNumber ?? 'cette tournée'}. L'étape est définitive depuis cet écran.`}
         confirmText="Confirmer l'étape"
         type="warning"
-      />
-
-      <ConfirmDialog
-        isOpen={retraitAConfirmer !== null}
-        onClose={() => setRetraitAConfirmer(null)}
-        onConfirm={() => {
-          if (!retraitAConfirmer) return;
-          const { trackingNumber } = retraitAConfirmer;
-          setRetraitAConfirmer(null);
-          void handleRemovePackage(trackingNumber);
-        }}
-        title="Retirer ce colis de la tournée ?"
-        message={
-          String(runsheet?.status) === 'EN_COURS'
-            ? `Le colis ${retraitAConfirmer?.trackingNumber ?? ''} (${retraitAConfirmer?.client ?? ''}) quitte la tournée en cours : le livreur est prévenu et doit le rapporter au dépôt, où il pourra être réaffecté.`
-            : `Le colis ${retraitAConfirmer?.trackingNumber ?? ''} (${retraitAConfirmer?.client ?? ''}) sort du chargement de cette tournée.`
-        }
-        confirmText="Retirer le colis"
-        type="danger"
       />
 
       {/* ======================================================== */}
