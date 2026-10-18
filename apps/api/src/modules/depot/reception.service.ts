@@ -34,6 +34,7 @@ import {
   type ScannedCodeKind,
 } from './package-identity';
 import { PackageStatus, RoleType, packageStatusLabel } from '@logixpress/types';
+import { LIBELLE_ZONE_HUB, estZoneHub } from '../../common/routing/deposit-routing';
 
 /**
  * Statuts depuis lesquels une réception a encore un sens.
@@ -62,7 +63,9 @@ export type ReceptionOutcome =
   | 'UNKNOWN_CODE'
   | 'MALFORMED_CODE'
   | 'INVALID_DEPOSIT'
-  | 'INVALID_STATE';
+  | 'INVALID_STATE'
+  /** Expéditeur hors zone du hub : le colis arrive par inter-dépôt. */
+  | 'WRONG_CHANNEL';
 
 export interface ReceptionResult {
   outcome: ReceptionOutcome;
@@ -249,6 +252,21 @@ export class ReceptionService {
       };
     }
 
+    // Acceptation Magasin : expéditeurs de Tunis et Ben Arous seulement. Les
+    // colis des autres gouvernorats arrivent par leur agence, en inter-dépôt.
+    const premiereEntree = record.status !== PackageStatus.RETOUR_DEPOT;
+    if (premiereEntree && !estZoneHub(record.shipper.governorate)) {
+      return {
+        outcome: 'WRONG_CHANNEL',
+        accepted: false,
+        message:
+          `Expéditeur de ${record.shipper.governorate || 'hors zone'} : l'Acceptation Magasin ne reçoit que les colis des expéditeurs de ${LIBELLE_ZONE_HUB}. ` +
+          'Acceptez ce colis dans « Inter dépôt livraison › Acceptation ».',
+        package: await this.toPreview(record),
+        receivedAtDeposit: deposit.name,
+      };
+    }
+
     // Réception : position courante, chronologie et audit, en une transaction.
     await packageWorkflowService.transition({
       packageId: record.id,
@@ -400,7 +418,7 @@ export class ReceptionService {
         currentDepositId: true,
         customer: { select: { fullName: true, primaryPhone: true } },
         customerAddress: { select: { governorate: true, delegation: true } },
-        shipper: { select: { companyName: true } },
+        shipper: { select: { companyName: true, governorate: true } },
         currentDeposit: { select: { name: true } },
       },
     });

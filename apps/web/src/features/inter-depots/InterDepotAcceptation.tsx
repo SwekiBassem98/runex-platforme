@@ -88,12 +88,17 @@ export function InterDepotAcceptation({ type }: { type: InterDepotType }) {
 
   const agence = options?.deposits.find((d) => d.id === (depot || board?.depositId))?.name ?? user?.depositName ?? '';
   const titre = estRetour ? 'Acceptation inter dépôt retours' : 'Acceptation inter dépôt';
+  const zoneHub = (options?.zoneHub ?? ['Tunis', 'Ben Arous']).join(' et ');
 
   return (
     <div className="space-y-4 pb-8">
       <PageHeader
         title={titre}
-        description="Scanner le code à barre du colis (une étiquette par pièce)."
+        description={
+          estRetour
+            ? 'Retours de toutes les agences, avec ou sans bordereau. Avec bordereau : une étiquette par pièce.'
+            : `Colis des expéditeurs hors ${zoneHub} (Sousse, Sfax…), arrivés de leur agence — avec ou sans bordereau. Ceux de ${zoneHub} se reçoivent en « Acceptation Magasin ».`
+        }
         breadcrumbs={[{ label: 'Inter dépôts' }, { label: estRetour ? 'Inter dépôts retours' : 'Inter dépôt livraison', href: estRetour ? '/inter-depots/retours' : '/inter-depots' }, { label: 'Acceptation' }]}
         actions={
           <div className="flex items-center gap-2">
@@ -125,7 +130,12 @@ export function InterDepotAcceptation({ type }: { type: InterDepotType }) {
               <Badge variant="danger">{board.expectedCount} colis</Badge>
             </div>
             {board.expected.length === 0 ? (
-              <p className="text-xs text-slate-500">Rien n’est attendu.</p>
+              <p className="text-xs text-slate-500" data-testid="rien-attendu">
+                Aucun bordereau en route vers votre dépôt.{' '}
+                {estRetour
+                  ? 'Les retours venus de n’importe quelle agence s’acceptent quand même : scannez-les.'
+                  : `Les colis des expéditeurs hors ${zoneHub} s’acceptent quand même : scannez-les.`}
+              </p>
             ) : (
               <div className="max-h-[520px] overflow-y-auto">
                 <table className="w-full text-xs">
@@ -207,7 +217,10 @@ export function InterDepotAcceptation({ type }: { type: InterDepotType }) {
                   ) : (
                     board.accepted.map((a) => (
                       <tr key={`${a.transferNumber}-${a.trackingNumber}`} className="border-t border-slate-100">
-                        <td className="py-1.5 font-mono text-xs">{a.barcode}</td>
+                        <td className="py-1.5 font-mono text-xs">
+                          {a.barcode}
+                          <span className="block text-[10px] text-slate-400 font-sans">{a.transferNumber || 'sans bordereau'}</span>
+                        </td>
                         <td className="py-1.5">{a.shipperName}</td>
                         <td className="py-1.5 text-center">{a.receivedPieces}/{a.pieceCount}</td>
                         <td className="py-1.5">{a.pieceCount} {TAILLE[a.sizeCategory] ?? a.sizeCategory}</td>

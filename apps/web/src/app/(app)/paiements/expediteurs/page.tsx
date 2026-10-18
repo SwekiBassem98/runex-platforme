@@ -114,7 +114,7 @@ export default function PaiementsExpediteursPage() {
               ))}
               {!isLoading && sorted.length === 0 && (
                 <tr>
-                  <Td className="text-center text-slate-500 py-8">Aucun encaissement enregistré.</Td>
+                  <Td colSpan={7} className="text-center text-slate-500 py-8">Aucun encaissement enregistré.</Td>
                 </tr>
               )}
             </Tbody>

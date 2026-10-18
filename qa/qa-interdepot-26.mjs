@@ -62,7 +62,12 @@ async function newPackage(token, extra = {}) {
   return r.data;
 }
 async function receiveAtHub(p) {
-  const r = await api(admin, 'POST', '/warehouse/scan-accept', { barcode: p.trackingNumber, depositId: HUB.id });
+  let r = await api(admin, 'POST', '/warehouse/scan-accept', { barcode: p.trackingNumber, depositId: HUB.id });
+  // Expéditeur hors Tunis / Ben Arous : il arrive de son agence et s'accepte
+  // en « Acceptation inter dépôt » (sans bordereau), pas à l'Acceptation Magasin.
+  if (r.status === 409 && (r.json?.data?.outcome === 'WRONG_CHANNEL' || /Acceptation Magasin ne reçoit/.test(r.msg))) {
+    r = await api(admin, 'POST', '/inter-depots/acceptance/scan', { code: p.trackingNumber, type: 'LIVRAISON', depositId: HUB.id });
+  }
   if (r.status !== 200 && r.status !== 201) throw new Error(`scan-accept → ${show(r)}`);
 }
 const colis = async (id) => (await api(admin, 'GET', `/colis/${id}`)).data;

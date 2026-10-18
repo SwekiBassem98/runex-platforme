@@ -41,6 +41,20 @@ dans deux bordereaux.
 | GET | `/inter-depots/acceptance?type=` | colis attendus, compteurs |
 | POST | `/inter-depots/acceptance/scan` | `{code, type}` — une pièce |
 
+## Acceptation selon la zone de l'expéditeur
+La zone du hub est **Tunis et Ben Arous** (variable `HUB_ZONE_GOVERNORATES`
+de l'API, par défaut `Tunis,Ben Arous`).
+
+| Écran | Reçoit |
+|---|---|
+| Dépôt › Acceptation Magasin | les colis des expéditeurs **de Tunis et Ben Arous**, déposés directement au hub. Un colis d'un autre gouvernorat est refusé (`WRONG_CHANNEL`, 409) avec un lien vers l'acceptation inter dépôt. Les retours (`RETOUR_DEPOT`) restent acceptés. |
+| Inter dépôt livraison › Acceptation | les colis des expéditeurs **hors zone** (Sousse, Sfax…), arrivés de leur agence, avec ou sans bordereau. Sans bordereau, le colis (créé, ramassé…) passe « reçu au dépôt » (journal `INTERDEPOT_ACCEPTATION_DIRECTE`). Un colis d'un expéditeur de la zone est renvoyé vers l'Acceptation Magasin. |
+| Inter dépôt retours › Acceptation | les retours de **toutes les agences**, avec ou sans bordereau. Sans bordereau : colis en retour dans une autre agence, reporté ou en échec, hors tournée → « retour au dépôt » (journal `INTERDEPOT_RETOUR_DIRECT`). |
+| Inter dépôt retours › Ajouter | *agence source* : uniquement les agences **hors zone**. Les retours des expéditeurs de Tunis et Ben Arous se rendent par « Retours expéditeur » ; l'API refuse un bordereau de retours vers une agence de la zone. |
+
+Les acceptations sans bordereau des dernières 24 h apparaissent dans la liste
+« acceptés » avec la mention *sans bordereau*.
+
 ## Étiquettes de pièces
 La fiche colis imprimée ajoute une étiquette par pièce (colis de 2 pièces et
 plus) avec son code-barres `<code colis>-<n°>`. Un colis d'une seule pièce
@@ -56,4 +70,5 @@ du même expéditeur est refusé.
 
 ## Tests
 `npm run qa:interdepot` (API, 84 contrôles), `node qa/qa-interdepot-ui-26.mjs`
-(navigateur, 37 contrôles).
+(navigateur, 37 contrôles), `node qa/qa-acceptation-zones-36.mjs` (API, 23
+contrôles), `node qa/qa-acceptation-zones-ecran-36.mjs` (navigateur, 12 contrôles).

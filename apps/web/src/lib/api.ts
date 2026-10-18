@@ -398,7 +398,9 @@ export interface InterDepotStats {
 }
 
 export interface InterDepotFormOptions {
-  deposits: { id: string; name: string; code: string; isMainHub: boolean; governorate: string }[];
+  /** Gouvernorats de la zone du hub (Tunis, Ben Arous par défaut). */
+  zoneHub?: string[];
+  deposits: { id: string; name: string; code: string; isMainHub: boolean; governorate: string; inZoneHub?: boolean }[];
   drivers: {
     id: string;
     driverCode: string;
@@ -658,6 +660,8 @@ export type ReceptionOutcome =
   | 'UNKNOWN_CODE'
   | 'MALFORMED_CODE'
   | 'INVALID_DEPOSIT'
+  /** Expéditeur hors Tunis / Ben Arous : à accepter en inter-dépôt. */
+  | 'WRONG_CHANNEL'
   | 'INVALID_STATE';
 
 export interface ReceptionPreview {

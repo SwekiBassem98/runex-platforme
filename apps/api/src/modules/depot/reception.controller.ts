@@ -38,6 +38,7 @@ function httpStatus(outcome: string): number {
       return 404;
     case 'ALREADY_RECEIVED':
     case 'INVALID_STATE':
+    case 'WRONG_CHANNEL':
       return 409;
     case 'INVALID_DEPOSIT':
       return 400;
