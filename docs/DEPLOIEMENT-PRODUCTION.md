@@ -266,6 +266,13 @@ part que d'une agence hors Tunis / Ben Arous. Aucune migration. Variable
 facultative de l'API : `HUB_ZONE_GOVERNORATES` (défaut `Tunis,Ben Arous`).
 Détails : `docs/INTER-DEPOTS.md`.
 
+Tableau de bord de l'administration (19/10) : nouvel écran « Poste de
+commandement » — activité du jour, à traiter maintenant, indicateurs avec
+tendance sur 7 / 14 / 30 / 90 jours, parcours des colis, courbe jour par jour,
+flotte, classements livreurs et expéditeurs, stock des agences, argent en
+circulation. Données : `GET /dashboard?days=` (champ `vue`, les champs
+existants sont inchangés). Aucune migration. Test : `qa/qa-tableau-admin-37.mjs`.
+
 ## 7. Liste de contrôle finale
 
 - [ ] `/api/v1/health` : ok, base `up`
