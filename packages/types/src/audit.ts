@@ -240,6 +240,8 @@ export const AUDIT_ACTIONS: Readonly<Record<string, AuditActionDefinition>> = {
   TRANSFERT_ENTETE: { label: 'Transfert modifié', category: 'TRANSFERT' },
   INTERDEPOT_CHARGEMENT: { label: 'Colis chargé dans un inter-dépôt', category: 'TRANSFERT' },
   INTERDEPOT_ACCEPTATION: { label: "Colis accepté à l'arrivée d'un inter-dépôt", category: 'TRANSFERT', critical: true },
+  INTERDEPOT_ACCEPTATION_DIRECTE: { label: "Colis d'une agence accepté au hub (sans bordereau)", category: 'TRANSFERT', critical: true },
+  INTERDEPOT_RETOUR_DIRECT: { label: 'Retour accepté au dépôt (sans bordereau)', category: 'TRANSFERT', critical: true },
   INTERDEPOT_RETRAIT: { label: "Colis retiré d'un inter-dépôt", category: 'TRANSFERT' },
   INTERDEPOT_ANNULATION: { label: 'Inter-dépôt annulé', category: 'TRANSFERT', critical: true },
   TRANSFERT_RECU: {

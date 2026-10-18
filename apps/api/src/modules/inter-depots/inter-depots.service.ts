@@ -42,7 +42,7 @@ import {
 import { notFound, badRequest, conflict, asUuid, ApiError } from '../../common/errors/api-error';
 import { packageWorkflowService } from '../colis/package-workflow.service';
 import { nextTransferNumber, tunisDayStamp } from '../../common/database/numbering';
-import { mainHubId } from '../../common/routing/deposit-routing';
+import { GOUVERNORATS_ZONE_HUB, LIBELLE_ZONE_HUB, estZoneHub, mainHubId } from '../../common/routing/deposit-routing';
 
 /* ------------------------------------------------------------------ */
 /* Types publics                                                      */
@@ -286,6 +286,8 @@ async function findPackageByCode(client: Prisma.TransactionClient | ReturnType<t
     interDepotTransferId: true,
     destinationDeposit: { select: { name: true } },
     originDeposit: { select: { name: true } },
+    currentDeposit: { select: { name: true } },
+    shipper: { select: { companyName: true, brandName: true, governorate: true } },
   } as const;
   // Le code complet d'abord (un numéro de suivi peut lui-même contenir un tiret).
   const exact = await client.package.findFirst({
@@ -418,7 +420,12 @@ export class InterDepotsService {
       }),
     ]);
     return {
-      deposits: deposits.filter((d) => d.status !== 'FERME'),
+      // Zone du hub : expéditeurs reçus en « Acceptation Magasin », retours
+      // rendus par « Retours expéditeur » (pas d'inter-dépôt retours).
+      zoneHub: GOUVERNORATS_ZONE_HUB,
+      deposits: deposits
+        .filter((d) => d.status !== 'FERME')
+        .map((d) => ({ ...d, inZoneHub: d.isMainHub || estZoneHub(d.governorate) })),
       drivers: drivers.map((d) => ({
         id: d.id,
         driverCode: d.driverCode,
@@ -534,6 +541,48 @@ export class InterDepotsService {
       transferNumber: i.transfer.transferNumber,
       lastScanAt: i.pieces.length ? i.pieces[i.pieces.length - 1]!.scannedAt.toISOString() : null,
     }));
+    // Acceptations sans bordereau des dernières 24 h, dans ce dépôt.
+    const directes = await this.prisma.auditLog.findMany({
+      where: {
+        action: type === InterDepotType.RETOUR ? 'INTERDEPOT_RETOUR_DIRECT' : 'INTERDEPOT_ACCEPTATION_DIRECTE',
+        entityType: 'PACKAGE',
+        timestamp: { gte: since },
+      },
+      select: { entityId: true, timestamp: true },
+      orderBy: { timestamp: 'desc' },
+      take: 200,
+    });
+    if (directes.length) {
+      const colis = await this.prisma.package.findMany({
+        where: { id: { in: [...new Set(directes.map((d) => d.entityId))] }, currentDepositId: depositId },
+        select: {
+          id: true,
+          trackingNumber: true,
+          barcode: true,
+          pieceCount: true,
+          sizeCategory: true,
+          shipper: { select: { companyName: true, brandName: true } },
+        },
+      });
+      const parId = new Map(colis.map((c) => [c.id, c]));
+      const vus = new Set<string>();
+      for (const d of directes) {
+        const c = parId.get(d.entityId);
+        if (!c || vus.has(c.id)) continue;
+        vus.add(c.id);
+        accepted.push({
+          trackingNumber: c.trackingNumber,
+          barcode: c.barcode,
+          shipperName: c.shipper.brandName || c.shipper.companyName,
+          pieceCount: c.pieceCount,
+          receivedPieces: c.pieceCount,
+          sizeCategory: c.sizeCategory,
+          state: 'RECU',
+          transferNumber: '',
+          lastScanAt: d.timestamp.toISOString(),
+        });
+      }
+    }
     accepted.sort((a, b) => String(b.lastScanAt).localeCompare(String(a.lastScanAt)));
     return {
       depositId,
@@ -600,6 +649,14 @@ export class InterDepotsService {
     if (!source || !destination) throw notFound('Agence introuvable.');
     if (!source.isActive || source.status === 'FERME') throw conflict(`Le dépôt ${source.name} est fermé.`);
     if (!destination.isActive || destination.status === 'FERME') throw conflict(`L'agence ${destination.name} est fermée.`);
+    // Retours : seulement vers les agences hors zone du hub (Sousse, Sfax…). Les
+    // retours des expéditeurs de Tunis et Ben Arous leur sont rendus au hub par
+    // un bon de retour (« Retours expéditeur »).
+    if (type === InterDepotType.RETOUR && (destination.isMainHub || estZoneHub(destination.governorate))) {
+      throw badRequest(
+        `${destination.name} est dans la zone du hub (${LIBELLE_ZONE_HUB}) : ses retours sont rendus aux expéditeurs par « Retours expéditeur », sans inter-dépôt.`
+      );
+    }
 
     const driverId = asUuid(payload.transporterDriverId ?? '');
     if (!driverId) throw badRequest('Choisissez le livreur qui transporte le bordereau.');
@@ -852,7 +909,9 @@ export class InterDepotsService {
       include: { transfer: { include: { destinationDeposit: { select: { name: true } }, sourceDeposit: { select: { name: true } } } } },
     });
     if (!item) {
-      throw conflict(`Le colis ${pkg.trackingNumber} n'est attendu dans aucun inter-dépôt en cours.`);
+      // Pas de bordereau : acceptation directe (colis d'un expéditeur hors zone
+      // du hub arrivé de son agence, ou retour venu de n'importe quelle zone).
+      return this.acceptDirect(actor, depositId, type, pkg);
     }
     if (item.transfer.destinationDepositId !== depositId) {
       throw conflict(
@@ -982,6 +1041,103 @@ export class InterDepotsService {
       packageComplete: outcome.complete,
       transferNumber: item.transfer.transferNumber,
       transferStatus: outcome.status as InterDepotStatus,
+    };
+  }
+
+  /**
+   * Acceptation sans bordereau, colis entier (toutes ses pièces).
+   *
+   * - Livraison : colis d'un expéditeur **hors** zone du hub (Sousse, Sfax…)
+   *   pas encore entré dans le réseau — il arrive de son agence. Ceux de
+   *   Tunis et Ben Arous passent par « Acceptation Magasin ».
+   * - Retours : colis en retour venu de **n'importe quelle** zone (retour au
+   *   dépôt d'une autre agence, reporté ou échec hors tournée).
+   */
+  private async acceptDirect(
+    actor: InterDepotActor,
+    depositId: string,
+    type: InterDepotType,
+    pkg: NonNullable<Awaited<ReturnType<typeof findPackageByCode>>>['pkg']
+  ): Promise<AcceptanceResult> {
+    const depot = await this.prisma.deposit.findUnique({ where: { id: depositId }, select: { name: true } });
+    const nomDepot = depot?.name ?? 'votre dépôt';
+    const statut = pkg.status as string;
+    const libelle = PACKAGE_STATUS_LABELS[statut as PackageStatus] ?? statut;
+    const acteur = { id: actor.id, fullName: actor.fullName, role: RoleType.AGENT_DEPOT };
+    const provenance = pkg.currentDeposit?.name ?? pkg.originDeposit?.name ?? 'son agence';
+
+    if (type === InterDepotType.LIVRAISON) {
+      const AVANT_RESEAU = ['CREE', 'RAMASSAGE_PROGRAMME', 'RAMASSE'];
+      if (!AVANT_RESEAU.includes(statut)) {
+        throw conflict(
+          statut === 'RECU_DEPOT' || statut === 'RECU_DEPOT_DESTINATION'
+            ? `Le colis ${pkg.trackingNumber} est déjà reçu (${pkg.currentDeposit?.name ?? 'au dépôt'}).`
+            : `Le colis ${pkg.trackingNumber} est « ${libelle} » : il n'est attendu dans aucun inter-dépôt en cours.`
+        );
+      }
+      if (estZoneHub(pkg.shipper.governorate)) {
+        throw conflict(
+          `Le colis ${pkg.trackingNumber} vient d'un expéditeur de ${pkg.shipper.governorate} : acceptez-le dans « Acceptation Magasin ». ` +
+            `Ici, on accepte les colis des expéditeurs hors ${LIBELLE_ZONE_HUB} (Sousse, Sfax…).`
+        );
+      }
+      await packageWorkflowService.transition({
+        packageId: pkg.id,
+        to: PackageStatus.RECU_DEPOT,
+        actor: acteur,
+        title: `Reçu à ${nomDepot}`,
+        note: `Arrivé de ${pkg.originDeposit?.name ?? "l'agence de l'expéditeur"} (expéditeur de ${pkg.shipper.governorate}) — ${pkg.pieceCount} pièce(s)`,
+        location: nomDepot,
+        auditAction: 'INTERDEPOT_ACCEPTATION_DIRECTE',
+        reason: `Accepté au dépôt ${nomDepot} sans bordereau`,
+        data: {
+          currentDepositId: depositId,
+          receivedAt: new Date(),
+          receivedByUserId: actor.id ?? null,
+          receivedByName: actor.fullName,
+        },
+      });
+    } else {
+      const RETOURNABLES = ['RETOUR_DEPOT', 'REPORTE', 'ECHEC_LIVRAISON', 'LIVRAISON_PARTIELLE'];
+      if (!RETOURNABLES.includes(statut)) {
+        throw conflict(
+          `Le colis ${pkg.trackingNumber} est « ${libelle} » : ce n'est pas un retour. Seuls les colis en retour (ou non livrés) sont acceptés ici.`
+        );
+      }
+      if (statut === 'RETOUR_DEPOT' && pkg.currentDepositId === depositId) {
+        throw conflict(`Le colis ${pkg.trackingNumber} est déjà en retour à ${nomDepot}.`);
+      }
+      if (pkg.currentRunsheetId) {
+        throw conflict(
+          `Le colis ${pkg.trackingNumber} est encore dans une tournée : il revient au dépôt par la clôture de la tournée.`
+        );
+      }
+      await packageWorkflowService.transition({
+        packageId: pkg.id,
+        to: PackageStatus.RETOUR_DEPOT,
+        actor: acteur,
+        title: `Retour reçu à ${nomDepot}`,
+        note: `Retour venu de ${provenance} — ${pkg.pieceCount} pièce(s)`,
+        location: nomDepot,
+        auditAction: 'INTERDEPOT_RETOUR_DIRECT',
+        reason: `Retour accepté au dépôt ${nomDepot} sans bordereau (venu de ${provenance})`,
+        allowSameStatus: statut === 'RETOUR_DEPOT',
+        data: { currentDepositId: depositId, assignedDriverId: null, interDepotTransferId: null },
+      });
+    }
+
+    return {
+      message:
+        type === InterDepotType.LIVRAISON
+          ? `Colis ${pkg.trackingNumber} reçu à ${nomDepot} (${pkg.pieceCount}/${pkg.pieceCount}) — expéditeur de ${pkg.shipper.governorate}.`
+          : `Retour ${pkg.trackingNumber} reçu à ${nomDepot} (venu de ${provenance}).`,
+      trackingNumber: pkg.trackingNumber,
+      pieceNumber: pkg.pieceCount,
+      pieceCount: pkg.pieceCount,
+      receivedPieces: pkg.pieceCount,
+      packageComplete: true,
+      transferNumber: '',
+      transferStatus: 'RECU' as InterDepotStatus,
     };
   }
 

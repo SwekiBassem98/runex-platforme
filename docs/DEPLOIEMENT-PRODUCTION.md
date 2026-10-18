@@ -258,6 +258,14 @@ sur le bon de retour, état « en cours de livraison », articles d'échange
 rattachés au bon. La remise ne demande plus de code (le livreur fait signer le
 bon imprimé).
 
+Acceptation selon la zone (18/10) : l'**Acceptation Magasin** ne reçoit que les
+expéditeurs de Tunis et Ben Arous ; ceux des autres gouvernorats se reçoivent
+en « Inter dépôt livraison › Acceptation » (avec ou sans bordereau) ;
+l'acceptation des retours reçoit toutes les agences ; un inter dépôt retours ne
+part que d'une agence hors Tunis / Ben Arous. Aucune migration. Variable
+facultative de l'API : `HUB_ZONE_GOVERNORATES` (défaut `Tunis,Ben Arous`).
+Détails : `docs/INTER-DEPOTS.md`.
+
 ## 7. Liste de contrôle finale
 
 - [ ] `/api/v1/health` : ok, base `up`

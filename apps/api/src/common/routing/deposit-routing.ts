@@ -101,3 +101,32 @@ export async function resolveShipperDepositId(
 }
 
 export const sameText = (a: string | null | undefined, b: string | null | undefined) => norm(a) === norm(b);
+
+/**
+ * Zone du hub : gouvernorats dont les expéditeurs déposent (ou font ramasser)
+ * leurs colis directement au hub central — « Acceptation Magasin ». Les
+ * expéditeurs des autres gouvernorats passent par leur agence, et leurs colis
+ * arrivent au hub par inter-dépôt ; leurs retours repartent par inter-dépôt
+ * retours. Configurable : `HUB_ZONE_GOVERNORATES="Tunis,Ben Arous"`.
+ */
+const ZONE_HUB = (process.env.HUB_ZONE_GOVERNORATES ?? 'Tunis,Ben Arous')
+  .split(',')
+  .map((g) => sansAccents(norm(g)))
+  .filter(Boolean);
+
+/** Gouvernorats de la zone du hub, tels que saisis (pour les écrans). */
+export const GOUVERNORATS_ZONE_HUB = (process.env.HUB_ZONE_GOVERNORATES ?? 'Tunis,Ben Arous')
+  .split(',')
+  .map((g) => g.trim())
+  .filter(Boolean);
+
+export const LIBELLE_ZONE_HUB = (process.env.HUB_ZONE_GOVERNORATES ?? 'Tunis,Ben Arous')
+  .split(',')
+  .map((g) => g.trim())
+  .filter(Boolean)
+  .join(' et ');
+
+/** Vrai si le gouvernorat est dans la zone du hub (Tunis, Ben Arous par défaut). */
+export function estZoneHub(governorate: string | null | undefined): boolean {
+  return ZONE_HUB.includes(sansAccents(norm(governorate)));
+}

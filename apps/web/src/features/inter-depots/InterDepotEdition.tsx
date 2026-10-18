@@ -143,8 +143,14 @@ export function InterDepotEdition({ type: typeInitial, numero }: { type: InterDe
   const origine =
     transfert?.sourceDepositId ?? (estAgent ? options?.operatingDepositId : hub?.id ?? options?.operatingDepositId) ?? null;
   const origineNom = transfert?.sourceDeposit ?? options?.deposits.find((d) => d.id === origine)?.name ?? '';
-  // Agences proposées : toutes sauf celle du départ.
-  const agences = useMemo(() => (options?.deposits ?? []).filter((d) => d.id !== origine), [options, origine]);
+  // Agences proposées : toutes sauf celle du départ. Retours : seulement les
+  // agences hors zone du hub (Sousse, Sfax…) — les retours des expéditeurs de
+  // Tunis et Ben Arous sont rendus au hub par « Retours expéditeur ».
+  const agences = useMemo(
+    () => (options?.deposits ?? []).filter((d) => d.id !== origine && (!estRetour || !d.inZoneHub)),
+    [options, origine, estRetour]
+  );
+  const zoneHub = (options?.zoneHub ?? ['Tunis', 'Ben Arous']).join(' et ');
   const agenceNom = (transfert?.destinationDeposit ?? agences.find((a) => a.id === agence)?.name) || '';
 
   const choisirLivreur = (id: string) => {
@@ -338,6 +344,11 @@ export function InterDepotEdition({ type: typeInitial, numero }: { type: InterDe
                       <option key={a.id} value={a.id}>{a.name}</option>
                     ))}
                   </select>
+                  {estRetour && (
+                    <span className="block text-[11px] text-slate-500" data-testid="aide-agence-retour">
+                      Agences hors {zoneHub} (Sousse, Sfax…). Les retours des expéditeurs de {zoneHub} se rendent par « Retours expéditeur ».
+                    </span>
+                  )}
                 </label>
               )}
               <label className="text-xs text-slate-600 space-y-1">

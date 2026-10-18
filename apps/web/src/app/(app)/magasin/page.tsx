@@ -94,6 +94,11 @@ const ASPECT: Record<
     icon: XCircle,
     titre: 'Réception impossible',
   },
+  WRONG_CHANNEL: {
+    tone: 'border-orange-200 bg-orange-50 text-orange-900',
+    icon: AlertTriangle,
+    titre: 'Expéditeur hors Tunis / Ben Arous',
+  },
 };
 
 export default function MagasinPage() {
@@ -256,7 +261,12 @@ export default function MagasinPage() {
             Dépôt / Acceptation Magasin
           </h1>
           <p className="text-[11px] text-slate-600 mt-0.5">
-            Scannez un code-barres, ou saisissez le numéro du colis.
+            Scannez un code-barres, ou saisissez le numéro du colis. Colis des expéditeurs de Tunis et Ben Arous ; ceux des
+            autres gouvernorats s&apos;acceptent dans{' '}
+            <a href="/inter-depots/acceptation?type=LIVRAISON" className="font-semibold text-red-700 hover:underline">
+              Inter dépôt livraison › Acceptation
+            </a>
+            .
           </p>
         </div>
 
@@ -426,6 +436,16 @@ export default function MagasinPage() {
 
               {/* La réception qui a déjà eu lieu : qui, et quand. C'est ce qui
                   répond à l'opérateur qui se demande si son scan est passé. */}
+              {verdict.outcome === 'WRONG_CHANNEL' && (
+                <a
+                  href="/inter-depots/acceptation?type=LIVRAISON"
+                  data-testid="vers-acceptation-interdepot"
+                  className="mt-2 inline-flex items-center gap-1.5 rounded border border-orange-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-orange-900 hover:bg-orange-100"
+                >
+                  Ouvrir l&apos;acceptation inter dépôt →
+                </a>
+              )}
+
               {verdict.outcome === 'ALREADY_RECEIVED' && (
                 <p className="mt-2 flex items-center gap-1.5 text-[11px] font-semibold">
                   <Info className="w-3.5 h-3.5" />
