@@ -387,6 +387,11 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
     // `/colis?expediteur=<id>` : ouvert depuis la fiche d'un expéditeur.
     const expediteur = query.get('expediteur');
     if (expediteur) setShipperFilter(expediteur);
+    // `/colis?statut=<code>` et `/colis?livreur=<matricule>` : ouverts depuis le tableau de bord.
+    const statut = query.get('statut');
+    if (statut && statut in PACKAGE_STATUS_LABELS) setStatusFilter(statut);
+    const livreur = query.get('livreur');
+    if (livreur) setDriverFilter(livreur);
     void driversApi
       .list({ limit: 200 })
       .then((r) =>

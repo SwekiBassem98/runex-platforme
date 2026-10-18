@@ -546,6 +546,53 @@ export interface DashboardDto {
     driverActivity?: { name: string; livraisons: number; echecs: number }[];
     supplierActivity?: { name: string; colis: number; montantTND: number }[];
   };
+  /** Vue d'ensemble de l'écran d'administration (`?days=7|14|30|90`). */
+  vue?: AdminOverviewDto;
+}
+
+export type EtapeAdmin = 'preparation' | 'collecte' | 'depot' | 'transit' | 'livraison' | 'reporte' | 'retour';
+
+export interface AdminOverviewDto {
+  generatedAt: string;
+  periodDays: number;
+  today: { created: number; delivered: number; outForDelivery: number; pickups: number; pickupsDone: number };
+  period: {
+    created: number;
+    delivered: number;
+    failed: number;
+    successRate: number | null;
+    avgDeliveryHours: number | null;
+    collected: number;
+    fees: number;
+  };
+  previous: { created: number; delivered: number; failed: number; collected: number; successRate: number | null };
+  active: number;
+  pipeline: Record<EtapeAdmin, number>;
+  daily: { date: string; created: number; delivered: number; failed: number; collected: number }[];
+  topDrivers: {
+    id: string;
+    code: string;
+    name: string;
+    delivered: number;
+    failed: number;
+    successRate: number | null;
+    cash: number;
+    online: boolean;
+    onRun: boolean;
+  }[];
+  topShippers: { id: string; name: string; governorate: string; created: number; delivered: number; returned: number; amount: number }[];
+  agencies: {
+    id: string;
+    name: string;
+    governorate: string;
+    isMainHub: boolean;
+    inStock: number;
+    toAssign: number;
+    returns: number;
+    outForDelivery: number;
+    incoming: number;
+  }[];
+  money: { codInProgress: number; codInProgressCount: number; cashWithDrivers: number; driversWithCash: number };
 }
 
 export interface DemoUser {
@@ -1211,7 +1258,7 @@ export const interDepotsApi = {
 };
 
 export const dashboardApi = {
-  get: () => requestData<DashboardDto>('/dashboard'),
+  get: (days = 14) => requestData<DashboardDto>(`/dashboard?days=${days}`),
 };
 
 export const healthApi = {

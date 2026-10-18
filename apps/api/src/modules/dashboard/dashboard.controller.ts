@@ -3,6 +3,7 @@ import type { Response } from 'express';
 import type { AuthenticatedRequest } from '../../common/auth/auth.middleware';
 import { RoleType } from '@logixpress/types';
 import { getShipperDashboard } from './shipper-dashboard.service';
+import { getAdminOverview } from './admin-overview.service';
 import { respondError } from '../../common/errors/respond-error';
 
 export class DashboardController {
@@ -12,13 +13,20 @@ export class DashboardController {
     // n'a pas à partir vers un appareil de terrain.
     // Un agent dépôt (AGENT_DEPOT) ne doit jamais voir la plateforme entière :
     // son tableau de bord est filtré par son dépôt via `req.dataScope`.
+    //
+    // `vue` (période `?days=7|14|30|90`, 14 par défaut) alimente l'écran
+    // d'administration ; les autres champs restent ceux des clients existants.
     let data: unknown;
+    const days = Number.parseInt(String(req.query.days ?? '14'), 10);
     if (req.user?.role === RoleType.LIVREUR && req.user?.driverId) {
       data = await dashboardService.getDriverMetrics(req.user.driverId);
-    } else if (req.dataScope?.depositId) {
-      data = await dashboardService.getMetrics({ depositId: req.dataScope.depositId });
     } else {
-      data = await dashboardService.getMetrics();
+      const depositId = req.dataScope?.depositId;
+      const [metrics, vue] = await Promise.all([
+        dashboardService.getMetrics(depositId ? { depositId } : undefined),
+        getAdminOverview(days, depositId),
+      ]);
+      data = { ...metrics, vue };
     }
     res.json({
       success: true,
