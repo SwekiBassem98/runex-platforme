@@ -10,7 +10,9 @@
  *   - Recette (calculée automatiquement) et espèces remises par le livreur :
  *     le déficit se lit pendant la saisie ;
  *   - Colis non livrés : scan avec la bascule « Reporté / Retour définitif » ;
- *   - Liste des colis : recherche, filtres, montant payé corrigeable, écart ;
+ *   - à gauche, les colis livrés seulement (recherche, écarts, montant payé
+ *     corrigeable) ; à droite, les colis à scanner puis les reportés et
+ *     retours définitifs : un colis y passe dès qu'il est scanné ;
  *   - Valider : la tournée est clôturée, sort de la liste des tournées en
  *     cours et reste dans l'historique.
  */
@@ -60,7 +62,7 @@ const STATUTS: Record<string, { libelle: string; classe: string }> = {
   ANNULEE: { libelle: 'Annulée', classe: 'bg-slate-100 text-slate-500' },
 };
 
-type Filtre = 'TOUS' | EtatColisValidation | 'ECART';
+type Filtre = 'TOUS' | 'ECART';
 
 export function ValidationTournee({ id }: { id: string }) {
   const { addToast } = useToast();
@@ -190,14 +192,18 @@ export function ValidationTournee({ id }: { id: string }) {
   const deficitSaisi = vue.validable ? Math.max(0, Math.round((t.recetteEspece - (Number.isFinite(remisesNb) ? remisesNb : 0)) * 1000) / 1000) : t.deficit;
   const ecartReglement = Math.abs(t.ecart) > 0.0005;
   const terme = recherche.trim().toLowerCase();
-  const lignes = vue.colis.filter((c) => {
-    if (filtre === 'ECART' && !(c.etat === 'LIVRE' && Math.abs(c.ecart) > 0.0005)) return false;
-    if (filtre !== 'TOUS' && filtre !== 'ECART' && c.etat !== filtre) return false;
+  // À gauche : seulement les colis livrés. À droite : ceux à scanner, puis
+  // les reportés et retours définitifs (un colis y passe dès son scan).
+  const livres = vue.colis.filter((c) => c.etat === 'LIVRE');
+  const aScanner = vue.colis.filter((c) => c.etat === 'NON_TRAITE');
+  const nonLivres = vue.colis.filter((c) => c.etat === 'REPORTE' || c.etat === 'RETOUR' || c.etat === 'ANNULE');
+  const avecEcart = (c: (typeof livres)[number]) => Math.abs(c.ecart) > 0.0005;
+  const lignes = livres.filter((c) => {
+    if (filtre === 'ECART' && !avecEcart(c)) return false;
     if (!terme) return true;
-    return [c.trackingNumber, c.barcode, c.customerName, c.shipperName, ETATS[c.etat].libelle, c.price.toFixed(3)].some((x) => x.toLowerCase().includes(terme));
+    return [c.trackingNumber, c.barcode, c.customerName, c.shipperName, c.price.toFixed(3), c.paid.toFixed(3)].some((x) => x.toLowerCase().includes(terme));
   });
-  const nbFiltre = (f: Filtre) =>
-    f === 'TOUS' ? vue.colis.length : f === 'ECART' ? vue.colis.filter((c) => c.etat === 'LIVRE' && Math.abs(c.ecart) > 0.0005).length : vue.colis.filter((c) => c.etat === f).length;
+  const nbFiltre = (f: 'TOUS' | 'ECART') => (f === 'TOUS' ? livres.length : livres.filter(avecEcart).length);
 
   return (
     <div className="dash-anime p-4 sm:p-6 space-y-5" data-testid="validation-tournee">
@@ -269,6 +275,7 @@ export function ValidationTournee({ id }: { id: string }) {
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="space-y-4">
         {/* Clôture */}
         <section className={`${CARTE} p-4 sm:p-5 space-y-3`} aria-labelledby="titre-cloture">
           <h2 id="titre-cloture" className="text-sm font-bold text-slate-900 flex items-center gap-2">
@@ -314,18 +321,12 @@ export function ValidationTournee({ id }: { id: string }) {
                 ['Retours', t.retours, ETATS.RETOUR.point, 'RETOUR'],
                 ['Non traités', t.nonTraites, ETATS.NON_TRAITE.point, 'NON_TRAITE'],
               ] as const
-            ).map(([libelle, nb, couleur, f]) => (
-              <li key={libelle}>
-                <button
-                  type="button"
-                  onClick={() => setFiltre(f)}
-                  className={`w-full text-left rounded-xl border px-3 py-2 transition cursor-pointer ${filtre === f ? 'border-slate-900 bg-slate-50' : 'border-slate-200 hover:border-slate-300'}`}
-                >
-                  <span className="flex items-center gap-1.5 text-[11px] text-slate-500">
-                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: couleur }} /> {libelle}
-                  </span>
-                  <span className={`block text-xl font-extrabold tabular-nums ${f === 'NON_TRAITE' && nb > 0 ? 'text-slate-900' : 'text-slate-900'}`}>{nb}</span>
-                </button>
+            ).map(([libelle, nb, couleur]) => (
+              <li key={libelle} className="rounded-xl border border-slate-200 px-3 py-2">
+                <span className="flex items-center gap-1.5 text-[11px] text-slate-500">
+                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: couleur }} /> {libelle}
+                </span>
+                <span className="block text-xl font-extrabold tabular-nums text-slate-900">{nb}</span>
               </li>
             ))}
           </ul>
@@ -336,6 +337,131 @@ export function ValidationTournee({ id }: { id: string }) {
             })}
           </div>
         </section>
+
+          {/* Colis livrés (à gauche, comme ADEX) */}
+          <section className={`${CARTE} overflow-hidden`} aria-labelledby="titre-colis">
+            <div className="p-4 sm:p-5 border-b border-slate-100 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <h2 id="titre-colis" className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <Receipt className="w-4 h-4 text-red-600" aria-hidden="true" /> Colis livrés
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 text-[11px] font-bold">{t.livres}</span>
+                </h2>
+                <div className="relative w-full sm:w-60">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" aria-hidden="true" />
+                  <input
+                    type="search"
+                    value={recherche}
+                    onChange={(e) => setRecherche(e.target.value)}
+                    placeholder="Code, prix, client…"
+                    aria-label="Rechercher un colis livré"
+                    className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-sm focus:outline-none focus:bg-white focus:border-slate-400"
+                  />
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Filtrer les colis livrés">
+                {(['TOUS', 'ECART'] as const).map((f) => (
+                  <button
+                    key={f}
+                    type="button"
+                    role="radio"
+                    aria-checked={filtre === f}
+                    onClick={() => setFiltre(f)}
+                    className={`px-3 py-1 rounded-full text-xs font-semibold border transition cursor-pointer ${
+                      filtre === f ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400'
+                    }`}
+                  >
+                    {f === 'TOUS' ? 'Tous' : 'Avec écart'}
+                    <span className={`ml-1.5 tabular-nums ${filtre === f ? 'text-white/70' : 'text-slate-400'}`}>{nbFiltre(f)}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm min-w-[520px]" data-testid="table-colis-validation">
+                <thead>
+                  <tr className="bg-slate-50 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                    <th className="text-left px-4 py-2">Colis</th>
+                    <th className="text-center px-2 py-2">Pièces</th>
+                    <th className="text-right px-2 py-2">Prix</th>
+                    <th className="text-right px-4 py-2">Montant payé</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {lignes.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="text-center text-xs text-slate-400 py-8">
+                        {t.livres === 0 ? 'Aucun colis livré dans cette tournée.' : 'Aucun colis ne correspond.'}
+                      </td>
+                    </tr>
+                  ) : (
+                    lignes.map((c) => {
+                      const ecart = Math.abs(c.ecart) > 0.0005;
+                      return (
+                        <tr key={c.id} className="hover:bg-slate-50/70" data-testid={`ligne-${c.trackingNumber}`}>
+                          <td className="px-4 py-2.5">
+                            <span className="block font-mono text-xs font-bold text-red-700">{c.trackingNumber}</span>
+                            <span className="block text-[11px] text-slate-500 truncate max-w-[220px]">
+                              {c.customerName} · {c.shipperName}
+                            </span>
+                          </td>
+                          <td className="px-2 py-2.5 text-center text-xs text-slate-600">{c.pieceCount}</td>
+                          <td className="px-2 py-2.5 text-right font-mono text-xs text-slate-700">{dt(c.price)}</td>
+                          <td className="px-4 py-2.5 text-right">
+                            {edition?.id === c.id ? (
+                              <form
+                                onSubmit={(ev) => {
+                                  ev.preventDefault();
+                                  void enregistrerMontant();
+                                }}
+                                className="inline-flex items-center gap-1"
+                              >
+                                <input
+                                  autoFocus
+                                  inputMode="decimal"
+                                  value={edition.valeur}
+                                  onChange={(ev) => setEdition({ id: c.id, valeur: ev.target.value })}
+                                  className="w-24 px-2 py-1 rounded-md border border-slate-300 text-xs font-mono text-right"
+                                  aria-label={`Montant payé pour ${c.trackingNumber}`}
+                                  data-testid="champ-montant"
+                                />
+                                <button type="submit" className="px-2 py-1 rounded-md bg-slate-900 text-white text-[11px] font-semibold cursor-pointer">
+                                  OK
+                                </button>
+                                <button type="button" onClick={() => setEdition(null)} aria-label="Annuler" className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer">
+                                  <X className="w-3.5 h-3.5" aria-hidden="true" />
+                                </button>
+                              </form>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5 justify-end">
+                                {ecart && (
+                                  <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-red-700" title={`Écart de ${dt(c.ecart)}`}>
+                                    <AlertTriangle className="w-3 h-3" aria-hidden="true" /> écart {dt(c.ecart)}
+                                  </span>
+                                )}
+                                <span className={`font-mono text-xs font-bold px-2 py-0.5 rounded-full ${ecart ? 'bg-red-600 text-white' : 'bg-emerald-50 text-emerald-800'}`}>{dt(c.paid)}</span>
+                                {c.modifiable && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setEdition({ id: c.id, valeur: String(c.paid) })}
+                                    aria-label={`Corriger le montant de ${c.trackingNumber}`}
+                                    className="p-1 rounded text-slate-400 hover:text-slate-800 hover:bg-slate-100 cursor-pointer"
+                                    data-testid={`corriger-${c.trackingNumber}`}
+                                  >
+                                    <Pencil className="w-3.5 h-3.5" aria-hidden="true" />
+                                  </button>
+                                )}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
 
         {/* Recette + scan + validation */}
         <section className="space-y-4">
@@ -466,6 +592,66 @@ export function ValidationTournee({ id }: { id: string }) {
             </div>
           )}
 
+          {aScanner.length > 0 && (
+            <ListeLaterale
+              titre="Colis à scanner"
+              aide="Pas encore livrés ni traités : scannez-les en « Reporté » ou « Retour définitif »."
+              icone={Barcode}
+              ton="slate"
+              colis={aScanner}
+              testid="liste-a-scanner"
+              actions={
+                vue.validable
+                  ? (c) => (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => void scanner(c.barcode, 'REPORTE')}
+                          className="px-2 py-1 rounded-md bg-amber-100 text-amber-800 text-[10px] font-semibold hover:bg-amber-200 cursor-pointer"
+                          aria-label={`Reporter ${c.trackingNumber}`}
+                        >
+                          Reporter
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void scanner(c.barcode, 'RETOUR')}
+                          className="px-2 py-1 rounded-md bg-red-100 text-red-800 text-[10px] font-semibold hover:bg-red-200 cursor-pointer"
+                          aria-label={`Retour définitif ${c.trackingNumber}`}
+                        >
+                          Retour
+                        </button>
+                      </>
+                    )
+                  : undefined
+              }
+            />
+          )}
+
+          <ListeLaterale
+            titre="Colis reportés et retours définitifs"
+            aide={vue.validable ? 'Ils quitteront la tournée à la validation.' : 'Ils ont quitté la tournée à la validation.'}
+            icone={Undo2}
+            ton="amber"
+            colis={nonLivres}
+            vide="Aucun colis reporté ou retourné pour l’instant : scannez-les ci-dessus."
+            testid="liste-reportes"
+            actions={
+              vue.validable
+                ? (c) =>
+                    c.etat === 'REPORTE' ? (
+                      <button
+                        type="button"
+                        onClick={() => void scanner(c.barcode, 'RETOUR')}
+                        className="px-2 py-1 rounded-md bg-red-100 text-red-800 text-[10px] font-semibold hover:bg-red-200 cursor-pointer"
+                        aria-label={`Passer ${c.trackingNumber} en retour définitif`}
+                      >
+                        → Retour définitif
+                      </button>
+                    ) : null
+                : undefined
+            }
+          />
+
           {vue.validable && (
             <div>
               <button
@@ -487,157 +673,6 @@ export function ValidationTournee({ id }: { id: string }) {
         </section>
       </div>
 
-      {/* Liste des colis */}
-      <section className={`${CARTE} overflow-hidden`} aria-labelledby="titre-colis">
-        <div className="p-4 sm:p-5 border-b border-slate-100 space-y-3">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-            <h2 id="titre-colis" className="text-sm font-bold text-slate-900 flex items-center gap-2">
-              <Receipt className="w-4 h-4 text-red-600" aria-hidden="true" /> Colis de la tournée
-            </h2>
-            <div className="relative w-full md:w-72">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" aria-hidden="true" />
-              <input
-                type="search"
-                value={recherche}
-                onChange={(e) => setRecherche(e.target.value)}
-                placeholder="Code, état, prix, client…"
-                aria-label="Rechercher un colis"
-                className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-sm focus:outline-none focus:bg-white focus:border-slate-400"
-              />
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Filtrer par état">
-            {(['TOUS', 'LIVRE', 'REPORTE', 'RETOUR', 'NON_TRAITE', 'ECART'] as const).map((f) => (
-              <button
-                key={f}
-                type="button"
-                role="radio"
-                aria-checked={filtre === f}
-                onClick={() => setFiltre(f)}
-                className={`px-3 py-1 rounded-full text-xs font-semibold border transition cursor-pointer ${
-                  filtre === f ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400'
-                }`}
-              >
-                {f === 'TOUS' ? 'Tous' : f === 'ECART' ? 'Avec écart' : ETATS[f].libelle}
-                <span className={`ml-1.5 tabular-nums ${filtre === f ? 'text-white/70' : 'text-slate-400'}`}>{nbFiltre(f)}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[720px]" data-testid="table-colis-validation">
-            <thead>
-              <tr className="bg-slate-50 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                <th className="text-left px-4 py-2">Colis</th>
-                <th className="text-center px-2 py-2">Pièces</th>
-                <th className="text-left px-2 py-2">État</th>
-                <th className="text-right px-2 py-2">Prix</th>
-                <th className="text-right px-4 py-2">Montant payé</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {lignes.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="text-center text-xs text-slate-400 py-8">
-                    Aucun colis ne correspond.
-                  </td>
-                </tr>
-              ) : (
-                lignes.map((c) => {
-                  const e = ETATS[c.etat];
-                  const ecart = c.etat === 'LIVRE' && Math.abs(c.ecart) > 0.0005;
-                  return (
-                    <tr key={c.id} className="hover:bg-slate-50/70" data-testid={`ligne-${c.trackingNumber}`}>
-                      <td className="px-4 py-2.5">
-                        <span className="block font-mono text-xs font-bold text-red-700">{c.trackingNumber}</span>
-                        <span className="block text-[11px] text-slate-500 truncate max-w-[260px]">
-                          {c.customerName} · {c.shipperName}
-                        </span>
-                      </td>
-                      <td className="px-2 py-2.5 text-center text-xs text-slate-600">{c.pieceCount}</td>
-                      <td className="px-2 py-2.5">
-                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px] font-semibold ${e.classe}`}>{e.libelle}</span>
-                        {vue.validable && (c.etat === 'NON_TRAITE' || c.etat === 'REPORTE') && (
-                          <span className="ml-1.5 inline-flex gap-1">
-                            {c.etat === 'NON_TRAITE' && (
-                              <button
-                                type="button"
-                                onClick={() => void scanner(c.barcode, 'REPORTE')}
-                                className="px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 text-[10px] font-semibold hover:bg-amber-200 cursor-pointer"
-                                aria-label={`Reporter ${c.trackingNumber}`}
-                              >
-                                Reporter
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => void scanner(c.barcode, 'RETOUR')}
-                              className="px-1.5 py-0.5 rounded-md bg-red-100 text-red-800 text-[10px] font-semibold hover:bg-red-200 cursor-pointer"
-                              aria-label={`Retour définitif ${c.trackingNumber}`}
-                            >
-                              Retour
-                            </button>
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-2 py-2.5 text-right font-mono text-xs text-slate-700">{dt(c.price)}</td>
-                      <td className="px-4 py-2.5 text-right">
-                        {edition?.id === c.id ? (
-                          <form
-                            onSubmit={(ev) => {
-                              ev.preventDefault();
-                              void enregistrerMontant();
-                            }}
-                            className="inline-flex items-center gap-1"
-                          >
-                            <input
-                              autoFocus
-                              inputMode="decimal"
-                              value={edition.valeur}
-                              onChange={(ev) => setEdition({ id: c.id, valeur: ev.target.value })}
-                              className="w-24 px-2 py-1 rounded-md border border-slate-300 text-xs font-mono text-right"
-                              aria-label={`Montant payé pour ${c.trackingNumber}`}
-                              data-testid="champ-montant"
-                            />
-                            <button type="submit" className="px-2 py-1 rounded-md bg-slate-900 text-white text-[11px] font-semibold cursor-pointer">
-                              OK
-                            </button>
-                            <button type="button" onClick={() => setEdition(null)} aria-label="Annuler" className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer">
-                              <X className="w-3.5 h-3.5" aria-hidden="true" />
-                            </button>
-                          </form>
-                        ) : c.etat === 'LIVRE' ? (
-                          <span className="inline-flex items-center gap-1.5 justify-end">
-                            {ecart && (
-                              <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-red-700" title={`Écart de ${dt(c.ecart)}`}>
-                                <AlertTriangle className="w-3 h-3" aria-hidden="true" /> écart {dt(c.ecart)}
-                              </span>
-                            )}
-                            <span className={`font-mono text-xs font-bold px-2 py-0.5 rounded-full ${ecart ? 'bg-red-600 text-white' : 'bg-emerald-50 text-emerald-800'}`}>{dt(c.paid)}</span>
-                            {c.modifiable && (
-                              <button
-                                type="button"
-                                onClick={() => setEdition({ id: c.id, valeur: String(c.paid) })}
-                                aria-label={`Corriger le montant de ${c.trackingNumber}`}
-                                className="p-1 rounded text-slate-400 hover:text-slate-800 hover:bg-slate-100 cursor-pointer"
-                                data-testid={`corriger-${c.trackingNumber}`}
-                              >
-                                <Pencil className="w-3.5 h-3.5" aria-hidden="true" />
-                              </button>
-                            )}
-                          </span>
-                        ) : (
-                          <span className="text-[11px] text-slate-400">non encaissé</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
 
       <Modal
         isOpen={confirmer}
@@ -689,3 +724,65 @@ function Ligne({ libelle, valeur, alerte = false, icone: Icone }: { libelle: str
     </div>
   );
 }
+
+type ColisVue = Vue['colis'][number];
+
+/** Liste de droite : colis à scanner, ou reportés et retours définitifs. */
+function ListeLaterale({
+  titre,
+  aide,
+  icone: Icone,
+  ton,
+  colis,
+  vide,
+  actions,
+  testid,
+}: {
+  titre: string;
+  aide: string;
+  icone: LucideIcon;
+  ton: 'slate' | 'amber';
+  colis: ColisVue[];
+  vide?: string;
+  actions?: (c: ColisVue) => React.ReactNode;
+  testid: string;
+}) {
+  const fond = ton === 'amber' ? 'bg-amber-50/60 border-amber-200' : 'bg-white border-slate-200';
+  return (
+    <section className={`rounded-2xl border shadow-xs overflow-hidden ${fond}`} data-testid={testid} aria-label={titre}>
+      <div className="px-4 py-3 border-b border-black/5">
+        <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+          <Icone className={`w-4 h-4 ${ton === 'amber' ? 'text-amber-600' : 'text-slate-500'}`} aria-hidden="true" />
+          {titre}
+          <span className="px-2 py-0.5 rounded-full bg-white border border-slate-200 text-[11px] font-bold tabular-nums">{colis.length}</span>
+        </h2>
+        <p className="text-[11px] text-slate-500 mt-0.5">{aide}</p>
+      </div>
+      {colis.length === 0 ? (
+        <p className="px-4 py-5 text-xs text-slate-400 text-center">{vide ?? 'Aucun colis.'}</p>
+      ) : (
+        <ul className="divide-y divide-black/5 max-h-[420px] overflow-y-auto">
+          {colis.map((c) => {
+            const e = ETATS[c.etat];
+            return (
+              <li key={c.id} className="px-4 py-2.5 flex items-center gap-3 motion-safe:animate-dash-rise" data-testid={`lateral-${c.trackingNumber}`}>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-2">
+                    <span className="font-mono text-xs font-bold text-red-700">{c.trackingNumber}</span>
+                    <span className={`px-2 py-0.5 rounded-full border text-[10px] font-semibold ${e.classe}`}>{e.libelle}</span>
+                  </span>
+                  <span className="block text-[11px] text-slate-500 truncate">
+                    {c.customerName} · {c.shipperName} · {c.pieceCount} pièce{c.pieceCount > 1 ? 's' : ''}
+                  </span>
+                </span>
+                <span className="font-mono text-xs text-slate-700 shrink-0">{dt(c.price)}</span>
+                {actions && <span className="flex items-center gap-1 shrink-0">{actions(c)}</span>}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
+
