@@ -119,12 +119,19 @@ await Promise.all([p.waitForNavigation({ waitUntil: 'networkidle2' }).catch(() =
 await sleep(1200);
 ok(/\/validation$/.test(p.url()) && (await attendre(new RegExp(numero))), 'page de validation ouverte', p.url());
 ok(await attendre(/Clôture[\s\S]*Recette \(calculée automatiquement\)/), 'sections Clôture et Recette');
+const etatsGauche = await p.$$eval('[data-testid=table-colis-validation] tbody tr[data-testid]', (l) => l.map((n) => n.getAttribute('data-testid')));
+const vueGauche = (await api(admin, 'GET', `/runsheets/${(p.url().match(/runsheets\/([^/]+)\/validation/) ?? [])[1]}/validation`)).d;
+ok(vueGauche && etatsGauche.length === vueGauche.totaux.livres, 'tableau de gauche : uniquement les colis livrés', `${etatsGauche.length} / ${vueGauche?.totaux.livres}`);
 const vueUi = (await api(admin, 'GET', `/runsheets/${numero}/validation`)).d;
 if (vueUi.totaux.nonTraites > 0) {
   ok(await p.$eval('[data-testid=bouton-valider]', (n) => n.disabled), 'bouton Valider désactivé tant qu’il reste des non traités');
   const premier = vueUi.colis.find((c) => c.etat === 'NON_TRAITE');
   await p.type('[data-testid=scan-validation]', premier.barcode); await p.keyboard.press('Enter');
   ok(await attendre(new RegExp(`${premier.trackingNumber} : reporté`)), 'scan à l’écran : reporté');
+  await sleep(500);
+  ok(!!(await p.$(`[data-testid=liste-reportes] [data-testid="lateral-${premier.trackingNumber}"]`)), 'colis scanné : ajouté à la liste de droite (reportés / retours)');
+  ok(!(await p.$(`[data-testid=table-colis-validation] [data-testid="ligne-${premier.trackingNumber}"]`)), 'colis scanné : absent du tableau de gauche');
+  ok(!(await p.$(`[data-testid=liste-a-scanner] [data-testid="lateral-${premier.trackingNumber}"]`)), 'colis scanné : retiré des colis à scanner');
   if (vueUi.totaux.nonTraites > 1) {
     await p.click('[data-testid=traiter-tous]');
     await p.waitForFunction(() => !document.querySelector('[data-testid=traiter-tous]'), { timeout: 20000 }).catch(() => null);
