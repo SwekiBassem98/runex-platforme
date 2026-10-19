@@ -1317,6 +1317,9 @@ export interface ShipperDto {
   email: string;
   governorate: string;
   address: string;
+  /** Agence de rattachement : départ de ses colis, retour de ses retours. */
+  depositId: string | null;
+  depositName: string | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;

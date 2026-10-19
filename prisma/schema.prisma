@@ -502,6 +502,7 @@ model Deposit {
   outboundTransfers InterDepotTransfer[] @relation("SourceDeposit")
   returnRecords     ReturnRecord[]       @relation("ReturnDeposit")
   inboundTransfers  InterDepotTransfer[] @relation("DestinationDeposit")
+  homeShippers      Shipper[]            @relation("ShipperHomeDeposit")
 
   // Runsheets
   runsheets Runsheet[]
@@ -567,11 +568,15 @@ model Shipper {
   email          String    @db.VarChar(255)
   governorate    String    @db.VarChar(50)
   address        String    @db.VarChar(255)
+  /// Agence de rattachement : là où ses colis sont déposés ou ramassés, d'où
+  /// ils partent et où reviennent ses retours. Choisie à la création du dossier.
+  depositId      String?   @db.Uuid
   isActive       Boolean   @default(true)
   deletedAt      DateTime? @db.Timestamptz(6)
   createdAt      DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
 
+  deposit         Deposit?  @relation("ShipperHomeDeposit", fields: [depositId], references: [id], onDelete: SetNull)
   config          ShipperConfig?
   shipperUsers    ShipperUser[]
   packages        Package[]
@@ -582,6 +587,7 @@ model Shipper {
 
   @@index([companyName])
   @@index([phone])
+  @@index([depositId])
 }
 
 model ShipperConfig {

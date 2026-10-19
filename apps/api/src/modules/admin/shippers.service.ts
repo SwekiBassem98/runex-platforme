@@ -26,6 +26,7 @@ import { badRequest, conflict, notFound, asUuid } from '../../common/errors/api-
 import { usersService, type ActorRef, type RoleSchema } from './users.service';
 import crypto from 'node:crypto';
 import { SELECT_TARIF, lireTarifSaisi, tarifDto, type TarifDto } from '../../common/tarifs/tarif-expediteur';
+import { resolveShipperDepositId } from '../../common/routing/deposit-routing';
 
 /** Code de déblocage historique (non utilisé : la caisse lit le code du bordereau). */
 const codeDeblocageAleatoire = () => `non-defini:${crypto.randomBytes(16).toString('hex')}`;
@@ -41,6 +42,12 @@ export interface ShipperDto {
   email: string;
   governorate: string;
   address: string;
+  /**
+   * Agence de rattachement : là où ses colis sont déposés ou ramassés, d'où ils
+   * partent et où reviennent ses retours.
+   */
+  depositId: string | null;
+  depositName: string | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -77,6 +84,8 @@ const SHIPPER_SELECT = {
   email: true,
   governorate: true,
   address: true,
+  depositId: true,
+  deposit: { select: { name: true } },
   isActive: true,
   createdAt: true,
   updatedAt: true,
@@ -97,6 +106,8 @@ function toDto(s: ShipperRecord): ShipperDto {
     email: s.email,
     governorate: s.governorate,
     address: s.address,
+    depositId: s.depositId,
+    depositName: s.deposit?.name ?? null,
     isActive: s.isActive,
     createdAt: s.createdAt.toISOString(),
     updatedAt: s.updatedAt.toISOString(),
@@ -105,6 +116,15 @@ function toDto(s: ShipperRecord): ShipperDto {
 }
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+/** Vérifie que l'agence de rattachement existe et est active. */
+async function agenceValide(id: string): Promise<string> {
+  const uuid = asUuid(id);
+  if (!uuid) throw badRequest('Agence de rattachement invalide.');
+  const agence = await getPrisma().deposit.findFirst({ where: { id: uuid, isActive: true }, select: { id: true } });
+  if (!agence) throw badRequest('Agence de rattachement introuvable ou inactive.');
+  return agence.id;
+}
 
 export class ShippersService {
   async findAll(query: ShipperQuery): Promise<{ items: ShipperDto[]; total: number; page: number; limit: number }> {
@@ -200,6 +220,7 @@ export class ShippersService {
       email: string;
       governorate: string;
       address: string;
+      depositId?: string | null;
       isActive?: boolean;
       tarif?: unknown;
     },
@@ -223,6 +244,12 @@ export class ShippersService {
     const pris = await prisma.shipper.findUnique({ where: { code } });
     if (pris) throw conflict('Ce code expéditeur est déjà utilisé.');
 
+    // Agence de rattachement : choisie sur le formulaire, sinon celle qui
+    // dessert le gouvernorat de l'expéditeur.
+    const depositId = input.depositId
+      ? await agenceValide(input.depositId)
+      : await resolveShipperDepositId(prisma, input.governorate);
+
     const created = await prisma.shipper.create({
       data: {
         code,
@@ -234,6 +261,7 @@ export class ShippersService {
         email,
         governorate: input.governorate.trim(),
         address: input.address.trim(),
+        ...(depositId ? { deposit: { connect: { id: depositId } } } : {}),
         isActive: input.isActive !== false,
         config: {
           create: {
@@ -253,7 +281,13 @@ export class ShippersService {
       userIp: actor.ip ?? null,
       userAgent: actor.userAgent ?? null,
       reason: `Création de l'expéditeur ${created.companyName} (${created.code}).`,
-      newValues: { code: created.code, companyName: created.companyName, email, tarif: tarifDto(created.config) },
+      newValues: {
+        code: created.code,
+        companyName: created.companyName,
+        email,
+        agence: created.deposit?.name ?? null,
+        tarif: tarifDto(created.config),
+      },
     });
 
     return toDto(created);
@@ -270,6 +304,7 @@ export class ShippersService {
       email: string;
       governorate: string;
       address: string;
+      depositId: string | null;
       tarif: unknown;
     }>,
     actor: ActorRef
@@ -298,6 +333,14 @@ export class ShippersService {
       (data as Record<string, unknown>)[champ] = champ === 'email' ? v.toLowerCase() : v;
     }
 
+    let nouvelleAgence: string | null = null;
+    if (input.depositId !== undefined) {
+      if (!input.depositId) throw badRequest("L'agence de rattachement est obligatoire.");
+      nouvelleAgence = await agenceValide(input.depositId);
+      if (nouvelleAgence !== actuel.depositId) data.deposit = { connect: { id: nouvelleAgence } };
+      else nouvelleAgence = null;
+    }
+
     const tarif = lireTarifSaisi(input.tarif);
     if (Object.keys(tarif).length > 0) {
       data.config = {
@@ -313,6 +356,24 @@ export class ShippersService {
 
     const updated = await prisma.shipper.update({ where: { id: uuid }, data, select: SHIPPER_SELECT });
     const apres = toDto(updated);
+
+    // Changement d'agence : les colis pas encore reçus dans un dépôt partent
+    // désormais de la nouvelle agence ; ceux déjà en circulation y reviendront
+    // en cas de retour. Leur position réelle ne change pas.
+    if (nouvelleAgence) {
+      await prisma.package.updateMany({
+        where: { shipperId: uuid, deletedAt: null, status: { in: ['CREE', 'RAMASSAGE_PROGRAMME', 'RAMASSE'] } },
+        data: { originDepositId: nouvelleAgence, currentDepositId: nouvelleAgence },
+      });
+      await prisma.package.updateMany({
+        where: {
+          shipperId: uuid,
+          deletedAt: null,
+          status: { notIn: ['CREE', 'RAMASSAGE_PROGRAMME', 'RAMASSE', 'LIVRE', 'LIVRAISON_PARTIELLE', 'RETOURNE_EXPEDITEUR', 'ANNULE'] },
+        },
+        data: { originDepositId: nouvelleAgence },
+      });
+    }
 
     await auditService.record({
       entityType: 'SHIPPER',
@@ -449,6 +510,7 @@ export class ShippersService {
       email: string;
       governorate: string;
       address: string;
+      depositId?: string | null;
       isActive?: boolean;
       compte?: { fullName: string; email: string; phone: string; password: string; role?: RoleSchema };
       tarif?: unknown;

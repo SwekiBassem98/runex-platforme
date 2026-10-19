@@ -17,7 +17,7 @@
  */
 
 import { SELECT_TARIF, arrondi3, fraisPourTaille, tarifDepuisConfig } from '../../common/tarifs/tarif-expediteur';
-import { resolveDestinationDepositId, resolveShipperDepositId } from '../../common/routing/deposit-routing';
+import { agenceRattachementExpediteur, resolveDestinationDepositId } from '../../common/routing/deposit-routing';
 import { packageCodeWhere } from '../../common/scan/package-code';
 import { Prisma, PackageStatus as PrismaPackageStatus } from '@prisma/client';
 import {
@@ -836,12 +836,12 @@ export class ColisService {
         where: { id: addressId },
         select: { governorate: true, delegation: true },
       });
-      // Agence de départ : celle indiquée à la saisie, sinon l'agence qui
-      // dessert l'adresse de l'expéditeur. Le bon de livraison l'imprime telle
-      // quelle (départ => agence de sortie => gouvernorat/délégation).
+      // Agence de départ : celle indiquée à la saisie (exploitation), sinon
+      // l'agence de rattachement de l'expéditeur, choisie sur son dossier. Le
+      // colis y est attendu : c'est son « dépôt actuel » jusqu'à la réception.
       const originId =
         (await agenceDeSortieChoisie(tx, payload.originDepositId, 'de départ')) ??
-        (await resolveShipperDepositId(tx, shipper.governorate)) ??
+        (await agenceRattachementExpediteur(tx, shipper)) ??
         deposit.id;
       // Agence de sortie (celle qui livre) : choisie à la saisie, sinon déduite
       // de l'adresse.
