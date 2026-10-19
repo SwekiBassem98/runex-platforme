@@ -24,7 +24,15 @@ export default function NouveauBonRetourPage() {
   useEffect(() => {
     shippersApi
       .list({ limit: 200 })
-      .then((r) => setExpediteurs(r.items.filter((s) => s.isActive).map((s) => ({ id: s.id, nom: s.companyName, tel: s.phone }))))
+      // Retours expéditeur : expéditeurs de la zone du hub (Tunis, Ben Arous)
+      // seulement ; les autres récupèrent leurs retours dans leur agence.
+      .then((r) =>
+        setExpediteurs(
+          r.items
+            .filter((s) => s.isActive && s.zoneHub !== false)
+            .map((s) => ({ id: s.id, nom: s.companyName, tel: s.phone }))
+        )
+      )
       .catch(() => undefined);
     retoursExpediteurApi
       .aRendre()
@@ -60,7 +68,7 @@ export default function NouveauBonRetourPage() {
     <div className="space-y-6">
       <PageHeader
         title="Ajouter un bon de retour"
-        description="Choisissez l'expéditeur à qui rendre ses colis. Vous ajouterez ensuite le livreur et les colis."
+        description="Choisissez l'expéditeur à qui rendre ses colis (expéditeurs de Tunis et Ben Arous). Vous ajouterez ensuite le livreur et les colis."
         breadcrumbs={[{ label: 'Retours expéditeur', href: '/retours-expediteur' }, { label: 'Nouveau bon', active: true }]}
       />
       <div className="px-6 max-w-2xl">

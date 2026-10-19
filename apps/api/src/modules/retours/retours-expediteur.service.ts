@@ -17,6 +17,9 @@
  * 6. Remise : comme pour le paiement d'un bordereau, l'exploitation saisit le
  *    code de remise du bon (6 chiffres). Seul l'expéditeur le voit, dans son
  *    espace « Retours » : il le donne quand il a reçu ses colis.
+ * 0. Réservé aux expéditeurs de la zone du hub (Tunis, Ben Arous) : les
+ *    retours des expéditeurs rattachés à une autre agence repartent vers leur
+ *    agence par « Inter dépôt retours et échanges ».
  * 7. Suppression (administrateur) : un bon en préparation, remis ou annulé
  *    peut être supprimé ; un bon en cours de livraison doit d'abord revenir
  *    au dépôt.
@@ -31,6 +34,7 @@ import { BusinessRuleError, asUuid } from '../../common/errors/api-error';
 import { codeASixChiffres, nextReturnSlipNumber, tunisDayStamp } from '../../common/database/numbering';
 import { packageCodeWhere } from '../../common/scan/package-code';
 import { periode } from '../../common/dates/periode';
+import { LIBELLE_ZONE_HUB, expediteurZoneHub, whereExpediteurZoneHub } from '../../common/routing/deposit-routing';
 import { packageWorkflowService } from '../colis/package-workflow.service';
 import { notificationDispatcher } from '../notifications/notification.dispatcher';
 
@@ -203,6 +207,15 @@ function versEchange(e: EchangeRow): ColisBon {
   };
 }
 
+/** Refus : expéditeur rattaché à une agence hors de la zone du hub. */
+function horsZone(s: { companyName: string; governorate: string | null; deposit: { name: string } | null }) {
+  return new BusinessRuleError(
+    `${s.companyName} est rattaché à ${s.deposit?.name ?? s.governorate ?? 'une autre agence'} : les retours expéditeur sont réservés aux expéditeurs de ${LIBELLE_ZONE_HUB}. ` +
+      'Ses retours repartent vers son agence par « Inter dépôt retours et échanges ».',
+    409
+  );
+}
+
 /** Comparaison à temps constant de deux codes. */
 function memeCode(a: string, b: string): boolean {
   const x = Buffer.from(a);
@@ -227,6 +240,8 @@ export class RetoursExpediteurService {
       status: 'RETOUR_DEPOT',
       returnSlipId: null,
       ...(shipperId ? { shipperId } : {}),
+      // Retours expéditeur : zone du hub seulement (Tunis, Ben Arous).
+      shipper: whereExpediteurZoneHub(),
       ...(acteur.role === RoleType.AGENT_DEPOT && acteur.depositId ? { currentDepositId: acteur.depositId } : {}),
     };
   }
@@ -236,7 +251,7 @@ export class RetoursExpediteurService {
     return {
       returnSlipId: null,
       returnedToShipperAt: null,
-      package: { deletedAt: null, status: 'LIVRE', ...(shipperId ? { shipperId } : {}) },
+      package: { deletedAt: null, status: 'LIVRE', ...(shipperId ? { shipperId } : {}), shipper: whereExpediteurZoneHub() },
     };
   }
 
@@ -294,8 +309,12 @@ export class RetoursExpediteurService {
     if (!shipperId) throw new BusinessRuleError('Choisissez un expéditeur.', 400);
     const prisma = getPrisma();
     const bon = await prisma.$transaction(async (tx) => {
-      const shipper = await tx.shipper.findUnique({ where: { id: shipperId }, select: { companyName: true } });
+      const shipper = await tx.shipper.findUnique({
+        where: { id: shipperId },
+        select: { companyName: true, governorate: true, deposit: { select: { name: true, isMainHub: true, governorate: true } } },
+      });
       if (!shipper) throw new BusinessRuleError('Expéditeur introuvable.', 404);
+      if (!expediteurZoneHub(shipper)) throw horsZone(shipper);
       const slipNumber = await nextReturnSlipNumber(tx, tunisDayStamp());
       const cree = await tx.returnSlip.create({
         data: {
@@ -382,6 +401,14 @@ export class RetoursExpediteurService {
     const retirer = payload.mode === 'retirer';
     const bon = await this.bonModifiable(id);
     const prisma = getPrisma();
+    if (!retirer) {
+      // Bon ouvert avant la règle pour un expéditeur hors zone : plus d'ajout.
+      const exp = await prisma.shipper.findUnique({
+        where: { id: bon.shipperId },
+        select: { companyName: true, governorate: true, deposit: { select: { name: true, isMainHub: true, governorate: true } } },
+      });
+      if (exp && !expediteurZoneHub(exp)) throw horsZone(exp);
+    }
 
     const message = await prisma.$transaction(async (tx) => {
       const pkg = await tx.package.findFirst({

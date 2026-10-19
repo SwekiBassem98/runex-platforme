@@ -173,3 +173,19 @@ export function expediteurZoneHub(shipper: {
   if (shipper.deposit) return shipper.deposit.isMainHub || estZoneHub(shipper.deposit.governorate);
   return estZoneHub(shipper.governorate);
 }
+
+/**
+ * Filtre Prisma équivalent à `expediteurZoneHub` : expéditeurs rattachés au hub
+ * central ou à une agence de la zone du hub, ou — sans agence enregistrée —
+ * dont le gouvernorat est dans la zone.
+ */
+export function whereExpediteurZoneHub(): Prisma.ShipperWhereInput {
+  const gouvernorats = GOUVERNORATS_ZONE_HUB.map((g) => ({ governorate: { equals: g, mode: 'insensitive' as const } }));
+  return {
+    OR: [
+      { deposit: { isMainHub: true } },
+      { deposit: { OR: gouvernorats } },
+      { depositId: null, OR: gouvernorats },
+    ],
+  };
+}
