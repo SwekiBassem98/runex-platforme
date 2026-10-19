@@ -1451,6 +1451,8 @@ export interface ValidationTournee {
     method: string | null;
     paymentStatus: string | null;
     modifiable: boolean;
+    /** Colis d'échange (article à reprendre chez le client). */
+    echange?: boolean;
   }[];
 }
 
@@ -1461,6 +1463,44 @@ export interface CompteursTournees {
   annulees: number;
   total: number;
 }
+
+/** Impression de la tournée (`GET /runsheets/:id/impression`). */
+export interface ImpressionTournee {
+  runsheetNumber: string;
+  createdAt: string;
+  tourDate: string;
+  agence: string;
+  voiture: string | null;
+  livreur: string;
+  matriculeFiscal: string | null;
+  totalColis: number;
+  totalPieces: number;
+  total: number;
+  colis: {
+    numero: number;
+    trackingNumber: string;
+    expediteur: string;
+    contenu: string;
+    montant: number;
+    pieces: number;
+    tentative: number;
+    client: string;
+    telephone: string;
+    adresse: string;
+    echange: boolean;
+  }[];
+  echanges: {
+    trackingNumber: string;
+    codeProduit: string;
+    description: string;
+    expediteur: { nom: string; adresse: string; telephone: string; matriculeFiscal: string | null };
+    destinataire: { nom: string; adresse: string; telephone: string };
+  }[];
+}
+
+export const impressionTourneeApi = {
+  lire: (id: string) => requestData<ImpressionTournee>(`/runsheets/${encodeURIComponent(id)}/impression`),
+};
 
 export const validationTourneeApi = {
   lire: (id: string) => requestData<ValidationTournee>(`/runsheets/${encodeURIComponent(id)}/validation`),
