@@ -58,7 +58,7 @@ export default function RetoursExpediteurPage() {
   useEffect(() => {
     shippersApi
       .list({ limit: 200 })
-      .then((r) => setExpediteurs(r.items.map((s) => ({ id: s.id, nom: s.companyName }))))
+      .then((r) => setExpediteurs(r.items.filter((s) => s.zoneHub !== false).map((s) => ({ id: s.id, nom: s.companyName }))))
       .catch(() => undefined);
     driversApi
       .list({ limit: 200 })
@@ -147,7 +147,7 @@ export default function RetoursExpediteurPage() {
     <div className="space-y-6">
       <PageHeader
         title="Retours expéditeur"
-        description="Rendez à chaque expéditeur ses colis retournés : un bon par expéditeur, porté par un livreur."
+        description="Rendez à chaque expéditeur de Tunis et Ben Arous ses colis retournés : un bon par expéditeur, porté par un livreur. Les retours des autres agences partent par « Inter dépôt retours et échanges »."
         breadcrumbs={[{ label: 'Retours' }, { label: 'Bons de retour', active: true }]}
         actions={
           <Link

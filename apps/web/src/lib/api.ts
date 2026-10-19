@@ -1327,6 +1327,8 @@ export interface ShipperDto {
   /** Agence de rattachement : départ de ses colis, retour de ses retours. */
   depositId: string | null;
   depositName: string | null;
+  /** Zone du hub (Tunis, Ben Arous) : seuls ces expéditeurs ont des bons de retour. */
+  zoneHub?: boolean;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;

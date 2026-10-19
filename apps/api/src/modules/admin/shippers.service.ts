@@ -26,7 +26,7 @@ import { badRequest, conflict, notFound, asUuid } from '../../common/errors/api-
 import { usersService, type ActorRef, type RoleSchema } from './users.service';
 import crypto from 'node:crypto';
 import { SELECT_TARIF, lireTarifSaisi, tarifDto, type TarifDto } from '../../common/tarifs/tarif-expediteur';
-import { resolveShipperDepositId } from '../../common/routing/deposit-routing';
+import { expediteurZoneHub, resolveShipperDepositId } from '../../common/routing/deposit-routing';
 
 /** Code de déblocage historique (non utilisé : la caisse lit le code du bordereau). */
 const codeDeblocageAleatoire = () => `non-defini:${crypto.randomBytes(16).toString('hex')}`;
@@ -48,6 +48,8 @@ export interface ShipperDto {
    */
   depositId: string | null;
   depositName: string | null;
+  /** Rattaché au hub (zone Tunis, Ben Arous) : retours rendus par bon de retour. */
+  zoneHub: boolean;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -85,7 +87,7 @@ const SHIPPER_SELECT = {
   governorate: true,
   address: true,
   depositId: true,
-  deposit: { select: { name: true } },
+  deposit: { select: { name: true, isMainHub: true, governorate: true } },
   isActive: true,
   createdAt: true,
   updatedAt: true,
@@ -108,6 +110,7 @@ function toDto(s: ShipperRecord): ShipperDto {
     address: s.address,
     depositId: s.depositId,
     depositName: s.deposit?.name ?? null,
+    zoneHub: expediteurZoneHub(s),
     isActive: s.isActive,
     createdAt: s.createdAt.toISOString(),
     updatedAt: s.updatedAt.toISOString(),
