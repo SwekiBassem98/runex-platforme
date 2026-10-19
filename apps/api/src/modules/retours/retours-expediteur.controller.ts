@@ -57,7 +57,13 @@ export class RetoursExpediteurController {
     res.json({ success: true, data: bon, message });
   }
 
-  /** `POST /retours-expediteur/bons/:id/etat` — `{ status, receiverName? }` */
+  /** `DELETE /retours-expediteur/bons/:id` — administrateur seulement. */
+  async supprimer(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const { slipNumber, message } = await retoursExpediteurService.supprimer(String(req.params.id), acteur(req));
+    res.json({ success: true, data: { slipNumber }, message });
+  }
+
+  /** `POST /retours-expediteur/bons/:id/etat` — `{ status, receiverName?, code? }` (code exigé pour « remis »). */
   async changerEtat(req: AuthenticatedRequest, res: Response): Promise<void> {
     const { bon, message } = await retoursExpediteurService.changerEtat(String(req.params.id), req.body ?? {}, acteur(req));
     res.json({ success: true, data: bon, message });

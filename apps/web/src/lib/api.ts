@@ -1142,6 +1142,8 @@ export interface BonRetour {
   handedOverBy: string | null;
   receiverName: string | null;
   notes: string | null;
+  /** Code de remise : renvoyé à l'expéditeur seulement (bon ouvert). */
+  handoverCode?: string;
 }
 
 export interface BonRetourDetail extends BonRetour {
@@ -1172,8 +1174,11 @@ export const retoursExpediteurApi = {
     request<BonRetourDetail>(`/retours-expediteur/bons/${encodeURIComponent(id)}`, { method: 'PATCH', body: payload }),
   scanner: (id: string, payload: { code: string; mode: 'ajouter' | 'retirer' }) =>
     request<BonRetourDetail>(`/retours-expediteur/bons/${encodeURIComponent(id)}/scan`, { method: 'POST', body: payload }),
-  changerEtat: (id: string, payload: { status: EtatBonRetour; receiverName?: string }) =>
+  /** `code` : code de remise donné par l'expéditeur, exigé pour « remis ». */
+  changerEtat: (id: string, payload: { status: EtatBonRetour; receiverName?: string; code?: string }) =>
     request<BonRetourDetail>(`/retours-expediteur/bons/${encodeURIComponent(id)}/etat`, { method: 'POST', body: payload }),
+  supprimer: (id: string) =>
+    request<{ slipNumber: string }>(`/retours-expediteur/bons/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 };
 
 export interface CandidatsBordereau {
@@ -1254,6 +1259,8 @@ export const interDepotsApi = {
     request<InterDepotDto>(`/inter-depots/${encodeURIComponent(id)}/scan`, { method: 'POST', body: { code, mode } }),
   cancel: (id: string) =>
     request<InterDepotDto>(`/inter-depots/${encodeURIComponent(id)}/cancel`, { method: 'POST', body: {} }),
+  supprimer: (id: string) =>
+    request<{ transferNumber: string }>(`/inter-depots/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   acceptance: (type: InterDepotType, depositId?: string) =>
     requestData<AcceptanceBoard>('/inter-depots/acceptance', { query: { type, depositId } }),
   acceptScan: (code: string, type: InterDepotType, depositId?: string) =>

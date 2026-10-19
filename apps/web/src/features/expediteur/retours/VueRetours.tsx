@@ -80,6 +80,17 @@ function BonsDeRetour() {
               </p>
               <p className="text-[11px] text-slate-500">{t('retours.bons.colis', { n: b.colisCount })}</p>
             </div>
+            {b.handoverCode && (
+              <div
+                className="flex flex-wrap items-center gap-2 rounded-md bg-emerald-50 border border-emerald-200 px-3 py-1.5"
+                data-testid={`code-remise-${b.slipNumber}`}
+              >
+                <span className="text-[11px] text-emerald-900">{t('retours.bons.code')}</span>
+                <span className="font-mono text-base font-bold tracking-[0.3em] text-emerald-800" dir="ltr">
+                  {b.handoverCode}
+                </span>
+              </div>
+            )}
             <span
               className={`text-[11px] font-medium px-2 py-0.5 rounded-full border ${
                 b.status === 'REMIS'

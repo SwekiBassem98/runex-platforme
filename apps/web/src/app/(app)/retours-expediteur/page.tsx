@@ -24,6 +24,8 @@ import {
 import { imprimerBonRetour } from '@/lib/impression-documents';
 import { EtatBon, ETATS_BON } from '@/features/retours/EtatBon';
 import { ModalEtat } from '@/features/retours/ModalEtat';
+import { BoutonSupprimer, usePeutSupprimer } from '@/components/admin/SuppressionDefinitive';
+import { ConfirmerSuppression } from '@/components/admin/ConfirmerSuppression';
 
 interface Filtres {
   shipperId: string;
@@ -49,6 +51,9 @@ export default function RetoursExpediteurPage() {
   const [occupe, setOccupe] = useState<string | null>(null);
   const [changement, setChangement] = useState<{ bon: BonRetour; status: EtatBonRetour } | null>(null);
   const [receveur, setReceveur] = useState('');
+  const [codeRemise, setCodeRemise] = useState('');
+  const peutSupprimer = usePeutSupprimer();
+  const [aSupprimer, setASupprimer] = useState<BonRetour | null>(null);
 
   useEffect(() => {
     shippersApi
@@ -107,12 +112,28 @@ export default function RetoursExpediteurPage() {
       const r = await retoursExpediteurApi.changerEtat(changement.bon.id, {
         status: changement.status,
         receiverName: receveur.trim() || undefined,
+        ...(changement.status === 'REMIS' ? { code: codeRemise } : {}),
       });
       addToast({ type: 'success', title: r.message ?? 'État mis à jour' });
       setChangement(null);
       await charger();
     } catch (e) {
       addToast({ type: 'error', title: 'Changement refusé', message: e instanceof Error ? e.message : undefined });
+    } finally {
+      setOccupe(null);
+    }
+  };
+
+  const supprimer = async () => {
+    if (!aSupprimer) return;
+    setOccupe(`suppr-${aSupprimer.id}`);
+    try {
+      const r = await retoursExpediteurApi.supprimer(aSupprimer.id);
+      addToast({ type: 'success', title: r.message ?? `Bon ${aSupprimer.slipNumber} supprimé.` });
+      setASupprimer(null);
+      await charger();
+    } catch (e) {
+      addToast({ type: 'error', title: 'Suppression impossible', message: e instanceof Error ? e.message : undefined });
     } finally {
       setOccupe(null);
     }
@@ -325,6 +346,7 @@ export default function RetoursExpediteurPage() {
                             onChange={(e) => {
                               if (!e.target.value) return;
                               setReceveur('');
+                              setCodeRemise('');
                               setChangement({ bon: b, status: e.target.value as EtatBonRetour });
                             }}
                             className="max-w-[11rem] text-xs border border-slate-200 rounded-md px-2 py-1 bg-white"
@@ -359,6 +381,7 @@ export default function RetoursExpediteurPage() {
                           >
                             <Printer className="w-4 h-4" aria-hidden="true" />
                           </button>
+                          {peutSupprimer && <BoutonSupprimer nom={`le bon ${b.slipNumber}`} onClick={() => setASupprimer(b)} />}
                         </div>
                       </Td>
                     </Tr>
@@ -370,10 +393,33 @@ export default function RetoursExpediteurPage() {
         </Card>
       </div>
 
+      {aSupprimer && (
+        <ConfirmerSuppression
+          titre={`Supprimer le bon ${aSupprimer.slipNumber} ?`}
+          bloque={
+            aSupprimer.status === 'EN_COURS'
+              ? 'Ce bon est en cours de livraison : passez-le d’abord en « Revenu au dépôt (non remis) », puis supprimez-le.'
+              : null
+          }
+          consequences={
+            aSupprimer.status === 'PREPARE'
+              ? [`Le bon de ${aSupprimer.shipperName} disparaît de la liste.`, `Ses ${aSupprimer.colisCount} colis redeviennent « à rendre » et pourront entrer dans un autre bon.`]
+              : aSupprimer.status === 'REMIS'
+                ? [`Le bon de ${aSupprimer.shipperName} disparaît de la liste.`, 'Les colis restent « retournés à l’expéditeur » : leur historique est conservé.']
+                : [`Le bon annulé de ${aSupprimer.shipperName} disparaît de la liste.`]
+          }
+          enCours={occupe === `suppr-${aSupprimer.id}`}
+          onClose={() => setASupprimer(null)}
+          onConfirm={() => void supprimer()}
+        />
+      )}
+
       <ModalEtat
         changement={changement}
         receveur={receveur}
         setReceveur={setReceveur}
+        code={codeRemise}
+        setCode={setCodeRemise}
         occupe={!!occupe}
         onClose={() => setChangement(null)}
         onConfirm={() => void confirmerEtat()}

@@ -153,6 +153,19 @@ export const voucherSecretLimiter = rateLimit({
   message: 'Trop de codes secrets erronés pour ce bordereau (ou ce bon de retour). Réessayez dans 15 minutes.',
 });
 
+/** Code de remise d'un bon de retour : 5 codes erronés par quart d'heure, par utilisateur et par bon. */
+export const returnSlipCodeLimiter = rateLimit({
+  name: 'return-slip-code',
+  windowMs: 15 * MIN,
+  max: 5,
+  key: (req) => {
+    const user = (req as Request & { user?: { id?: string } }).user;
+    return user?.id ? `${user.id}|${String(req.params.id ?? '')}` : ip(req);
+  },
+  countOnly: (status) => status === 403,
+  message: 'Trop de codes de remise erronés pour ce bon de retour. Réessayez dans 15 minutes.',
+});
+
 /** En-têtes de sécurité de base pour une API JSON. */
 export function securityHeaders(req: Request, res: Response, next: NextFunction): void {
   res.setHeader('X-Content-Type-Options', 'nosniff');

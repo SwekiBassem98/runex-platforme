@@ -102,7 +102,9 @@ const bon = await api(admin, 'POST', '/retours-expediteur/bons', { shipperId: si
 const bonId = bon.data?.id;
 await api(admin, 'POST', `/retours-expediteur/bons/${bonId}/scan`, { code: (await api(admin, 'GET', `/colis/${cr.id}`)).data?.barcode, mode: 'ajouter' });
 await api(admin, 'POST', `/retours-expediteur/bons/${bonId}/etat`, { status: 'EN_COURS' });
-await api(admin, 'POST', `/retours-expediteur/bons/${bonId}/etat`, { status: 'REMIS', receiverName: 'Contact' });
+// Code de remise : donné par l'expéditeur (visible dans son espace).
+const codeRemise = ((await api(exp, 'GET', '/retours-expediteur/bons')).data ?? []).find((x) => x.id === bonId)?.handoverCode;
+await api(admin, 'POST', `/retours-expediteur/bons/${bonId}/etat`, { status: 'REMIS', receiverName: 'Contact', code: codeRemise });
 ok((await api(admin, 'GET', `/colis/${cr.id}`)).data?.status === 'RETOURNE_EXPEDITEUR', 'colis retourné à l’expéditeur');
 
 const encaisse = 58 + 68;

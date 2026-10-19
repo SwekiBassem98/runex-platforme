@@ -14,14 +14,21 @@
  *    (le livreur part avec les colis) → remis à l'expéditeur. Un bon parti
  *    peut revenir au dépôt (non remis) ; un bon en préparation peut être
  *    remis directement au guichet, ou annulé.
+ * 6. Remise : comme pour le paiement d'un bordereau, l'exploitation saisit le
+ *    code de remise du bon (6 chiffres). Seul l'expéditeur le voit, dans son
+ *    espace « Retours » : il le donne quand il a reçu ses colis.
+ * 7. Suppression (administrateur) : un bon en préparation, remis ou annulé
+ *    peut être supprimé ; un bon en cours de livraison doit d'abord revenir
+ *    au dépôt.
  */
 
+import crypto from 'node:crypto';
 import { Prisma, type ReturnSlipStatus } from '@prisma/client';
 import { NotificationEvent, PackageStatus, PACKAGE_STATUS_LABELS, RoleType } from '@logixpress/types';
 import { getPrisma } from '../../common/database/prisma-context';
 import { auditService } from '../../common/audit/audit.service';
 import { BusinessRuleError, asUuid } from '../../common/errors/api-error';
-import { nextReturnSlipNumber, tunisDayStamp } from '../../common/database/numbering';
+import { codeASixChiffres, nextReturnSlipNumber, tunisDayStamp } from '../../common/database/numbering';
 import { packageCodeWhere } from '../../common/scan/package-code';
 import { periode } from '../../common/dates/periode';
 import { packageWorkflowService } from '../colis/package-workflow.service';
@@ -90,6 +97,11 @@ export interface BonRetourLigne {
   handedOverBy: string | null;
   receiverName: string | null;
   notes: string | null;
+  /**
+   * Code de remise : présent pour l'expéditeur seulement, tant que le bon
+   * n'est ni remis ni annulé. Jamais renvoyé à l'exploitation.
+   */
+  handoverCode?: string;
 }
 
 export interface BonRetourDetail extends BonRetourLigne {
@@ -191,6 +203,13 @@ function versEchange(e: EchangeRow): ColisBon {
   };
 }
 
+/** Comparaison à temps constant de deux codes. */
+function memeCode(a: string, b: string): boolean {
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && crypto.timingSafeEqual(x, y);
+}
+
 const INCLUDE_LIGNE = {
   shipper: { select: { companyName: true, phone: true, address: true } },
   driver: { select: { id: true, licensePlate: true, user: { select: { fullName: true } } } },
@@ -263,7 +282,7 @@ export class RetoursExpediteurService {
       take: 500,
     });
     const noms = await this.noms(rows.flatMap((r) => [r.createdByUserId, r.handedOverById]));
-    return rows.map((r) => this.versLigne(r, noms));
+    return rows.map((r) => this.versLigne(r, noms, acteur));
   }
 
   /** Crée un bon (en préparation) pour un expéditeur. */
@@ -282,6 +301,7 @@ export class RetoursExpediteurService {
         data: {
           slipNumber,
           shipperId,
+          handoverCode: codeASixChiffres(),
           createdByUserId: acteur.id ?? null,
           notes: typeof payload.notes === 'string' ? payload.notes.slice(0, 255) || null : null,
         },
@@ -445,7 +465,7 @@ export class RetoursExpediteurService {
   /** Changement d'état du bon, avec ses effets sur les colis. */
   async changerEtat(
     id: string,
-    payload: { status?: unknown; receiverName?: unknown },
+    payload: { status?: unknown; receiverName?: unknown; code?: unknown },
     acteur: ActeurRetour
   ): Promise<{ bon: BonRetourDetail; message: string }> {
     const uuid = asUuid(id);
@@ -453,7 +473,17 @@ export class RetoursExpediteurService {
     const cible = String(payload.status ?? '') as ReturnSlipStatus;
     if (!(cible in ETATS_BON)) throw new BusinessRuleError('État inconnu.', 400);
     const receveur = typeof payload.receiverName === 'string' ? payload.receiverName.trim().slice(0, 150) : '';
+    const codeSaisi = typeof payload.code === 'string' || typeof payload.code === 'number' ? String(payload.code).replace(/\s+/g, '') : '';
     const prisma = getPrisma();
+
+    // Bon ancien sans code : on lui en attribue un, que l'expéditeur lit
+    // dans son espace, avant toute remise.
+    if (cible === 'REMIS') {
+      const actuel = await prisma.returnSlip.findUnique({ where: { id: uuid }, select: { handoverCode: true, status: true } });
+      if (actuel && !actuel.handoverCode && (actuel.status === 'PREPARE' || actuel.status === 'EN_COURS')) {
+        await prisma.returnSlip.update({ where: { id: uuid }, data: { handoverCode: codeASixChiffres() } });
+      }
+    }
 
     const { bon, depart } = await prisma.$transaction(
       async (tx) => {
@@ -494,6 +524,17 @@ export class RetoursExpediteurService {
           await tx.returnSlip.update({ where: { id: uuid }, data: { status: 'EN_COURS', departedAt: new Date() } });
         } else if (cible === 'REMIS') {
           if (!nb) throw new BusinessRuleError('Le bon est vide : rien à remettre.', 409);
+          // Double validation, comme le paiement : le code que l'expéditeur
+          // donne une fois ses colis reçus.
+          if (!codeSaisi) {
+            throw new BusinessRuleError(`Saisissez le code de remise donné par ${b.shipper.companyName}.`, 400);
+          }
+          if (!b.handoverCode || !memeCode(codeSaisi, b.handoverCode)) {
+            throw new BusinessRuleError(
+              `Code de remise incorrect. Demandez à ${b.shipper.companyName} le code du bon ${b.slipNumber} (visible dans son espace « Retours »).`,
+              403
+            );
+          }
           for (const p of b.packages) {
             await packageWorkflowService.transition({
               packageId: p.id,
@@ -515,7 +556,12 @@ export class RetoursExpediteurService {
           await tx.exchangeRecord.updateMany({ where: { returnSlipId: uuid }, data: { returnedToShipperAt: maintenant } });
           await tx.returnSlip.update({
             where: { id: uuid },
-            data: { status: 'REMIS', handedOverAt: maintenant, handedOverById: acteur.id ?? null, receiverName: receveur || null },
+            data: {
+              status: 'REMIS',
+              handedOverAt: maintenant,
+              handedOverById: acteur.id ?? null,
+              receiverName: receveur || null,
+            },
           });
         } else if (cible === 'PREPARE') {
           // Revenu au dépôt sans être remis : les colis redeviennent « retour dépôt ».
@@ -553,7 +599,7 @@ export class RetoursExpediteurService {
                     : 'RETURN_SLIP_REVENU',
             reason: `Bon ${b.slipNumber} (${b.shipper.companyName}) : ${ETATS_BON[depart]} → ${ETATS_BON[cible]}, ${nb} colis`,
             previousValues: { status: depart },
-            newValues: { status: cible },
+            newValues: cible === 'REMIS' ? { status: cible, codeRemiseVerifie: true } : { status: cible },
             userId: acteur.id,
           },
           tx
@@ -571,7 +617,9 @@ export class RetoursExpediteurService {
         .notify({
           event: NotificationEvent.COLIS_RETURNED,
           title: 'Retours en route',
-          content: `Bon de retour ${bon.slipNumber} : ${nb} colis en route vers vous avec ${bon.driver?.user.fullName ?? 'notre livreur'}.`,
+          content:
+            `Bon de retour ${bon.slipNumber} : ${nb} colis en route vers vous avec ${bon.driver?.user.fullName ?? 'notre livreur'}.` +
+            (bon.handoverCode ? ` À réception, donnez le code de remise ${bon.handoverCode}.` : ''),
           relatedEntity: 'RETURN_SLIP',
           relatedEntityId: bon.id,
           userIds: shipperUsers,
@@ -614,6 +662,54 @@ export class RetoursExpediteurService {
     return { bon: await this.detail(uuid, acteur), message: messages[cible] };
   }
 
+  /**
+   * Suppression d'un bon (administrateur). En préparation : ses colis
+   * redeviennent « à rendre ». Remis ou annulé : seul le document disparaît,
+   * les colis gardent leur état et leur historique. En cours de livraison :
+   * refusé, le bon doit d'abord revenir au dépôt.
+   */
+  async supprimer(id: string, acteur: ActeurRetour): Promise<{ slipNumber: string; message: string }> {
+    const uuid = asUuid(id);
+    if (!uuid) throw new BusinessRuleError('Bon de retour introuvable.', 404);
+    const prisma = getPrisma();
+    return prisma.$transaction(async (tx) => {
+      const verrou = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM "ReturnSlip" WHERE id = ${uuid}::uuid FOR UPDATE`;
+      if (!verrou.length) throw new BusinessRuleError('Bon de retour introuvable.', 404);
+      const b = await tx.returnSlip.findUniqueOrThrow({
+        where: { id: uuid },
+        include: { shipper: { select: { companyName: true } }, _count: { select: { packages: true, exchanges: true } } },
+      });
+      if (b.status === 'EN_COURS') {
+        throw new BusinessRuleError(
+          `Le bon ${b.slipNumber} est en cours de livraison : passez-le d'abord en « Revenu au dépôt », puis supprimez-le.`,
+          409
+        );
+      }
+      const nb = b._count.packages + b._count.exchanges;
+      await tx.package.updateMany({ where: { returnSlipId: uuid }, data: { returnSlipId: null } });
+      await tx.exchangeRecord.updateMany({ where: { returnSlipId: uuid }, data: { returnSlipId: null } });
+      await tx.returnSlip.delete({ where: { id: uuid } });
+      await auditService.recordOrFail(
+        {
+          entityType: 'RETURN_SLIP',
+          entityId: uuid,
+          action: 'RETURN_SLIP_SUPPRIME',
+          reason: `Bon ${b.slipNumber} (${b.shipper.companyName}, ${ETATS_BON[b.status]}, ${nb} colis) supprimé par ${acteur.fullName}`,
+          previousValues: { slipNumber: b.slipNumber, status: b.status, shipper: b.shipper.companyName, colis: nb },
+          userId: acteur.id,
+        },
+        tx
+      );
+      const suite =
+        b.status === 'PREPARE' && nb
+          ? ` : ses ${nb} colis sont de nouveau à rendre.`
+          : b.status === 'REMIS'
+            ? ' : les colis restent « retournés à l’expéditeur ».'
+            : '.';
+      return { slipNumber: b.slipNumber, message: `Bon ${b.slipNumber} supprimé${suite}` };
+    });
+  }
+
   async detail(id: string, acteur: ActeurRetour): Promise<BonRetourDetail> {
     const uuid = asUuid(id);
     const prisma = getPrisma();
@@ -648,7 +744,8 @@ export class RetoursExpediteurService {
     const colis = [...r.packages.map(versColis), ...r.exchanges.map(versEchange)];
     const ligne = this.versLigne(
       { ...r, packages: r.packages.map((p) => ({ pieceCount: p.pieceCount })), _count: { exchanges: r.exchanges.length } },
-      noms
+      noms,
+      acteur
     );
     const depot = r.packages.find((p) => p.currentDeposit)?.currentDeposit?.name ?? null;
     return {
@@ -688,9 +785,12 @@ export class RetoursExpediteurService {
     return new Map(rows.map((u) => [u.id, u.fullName]));
   }
 
-  private versLigne(r: LigneRow, noms: Map<string, string>): BonRetourLigne {
+  private versLigne(r: LigneRow, noms: Map<string, string>, acteur: ActeurRetour): BonRetourLigne {
     const colisCount = r.packages.length + r._count.exchanges;
+    const codeVisible =
+      acteur.role === RoleType.EXPEDITEUR && !!r.handoverCode && (r.status === 'PREPARE' || r.status === 'EN_COURS');
     return {
+      ...(codeVisible ? { handoverCode: r.handoverCode! } : {}),
       id: r.id,
       slipNumber: r.slipNumber,
       status: r.status,

@@ -162,6 +162,12 @@ export class InterDepotsController {
     });
   }
 
+  /** `DELETE /inter-depots/:id` — administrateur seulement. */
+  async supprimer(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const { transferNumber, message } = await interDepotsService.supprimer(req.params.id!, actorOf(req));
+    res.json({ success: true, data: { transferNumber }, message });
+  }
+
   /** Ancien cycle (préparer / expédier / réception au comptage) : remplacé par le scan. */
   async legacy(_req: AuthenticatedRequest, _res: Response): Promise<void> {
     throw new ApiError(

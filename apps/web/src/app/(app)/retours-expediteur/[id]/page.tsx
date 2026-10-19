@@ -40,6 +40,7 @@ export default function BonRetourPage() {
   const [scanEnCours, setScanEnCours] = useState(false);
   const [changement, setChangement] = useState<{ bon: BonRetourDetail; status: EtatBonRetour } | null>(null);
   const [receveur, setReceveur] = useState('');
+  const [codeRemise, setCodeRemise] = useState('');
   const [occupe, setOccupe] = useState(false);
   const champScan = useRef<HTMLInputElement>(null);
 
@@ -121,6 +122,7 @@ export default function BonRetourPage() {
       const r = await retoursExpediteurApi.changerEtat(changement.bon.id, {
         status: changement.status,
         receiverName: receveur.trim() || undefined,
+        ...(changement.status === 'REMIS' ? { code: codeRemise } : {}),
       });
       if (r.data) appliquer(r.data);
       addToast({ type: 'success', title: r.message ?? 'État mis à jour' });
@@ -146,6 +148,7 @@ export default function BonRetourPage() {
 
   const demander = (status: EtatBonRetour) => {
     setReceveur('');
+    setCodeRemise('');
     setChangement({ bon, status });
   };
   const peutLancer = !!bon.driverId && bon.colisCount > 0 && !enteteModifie;
@@ -501,6 +504,8 @@ export default function BonRetourPage() {
         changement={changement}
         receveur={receveur}
         setReceveur={setReceveur}
+        code={codeRemise}
+        setCode={setCodeRemise}
         occupe={occupe}
         onClose={() => setChangement(null)}
         onConfirm={() => void confirmerEtat()}

@@ -514,6 +514,7 @@ export const fr = {
     'Les colis que vous déclarez comme retours à la remise apparaîtront ici.',
   'retours.aucunPassage': 'Aucun passage en retour enregistré pour ce colis.',
   'retours.bons.titre': 'Bons de retour',
+  'retours.bons.code': 'Code de remise — donnez-le à RUNEX à la réception de vos colis :',
   'retours.bons.colis': '{n} colis',
   'retours.bons.remisLe': 'remis le {date}',
   'retours.bons.enRoute': 'en route avec {livreur}',

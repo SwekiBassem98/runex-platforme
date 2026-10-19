@@ -250,7 +250,16 @@ ok((await api(admin, 'POST', `/retours-expediteur/bons/${bonId}/scan`, { code: (
 const revenu = await api(admin, 'POST', `/retours-expediteur/bons/${bonId}/etat`, { status: 'PREPARE' });
 ok(revenu.status === 200 && (await pkg(a2.id))?.status === 'RETOUR_DEPOT', 'revenu au dépôt (non remis) : colis de nouveau au dépôt', `${revenu.status} ${revenu.message}`);
 await api(admin, 'POST', `/retours-expediteur/bons/${bonId}/etat`, { status: 'EN_COURS' });
-const remis = await api(admin, 'POST', `/retours-expediteur/bons/${bonId}/etat`, { status: 'REMIS', receiverName: 'Karim' });
+// Remise : code à 6 chiffres que seul l'expéditeur voit (comme le paiement).
+const codeRemise = ((await api(exp, 'GET', '/retours-expediteur/bons')).data ?? []).find((b) => b.id === bonId)?.handoverCode;
+ok(/^\d{6}$/.test(codeRemise ?? ''), 'l’expéditeur voit le code de remise de son bon en cours', String(codeRemise));
+ok(!((await api(admin, 'GET', `/retours-expediteur/bons?shipperId=${shipperId}`)).data ?? []).some((b) => b.handoverCode) && (await api(admin, 'GET', `/retours-expediteur/bons/${bonId}`)).data?.handoverCode === undefined, 'l’exploitation ne voit jamais le code');
+let r0 = await api(admin, 'POST', `/retours-expediteur/bons/${bonId}/etat`, { status: 'REMIS' });
+ok(r0.status === 400 && /code de remise/.test(r0.message ?? ''), 'remise sans code : refusée', `${r0.status} ${r0.message}`);
+r0 = await api(admin, 'POST', `/retours-expediteur/bons/${bonId}/etat`, { status: 'REMIS', code: codeRemise === '000000' ? '111111' : '000000' });
+ok(r0.status === 403 && /incorrect/.test(r0.message ?? ''), 'remise avec un mauvais code : refusée', `${r0.status} ${r0.message}`);
+ok((await pkg(a2.id))?.status === 'EN_RUNSHEET_RETOUR', 'mauvais code : colis inchangés');
+const remis = await api(admin, 'POST', `/retours-expediteur/bons/${bonId}/etat`, { status: 'REMIS', receiverName: 'Karim', code: codeRemise });
 ok(remis.status === 200 && remis.data?.status === 'REMIS', 'bon remis à l’expéditeur', `${remis.status} ${remis.message}`);
 ok((await pkg(a2.id))?.status === 'RETOURNE_EXPEDITEUR', 'colis restitué à l’expéditeur');
 ok(!((await api(admin, 'GET', '/retours-expediteur/a-rendre')).data ?? []).find((x) => x.shipperId === shipperId)?.echanges, 'article d’échange rendu : plus en attente');

@@ -40,6 +40,7 @@ import {
   passwordResetLimiter,
   changePasswordLimiter,
   voucherSecretLimiter,
+  returnSlipCodeLimiter,
 } from './common/http/rate-limit';
 import {
   authenticateToken,
@@ -1054,7 +1055,15 @@ export function createApiRouter(): Router {
     '/retours-expediteur/bons/:id/etat',
     authenticateToken,
     requireRoles(...EXPLOITATION_RETOURS),
+    // Code de remise erroné (403) : 5 essais par quart d'heure et par bon.
+    returnSlipCodeLimiter,
     asyncHandler((req, res) => retoursExpediteurController.changerEtat(req, res))
+  );
+  router.delete(
+    '/retours-expediteur/bons/:id',
+    authenticateToken,
+    requireRoles(RoleType.ADMIN),
+    asyncHandler((req, res) => retoursExpediteurController.supprimer(req, res))
   );
 
   // Caisse : encaissements, net expéditeurs, frais de livraison et
@@ -1170,6 +1179,12 @@ export function createApiRouter(): Router {
     authenticateToken,
     requirePermissions(PermissionCode.INTERDEPOT_MANAGE),
     asyncHandler((req, res) => interDepotsController.scan(req, res))
+  );
+  router.delete(
+    INTER_DEPOT_ITEM,
+    authenticateToken,
+    requireRoles(RoleType.ADMIN),
+    asyncHandler((req, res) => interDepotsController.supprimer(req, res))
   );
   router.post(
     INTER_DEPOT_CANCEL,
