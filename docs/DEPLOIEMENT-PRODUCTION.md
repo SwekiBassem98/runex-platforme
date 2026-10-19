@@ -273,6 +273,24 @@ flotte, classements livreurs et expéditeurs, stock des agences, argent en
 circulation. Données : `GET /dashboard?days=` (champ `vue`, les champs
 existants sont inchangés). Aucune migration. Test : `qa/qa-tableau-admin-37.mjs`.
 
+Tarif par expéditeur et Finance (19/10) — migration `20261019000000_tarifs_expediteur` :
+
+- dossier expéditeur : prix de livraison par type de colis (légère, normale,
+  lourde, volumineuse), frais de retour (par colis retourné), frais de gestion
+  (par paiement) et R.A.S. (case à cocher, 3 % par défaut) ;
+- chaque colis prend automatiquement le prix de son type ; changer le type
+  avant la livraison change le prix ;
+- au paiement : net = encaissé − livraison − retours − gestion, puis R.A.S.
+  prélevée sur ce net (jamais sur un net négatif) ;
+- à la migration, chaque expéditeur garde son tarif actuel pour les quatre
+  types ; la R.A.S. n'est plus appliquée tant qu'elle n'est pas cochée sur le
+  dossier ; un expéditeur sans configuration en reçoit une (8 DT par type,
+  sans frais de retour ni de gestion). **Vérifier le tarif de chaque
+  expéditeur** dans Administration › Expéditeurs après la mise en production ;
+- page Finance : à régler, à payer, payé et retenu ce mois, caisse COD,
+  recherche d'un expéditeur et sa fiche (tarif, calcul du prochain paiement,
+  bordereaux). Test : `qa/qa-tarifs-finance-38.mjs`.
+
 ## 7. Liste de contrôle finale
 
 - [ ] `/api/v1/health` : ok, base `up`

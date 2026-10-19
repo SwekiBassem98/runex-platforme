@@ -470,6 +470,7 @@ export const fr = {
   'bordereaux.montant.fraisLivraison': 'Frais de livraison',
   'bordereaux.code.aide': 'Code de retrait — donnez-le à la caisse RUNEX pour être payé :',
   'bordereaux.montant.fraisRetour': 'Frais de retour',
+  'bordereaux.montant.gestion': 'Frais de gestion',
   'bordereaux.montant.retenue': 'Retenue à la source',
   'bordereaux.montant.net': 'Net payable',
   'bordereaux.payeLe': 'Payé le {date}',

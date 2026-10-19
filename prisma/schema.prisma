@@ -590,7 +590,13 @@ model ShipperConfig {
   defaultDeliveryFee   Decimal  @default(8.000) @db.Decimal(10, 3) // Frais standards en TND (8 DT, ajoutés au prix du colis)
   defaultReturnFee     Decimal  @default(3.000) @db.Decimal(10, 3) // Frais de retour en TND
   defaultExchangeFee   Decimal  @default(8.000) @db.Decimal(10, 3) // Frais échange en TND
-  withholdingTaxRate   Decimal  @default(0.010) @db.Decimal(5, 4) // R.A.S (1% = 0.0100)
+  withholdingTaxRate   Decimal  @default(0) @db.Decimal(5, 4) // R.A.S sur le net à payer (3% = 0.0300 ; 0 = non appliquée)
+  // Frais de livraison par type de colis (PackageSize), fixés par l'administration.
+  feeLegere            Decimal  @default(8.000) @db.Decimal(10, 3)
+  feeMoyenne           Decimal  @default(8.000) @db.Decimal(10, 3) // « normale »
+  feeLourde            Decimal  @default(8.000) @db.Decimal(10, 3)
+  feeVolumineuse       Decimal  @default(8.000) @db.Decimal(10, 3)
+  managementFee        Decimal  @default(0.000) @db.Decimal(10, 3) // Frais de gestion, par paiement (bordereau)
   secretPaymentCode    String   @db.VarChar(100) // Hash code secret déblocage caisse
   bankName             String?  @db.VarChar(100)
   bankRib              String?  @db.VarChar(30) // RIB tunisien 20 chiffres
@@ -1183,6 +1189,8 @@ model PaymentVoucher {
   deliveryFeesTotal    Decimal @default(0.000) @db.Decimal(12, 3) // Frais de livraison déduits
   returnFeesTotal      Decimal @default(0.000) @db.Decimal(12, 3) // Frais de retour déduits
   withholdingTaxTotal  Decimal @default(0.000) @db.Decimal(12, 3) // Retenue à la source (R.A.S)
+  managementFeesTotal  Decimal @default(0.000) @db.Decimal(12, 3) // Frais de gestion déduits
+  withholdingTaxRate   Decimal @default(0) @db.Decimal(5, 4) // Taux de R.A.S. appliqué au net
   netPayable           Decimal @db.Decimal(12, 3) // Montant Net à débourser
 
   // Sécurité & Validation Décaissement

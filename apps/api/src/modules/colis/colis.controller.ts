@@ -1,3 +1,4 @@
+import { SELECT_TARIF, tarifDepuisConfig } from '../../common/tarifs/tarif-expediteur';
 import { colisService, DEFAULT_DELIVERY_FEE } from './colis.service';
 import { getPrisma } from '../../common/database/prisma-context';
 import { resolveDestinationDepositId, resolveShipperDepositId } from '../../common/routing/deposit-routing';
@@ -87,9 +88,11 @@ export class ColisController {
       req.user?.shipperId ??
       (typeof req.query.shipperId === 'string' && /^[0-9a-f-]{36}$/i.test(req.query.shipperId) ? req.query.shipperId : null);
     const config = shipperId
-      ? await prisma.shipperConfig.findUnique({ where: { shipperId }, select: { defaultDeliveryFee: true } })
+      ? await prisma.shipperConfig.findUnique({ where: { shipperId }, select: SELECT_TARIF })
       : null;
-    const deliveryFee = config ? Number(config.defaultDeliveryFee) : DEFAULT_DELIVERY_FEE;
+    // Frais par type de colis : le formulaire affiche celui du type choisi.
+    const tarifs = tarifDepuisConfig(config).livraison;
+    const deliveryFee = config ? tarifs.MOYENNE : DEFAULT_DELIVERY_FEE;
     // Agence de départ proposée : celle qui dessert l'adresse de l'expéditeur.
     const shipper = shipperId
       ? await prisma.shipper.findUnique({ where: { id: shipperId }, select: { governorate: true } })
@@ -105,7 +108,7 @@ export class ColisController {
         ? resolveDestinationDepositId(prisma, String(req.query.governorate), req.query.delegation ? String(req.query.delegation) : null)
         : Promise.resolve(null),
     ]);
-    res.json({ success: true, data: { agences, suggestion, suggestionDepart, deliveryFee } });
+    res.json({ success: true, data: { agences, suggestion, suggestionDepart, deliveryFee, tarifs } });
   }
 
   async create(req: AuthenticatedRequest, res: Response): Promise<void> {

@@ -22,17 +22,28 @@ export interface AgenceLivraison {
 
 export const FRAIS_LIVRAISON_DEFAUT = 8;
 
-export function useAgencesLivraison(governorate: string, delegation: string, shipperId?: string | null) {
+/**
+ * `taille` : type de colis choisi (légère, normale, lourde, volumineuse) —
+ * les frais renvoyés sont ceux du tarif de l'expéditeur pour ce type.
+ */
+export function useAgencesLivraison(governorate: string, delegation: string, shipperId?: string | null, taille?: string) {
   const [agences, setAgences] = useState<AgenceLivraison[]>([]);
   const [suggestion, setSuggestion] = useState<string | null>(null);
   const [suggestionDepart, setSuggestionDepart] = useState<string | null>(null);
-  const [frais, setFrais] = useState<number>(FRAIS_LIVRAISON_DEFAUT);
+  const [fraisNormal, setFraisNormal] = useState<number>(FRAIS_LIVRAISON_DEFAUT);
+  const [tarifs, setTarifs] = useState<Partial<Record<string, number>>>({});
 
   useEffect(() => {
     let annule = false;
     // Petite attente : la délégation se tape lettre par lettre.
     const minuteur = window.setTimeout(() => {
-      requestData<{ agences: AgenceLivraison[]; suggestion: string | null; suggestionDepart?: string | null; deliveryFee: number }>(
+      requestData<{
+        agences: AgenceLivraison[];
+        suggestion: string | null;
+        suggestionDepart?: string | null;
+        deliveryFee: number;
+        tarifs?: Record<string, number>;
+      }>(
         '/colis/agences-livraison',
         {
           query: {
@@ -47,7 +58,8 @@ export function useAgencesLivraison(governorate: string, delegation: string, shi
           setAgences(r.agences);
           setSuggestion(r.suggestion);
           setSuggestionDepart(r.suggestionDepart ?? null);
-          if (Number.isFinite(r.deliveryFee)) setFrais(r.deliveryFee);
+          if (Number.isFinite(r.deliveryFee)) setFraisNormal(r.deliveryFee);
+          setTarifs(r.tarifs ?? {});
         })
         .catch(() => undefined);
     }, 250);
@@ -57,7 +69,9 @@ export function useAgencesLivraison(governorate: string, delegation: string, shi
     };
   }, [governorate, delegation, shipperId]);
 
-  return { agences, suggestion, suggestionDepart, frais };
+  const choisi = taille ? tarifs[taille] : undefined;
+  const frais = typeof choisi === 'number' && Number.isFinite(choisi) ? choisi : fraisNormal;
+  return { agences, suggestion, suggestionDepart, frais, tarifs };
 }
 
 /** Total à encaisser : prix du colis + frais de livraison (arrondi au millime). */

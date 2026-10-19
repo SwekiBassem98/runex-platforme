@@ -450,6 +450,7 @@ export const ar: Dictionnaire = {
   'bordereaux.montant.fraisLivraison': 'مصاريف التوصيل',
   'bordereaux.code.aide': 'رمز السحب — قدّمه لصندوق RUNEX لاستلام مستحقاتك:',
   'bordereaux.montant.fraisRetour': 'مصاريف الإرجاع',
+  'bordereaux.montant.gestion': 'مصاريف التصرف',
   'bordereaux.montant.retenue': 'الاقتطاع من المصدر',
   'bordereaux.montant.net': 'الصافي المستحق',
   'bordereaux.payeLe': 'دُفع في {date}',

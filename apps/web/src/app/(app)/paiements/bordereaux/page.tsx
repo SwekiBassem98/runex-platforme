@@ -151,7 +151,17 @@ export default function PaiementsPage() {
                         <span className="text-red-600 font-bold">{c.retournes} R</span>
                       </Td>
                       <Td align="right" className="font-mono">{formatTND(c.encaisse)}</Td>
-                      <Td align="right" className="font-mono">{formatTND(c.fraisLivraison + c.fraisRetour)}</Td>
+                      <Td align="right" className="font-mono">
+                        <span title={`Livraison ${formatTND(c.fraisLivraison)} · retours ${formatTND(c.fraisRetour)} · gestion ${formatTND(c.fraisGestion ?? 0)} · R.A.S. ${formatTND(c.ras ?? 0)}`}>
+                          {formatTND(c.fraisLivraison + c.fraisRetour + (c.fraisGestion ?? 0) + (c.ras ?? 0))}
+                        </span>
+                        {(c.fraisGestion ?? 0) + (c.ras ?? 0) > 0 && (
+                          <span className="block text-[10px] text-slate-400 font-sans">
+                            dont gestion {formatTND(c.fraisGestion ?? 0)}
+                            {(c.ras ?? 0) > 0 ? ` · R.A.S. ${c.tauxRas} %` : ''}
+                          </span>
+                        )}
+                      </Td>
                       <Td align="right" className="font-mono font-bold">{formatTND(c.netEstime)}</Td>
                       <Td align="right">
                         <button

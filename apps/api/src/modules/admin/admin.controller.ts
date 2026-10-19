@@ -197,6 +197,7 @@ export class ShippersController {
         governorate: body.governorate,
         address: body.address,
         isActive: booleen(body.isActive),
+        tarif: body.tarif,
         ...(body.compte
           ? {
               compte: {
