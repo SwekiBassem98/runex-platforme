@@ -310,6 +310,22 @@ Validation des tournées et fiche d'encaissement (19/10) — aucune migration :
   total, fond de caisse, décalage, signatures). Test :
   `qa/qa-validation-tournee-39.mjs`.
 
+### 6.2 Remise à zéro des données (phase de test client)
+
+Pour remettre l'application vide au client : GitHub → **Actions** →
+« Remise à zéro des données (test client) » → **Run workflow**, taper
+`SUPPRIMER` dans la confirmation (l'e-mail de l'administrateur à garder est
+pré-rempli : `direction@runex.tn`).
+
+- Une **sauvegarde complète** est faite d'abord et gardée 7 jours dans les
+  artefacts de l'exécution (restauration : `pg_restore --clean --no-owner -d
+  "<URL directe>" runex-avant-reset.dump`).
+- Puis, en une seule transaction (`scripts/reset-donnees-test.sql`) : tout est
+  supprimé sauf le compte administrateur, la société, les agences, les zones de
+  livraison, les rôles et permissions. Si le compte est introuvable ou n'est
+  pas administrateur, rien n'est supprimé.
+- Tout le monde est déconnecté ; la numérotation des colis repart de 1.
+
 ## 7. Liste de contrôle finale
 
 - [ ] `/api/v1/health` : ok, base `up`

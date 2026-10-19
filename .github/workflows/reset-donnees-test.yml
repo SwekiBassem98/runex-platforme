@@ -1,0 +1,81 @@
+# Remise à zéro de la base de production pour une phase de test client.
+#
+# Supprime toutes les données d'exploitation et ne garde que le compte
+# administrateur indiqué, ainsi que la configuration (société, agences, zones
+# de livraison, rôles et permissions). Voir scripts/reset-donnees-test.sql.
+#
+# Déclenchement uniquement à la main : onglet Actions → « Remise à zéro des
+# données (test client) » → Run workflow, en tapant SUPPRIMER dans le champ de
+# confirmation.
+#
+# Une sauvegarde complète (pg_dump) est faite AVANT la suppression et
+# conservée 7 jours dans les artefacts de l'exécution : elle permet de tout
+# restaurer en cas d'erreur.
+#
+# Secret requis : PRODUCTION_DIRECT_DATABASE_URL (le même que pour les
+# migrations : URL directe Neon, rôle propriétaire).
+name: Remise à zéro des données (test client)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Tapez SUPPRIMER pour confirmer la suppression de toutes les données'
+        required: true
+        default: ''
+      email_admin:
+        description: 'E-mail du compte administrateur à conserver'
+        required: true
+        default: 'direction@runex.tn'
+
+concurrency:
+  group: migrate-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  reset:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Vérifier la confirmation et le secret
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DIRECT_DATABASE_URL }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          if [ "$CONFIRMATION" != "SUPPRIMER" ]; then
+            echo "::error::Confirmation absente : tapez exactement SUPPRIMER. Rien n'a été fait."; exit 1
+          fi
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::Secret PRODUCTION_DIRECT_DATABASE_URL absent."; exit 1
+          fi
+          case "$DATABASE_URL" in *-pooler*) echo "::error::Utiliser l'URL DIRECTE (sans -pooler)."; exit 1;; esac
+
+      - name: Sauvegarde complète avant suppression
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DIRECT_DATABASE_URL }}
+        run: |
+          mkdir -p sauvegarde
+          docker run --rm --network host -v "$PWD/sauvegarde:/out" postgres:17 \
+            pg_dump --format=custom --no-owner --file=/out/runex-avant-reset.dump "$DATABASE_URL"
+          ls -lh sauvegarde
+
+      - name: Conserver la sauvegarde (7 jours)
+        uses: actions/upload-artifact@v4
+        with:
+          name: sauvegarde-avant-reset-${{ github.run_id }}
+          path: sauvegarde/runex-avant-reset.dump
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Supprimer les données (une seule transaction)
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DIRECT_DATABASE_URL }}
+          EMAIL_ADMIN: ${{ inputs.email_admin }}
+        run: |
+          docker run --rm --network host -v "$PWD/scripts:/scripts:ro" postgres:17 \
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -v email_admin="$EMAIL_ADMIN" -f /scripts/reset-donnees-test.sql
