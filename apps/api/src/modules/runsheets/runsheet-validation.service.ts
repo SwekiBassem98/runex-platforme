@@ -62,6 +62,8 @@ export interface ColisValidation {
   paymentStatus: string | null;
   /** Le montant payé peut encore être corrigé. */
   modifiable: boolean;
+  /** Colis d'échange (article à reprendre chez le client). */
+  echange: boolean;
 }
 
 export interface ValidationTournee {
@@ -127,6 +129,7 @@ async function chargerTournee(identifiant: string, depositId?: string) {
               totalPrice: true,
               collectedAmount: true,
               paymentVoucherId: true,
+              packageType: true,
               assignedDriverId: true,
               currentRunsheetId: true,
               customer: { select: { fullName: true } },
@@ -178,6 +181,7 @@ function versVue(t: Tournee, validatedBy: string | null): ValidationTournee {
       method: p.payment?.method ?? null,
       paymentStatus: p.payment?.status ?? null,
       modifiable: validable && etat === 'LIVRE' && p.payment?.status !== 'VALIDE' && !p.paymentVoucherId,
+      echange: String(p.packageType) === 'EXCHANGE',
     };
   });
   const livres = colis.filter((c) => c.etat === 'LIVRE');

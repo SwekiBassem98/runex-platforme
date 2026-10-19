@@ -1,3 +1,4 @@
+import { impressionTournee } from './modules/runsheets/runsheet-impression.service';
 import { ficheFinanceExpediteur, listerFinanceExpediteurs } from './modules/payments/finance-expediteurs.service';
 import { Router } from 'express';
 import { healthController } from './modules/health/health.controller';
@@ -757,6 +758,23 @@ export function createApiRouter(): Router {
     authenticateToken,
     requirePermissions(PermissionCode.RUNSHEET_VALIDATE),
     asyncHandler((req, res) => runsheetsController.close(req, res))
+  );
+
+  // Impression de la tournée : bon de livraison et produits d'échange.
+  router.get(
+    '/runsheets/:id/impression',
+    authenticateToken,
+    requirePermissions(PermissionCode.RUNSHEET_READ),
+    asyncHandler(async (req, res) => {
+      const r = req as unknown as { dataScope?: { depositId?: string; assignedDriverId?: string } };
+      res.json({
+        success: true,
+        data: await impressionTournee(String(req.params.id), {
+          depositId: r.dataScope?.depositId,
+          driverId: r.dataScope?.assignedDriverId,
+        }),
+      });
+    })
   );
 
   // Validation caisse (écran « Validation runsheet »).

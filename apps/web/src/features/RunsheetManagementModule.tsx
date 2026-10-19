@@ -87,10 +87,10 @@ import {
   type PackageDto,
   type AuthUser,
 } from '@logixpress/types';
-import { createApiFetch, validationTourneeApi, type CompteursTournees } from '@/lib/api';
-import { imprimerValidationTournee } from '@/lib/impression-documents';
+import { createApiFetch, type CompteursTournees } from '@/lib/api';
 import { useRouter } from 'next/navigation';
 import { CompteursValidation } from '@/features/runsheets/CompteursValidation';
+import { BoutonImpressionTournee } from '@/features/runsheets/BoutonImpressionTournee';
 import { playFeedback } from '@/lib/feedback';
 import { CarteScanAjoutRetrait, type ModeScan } from '@/features/scan/CarteScanAjoutRetrait';
 import { PermissionCode } from '@logixpress/types';
@@ -328,13 +328,6 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
   }, [statusFilter, driverFilter, dateFilter, vue]);
 
   const ouvrirValidation = (r: { runsheetNumber: string }) => router.push(`/runsheets/${encodeURIComponent(r.runsheetNumber)}/validation`);
-  const imprimerTournee = async (r: { runsheetNumber: string }) => {
-    try {
-      imprimerValidationTournee(await validationTourneeApi.lire(r.runsheetNumber));
-    } catch (e) {
-      addToast({ type: 'error', title: 'Impression impossible', message: e instanceof Error ? e.message : '' });
-    }
-  };
 
   useEffect(() => {
     if (selectedRunsheetId) {
@@ -965,6 +958,7 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
                             {peutValiderCaisse && TOURNEE_VALIDABLE.includes(String(r.status)) && (
                               <button type="button" onClick={() => ouvrirValidation(r)} className="flex-1 py-1.5 rounded bg-emerald-600 text-white text-xs font-semibold flex items-center justify-center gap-1"><Check className="w-3.5 h-3.5" /> Valider</button>
                             )}
+                            <BoutonImpressionTournee runsheetNumber={r.runsheetNumber} aEchanges={(r.packages ?? []).some((p) => String(p.packageType) === 'EXCHANGE')} />
                             <button type="button" onClick={() => { setSelectedRunsheetId(r.runsheetNumber); setViewMode('detail'); }} className="flex-1 py-1.5 rounded border border-slate-200 bg-white text-slate-700 text-xs font-semibold flex items-center justify-center gap-1"><Eye className="w-3.5 h-3.5" /> Voir</button>
                             <button type="button" onClick={() => openEditModal(r)} disabled={!editable} title={!editable ? `Non modifiable (${r.status})` : r.totalPackages>0 ? 'Contient des colis' : 'Modifier'} className={`flex-1 py-1.5 rounded border text-xs font-semibold flex items-center justify-center gap-1 ${editable && r.totalPackages===0 ? 'border-slate-200 bg-white text-slate-700' : 'border-slate-100 bg-slate-50 text-slate-300'}`}><Pencil className="w-3.5 h-3.5" /> Modifier</button>
                             <button type="button" onClick={() => setSuppressionAConfirmer(r)} disabled={!deletable} title={!deletable ? (r.totalPackages>0 ? `Contient ${r.totalPackages} colis` : `Non supprimable (${r.status})`) : 'Supprimer'} className={`flex-1 py-1.5 rounded border text-xs font-semibold flex items-center justify-center gap-1 ${deletable ? 'border-red-200 bg-red-50 text-red-700' : 'border-slate-100 bg-slate-50 text-slate-300'}`}><Trash2 className="w-3.5 h-3.5" /> Supprimer</button>
@@ -1084,18 +1078,10 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
                                   <CheckCircle2 className="w-3.5 h-3.5" />
                                 </button>
                               )}
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  void imprimerTournee(r);
-                                }}
-                                title="Imprimer"
-                                className="p-1.5 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition cursor-pointer"
-                                aria-label={`Imprimer ${r.runsheetNumber}`}
-                              >
-                                <Printer className="w-3.5 h-3.5" />
-                              </button>
+                              <BoutonImpressionTournee
+                                runsheetNumber={r.runsheetNumber}
+                                aEchanges={(r.packages ?? []).some((p) => String(p.packageType) === 'EXCHANGE')}
+                              />
                               <button
                                 type="button"
                                 onClick={(e) => {
@@ -1256,14 +1242,11 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
                   <Download className="w-3.5 h-3.5 text-slate-500" />
                   <span>Exporter CSV</span>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => window.print()}
-                  className="px-3 py-1.5 bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 rounded text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
-                >
-                  <Printer className="w-3.5 h-3.5 text-slate-500" />
-                  <span>Imprimer Bordereau</span>
-                </button>
+                <BoutonImpressionTournee
+                  runsheetNumber={runsheet.runsheetNumber}
+                  aEchanges={(runsheet.packages ?? []).some((p) => String(p.packageType) === 'EXCHANGE')}
+                  taille="md"
+                />
               </div>
             </div>
 

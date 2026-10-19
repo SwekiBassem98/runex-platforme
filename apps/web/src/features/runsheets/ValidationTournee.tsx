@@ -40,6 +40,7 @@ import { ErrorBanner, Modal, useToast } from '@logixpress/ui';
 import { validationTourneeApi, type EtatColisValidation, type ValidationTournee as Vue } from '@/lib/api';
 import { playFeedback } from '@/lib/feedback';
 import { imprimerValidationTournee } from '@/lib/impression-documents';
+import { BoutonImpressionTournee } from '@/features/runsheets/BoutonImpressionTournee';
 
 const dt = (n: number) => `${(Number(n) || 0).toLocaleString('fr-FR', { minimumFractionDigits: 3, maximumFractionDigits: 3 })} DT`;
 const CARTE = 'bg-white border border-slate-200 rounded-2xl shadow-xs';
@@ -237,12 +238,13 @@ export function ValidationTournee({ id }: { id: string }) {
             <span className={`px-3 py-1 rounded-full text-xs font-bold ${statut.classe}`} data-testid="statut-tournee">
               {statut.libelle}
             </span>
+            <BoutonImpressionTournee runsheetNumber={vue.runsheetNumber} aEchanges={vue.colis.some((c) => c.echange)} taille="md" />
             <button
               type="button"
               onClick={() => imprimerValidationTournee(vue)}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
             >
-              <Printer className="w-3.5 h-3.5" aria-hidden="true" /> Imprimer
+              <Printer className="w-3.5 h-3.5" aria-hidden="true" /> Fiche de validation
             </button>
           </div>
         </div>

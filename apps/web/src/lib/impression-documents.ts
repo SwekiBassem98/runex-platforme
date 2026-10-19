@@ -4,7 +4,8 @@
  * fenêtre d'impression. Les codes de remise ne sont jamais imprimés.
  */
 import type { PaymentVoucherDto } from '@logixpress/types';
-import type { BonRetourDetail, ValidationTournee } from './api';
+import type { BonRetourDetail, ImpressionTournee, ValidationTournee } from './api';
+import { code128Svg } from '@/features/expediteur/colis/code128';
 import { qrSvg } from '@/features/colis/bonLivraison';
 import { ouvrirImpression } from '@/features/expediteur/colis/impression';
 
@@ -273,6 +274,109 @@ export function imprimerFicheEncaissement(f: FicheEncaissement): void {
         <tr class="dec"><td>DÉCALAGE</td><td class="r">${compte ? nb2(tot.decalage) : ''}</td></tr>
       </tbody></table>
       <div class="sign"><div>Signature du caissier</div><div>Signature du livreur</div></div>`
+    )
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Bon de livraison de la tournée et produits d'échange (comme ADEX)  */
+/* ------------------------------------------------------------------ */
+
+const STYLE_TOURNEE = `
+  .bl-tete{display:grid;grid-template-columns:auto 1fr auto auto;align-items:center;gap:22px;padding-bottom:12px;border-bottom:3px solid #dc2626}
+  .bl-tete img.logo{height:54px}.bl-tete h1{font-size:20px;letter-spacing:.3px}
+  .bl-tete .mf{font-weight:bold;white-space:nowrap}.bl-tete .qr svg{width:96px;height:96px}
+  .bl-infos{display:grid;grid-template-columns:repeat(3,1fr);gap:8px 24px;margin:14px 0 12px;font-size:13px}
+  .bl-infos b{font-weight:700}
+  .bl table{font-size:11.5px}.bl th{background:#0f172a;color:#fff;text-align:center;font-size:11px}
+  .bl td{vertical-align:top}.bl td.c{text-align:center}.bl td.r{text-align:right;white-space:nowrap}
+  .bl tr:nth-child(even) td{background:#f8fafc}
+  .bl .ech{display:inline-block;margin-top:2px;padding:0 5px;border-radius:8px;background:#fee2e2;color:#b91c1c;font-size:9px;font-weight:bold}
+  .bl-total{display:flex;justify-content:flex-end;margin-top:12px}
+  .bl-total div{display:grid;grid-template-columns:auto auto}
+  .bl-total span{padding:8px 18px;font-size:15px;font-weight:bold}.bl-total span:first-child{background:#0f172a;color:#fff}
+  .bl-total span:last-child{background:#fee2e2;color:#991b1b}
+  .bl-cachet{border:1.5px solid #94a3b8;border-radius:6px;padding:10px 14px;margin-top:16px;min-height:90px}
+  .bl-cachet .noms{display:flex;justify-content:space-between;margin-top:10px;font-weight:bold}
+  thead{display:table-header-group}tr{page-break-inside:avoid}
+`;
+
+/** Bon de livraison de toute la tournée : une ligne par colis, total, cachet et signatures. */
+export function imprimerBonTournee(t: ImpressionTournee): void {
+  const logo = `${window.location.origin}/brand/runex-logo.jpeg`;
+  const dateTournee = new Date(t.createdAt).toLocaleString('fr-TN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const lignes = t.colis
+    .map(
+      (c) => `<tr><td class="c">${c.numero}</td><td class="c mono">${esc(c.trackingNumber)}${c.echange ? '<br><span class="ech">ÉCHANGE</span>' : ''}</td>
+      <td class="c" dir="auto">${esc(c.expediteur)}</td><td dir="auto">${esc(c.contenu)}</td><td class="r">${c.montant.toFixed(3)}</td>
+      <td class="c">${c.tentative}</td><td class="c" dir="auto">${esc(c.client)}${c.telephone ? `<br><small>${esc(c.telephone)}</small>` : ''}</td><td class="c" dir="auto">${esc(c.adresse)}</td></tr>`
+    )
+    .join('');
+  ouvrirImpression(
+    page(
+      `Bon de livraison ${t.runsheetNumber}`,
+      `<style>${STYLE_TOURNEE}</style>
+      <div class="bl">
+      <div class="bl-tete"><img class="logo" src="${esc(logo)}" alt="RUNEX"><h1>BON DE LIVRAISON N°${esc(t.runsheetNumber)}</h1>
+        <div class="mf">M/F : ${esc(t.matriculeFiscal ?? '—')}</div><div class="qr">${qrSvg(t.runsheetNumber, 26)}</div></div>
+      <div class="bl-infos">
+        <div><b>Agence :</b> ${esc(t.agence)}</div>
+        <div><b>Voiture :</b> ${esc(t.voiture ?? '—')}</div>
+        <div><b>Nom livreur :</b> ${esc(t.livreur)}</div>
+        <div><b>Date :</b> ${esc(dateTournee)}</div>
+        <div><b>Nombre total des colis :</b> ${t.totalColis}</div>
+        <div><b>Nombre total des pièces :</b> ${t.totalPieces}</div>
+      </div>
+      <table><thead><tr><th>N°</th><th>Code</th><th>Expéditeur</th><th>Contenu colis</th><th>Montant</th><th>Tent.</th><th>Client</th><th>Adresse</th></tr></thead>
+      <tbody>${lignes || '<tr><td colspan="8" class="c muted">Aucun colis dans cette tournée.</td></tr>'}</tbody></table>
+      <div class="bl-total"><div><span>TOTAL</span><span>${t.total.toFixed(3).replace(/\B(?=(\d{3})+(?!\d))(?=.*\.)/g, ' ')} DT</span></div></div>
+      <div class="bl-cachet"><b>Cachet et signature :</b><div class="noms"><span>${esc(t.agence)}</span><span>${esc(t.livreur)}</span></div></div>
+      </div>`
+    )
+  );
+}
+
+/** Fiches « Produit d'échange » : une page par article à reprendre chez le client. */
+export function imprimerProduitsEchange(t: ImpressionTournee): void {
+  const logo = `${window.location.origin}/brand/runex-logo.jpeg`;
+  const pages = t.echanges
+    .map(
+      (e, i) => `<section class="pe" ${i < t.echanges.length - 1 ? 'style="page-break-after:always"' : ''}>
+        <div class="pe-tete"><img class="logo" src="${esc(logo)}" alt="RUNEX"><h1>Produit d'échange<br>N°${esc(e.trackingNumber)}</h1>
+          <div class="cb">${code128Svg(e.codeProduit, { height: 56, moduleWidth: 1.4 })}</div></div>
+        <div class="pe-parties">
+          <div><h2>Expéditeur</h2>
+            <p><b>Nom :</b> <span dir="auto">${esc(e.expediteur.nom)}</span></p>
+            <p><b>Adresse :</b> <span dir="auto">${esc(e.expediteur.adresse)}</span></p>
+            <p><b>Téléphone :</b> ${esc(e.expediteur.telephone)}</p>
+            <p><b>M/F :</b> ${esc(e.expediteur.matriculeFiscal ?? '—')}</p></div>
+          <div><h2>Destinataire</h2>
+            <p><b>Nom :</b> <span dir="auto">${esc(e.destinataire.nom)}</span></p>
+            <p><b>Adresse :</b> <span dir="auto">${esc(e.destinataire.adresse)}</span></p>
+            <p><b>Téléphone :</b> ${esc(e.destinataire.telephone)}</p></div>
+        </div>
+        <table class="pe-table"><thead><tr><th>Code</th><th>Description</th></tr></thead>
+          <tbody><tr><td class="mono">${esc(e.codeProduit)}</td><td dir="auto">${esc(e.description)}</td></tr></tbody></table>
+        <div class="pe-qr">${qrSvg(e.codeProduit, 32)}</div>
+        <p class="muted pe-note">À coller sur l’article repris chez le client, puis à scanner à son retour au dépôt.</p>
+      </section>`
+    )
+    .join('');
+  ouvrirImpression(
+    page(
+      `Produits d'échange ${t.runsheetNumber}`,
+      `<style>
+        .pe{padding-top:8px}
+        .pe-tete{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:22px;padding-bottom:12px;border-bottom:3px solid #dc2626}
+        .pe-tete img.logo{height:58px}.pe-tete h1{font-size:22px;text-align:center;line-height:1.25}
+        .pe-tete .cb svg{height:64px;width:auto;max-width:300px}
+        .pe-parties{display:grid;grid-template-columns:1fr 1fr;gap:30px;margin:16px 0}
+        .pe-parties h2{font-size:15px;margin:0 0 8px;color:#dc2626}.pe-parties p{margin:6px 0;font-size:13px}
+        .pe-table th{background:#0f172a;color:#fff;text-align:center;font-size:12px}
+        .pe-table td{text-align:center;font-size:13px;padding:8px;background:#f8fafc}
+        .pe-qr{display:flex;justify-content:center;margin-top:18px}.pe-qr svg{width:120px;height:120px}
+        .pe-note{text-align:center;margin-top:8px;font-size:11px}
+      </style>${pages || '<p class="muted">Aucun colis d’échange dans cette tournée.</p>'}`
     )
   );
 }
