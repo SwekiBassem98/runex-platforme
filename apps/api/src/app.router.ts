@@ -759,6 +759,32 @@ export function createApiRouter(): Router {
     asyncHandler((req, res) => runsheetsController.close(req, res))
   );
 
+  // Validation caisse (écran « Validation runsheet »).
+  router.get(
+    '/runsheets/:id/validation',
+    authenticateToken,
+    requirePermissions(PermissionCode.RUNSHEET_VALIDATE),
+    asyncHandler((req, res) => runsheetsController.validation(req, res))
+  );
+  router.post(
+    '/runsheets/:id/validation/scan',
+    authenticateToken,
+    requirePermissions(PermissionCode.RUNSHEET_VALIDATE),
+    asyncHandler((req, res) => runsheetsController.validationScan(req, res))
+  );
+  router.patch(
+    '/runsheets/:id/validation/colis/:packageId',
+    authenticateToken,
+    requirePermissions(PermissionCode.RUNSHEET_VALIDATE),
+    asyncHandler((req, res) => runsheetsController.validationMontant(req, res))
+  );
+  router.post(
+    '/runsheets/:id/validation',
+    authenticateToken,
+    requirePermissions(PermissionCode.RUNSHEET_VALIDATE),
+    asyncHandler((req, res) => runsheetsController.validationValider(req, res))
+  );
+
   router.post(
     '/runsheets/:id/validate',
     authenticateToken,

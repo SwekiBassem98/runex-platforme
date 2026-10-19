@@ -15,7 +15,8 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ArrowRight, Banknote, CheckCircle2, ChevronDown, ChevronUp, HandCoins, History, Store, Truck } from 'lucide-react';
+import { ArrowRight, Banknote, CheckCircle2, ChevronDown, ChevronUp, HandCoins, History, Printer, Store, Truck } from 'lucide-react';
+import { FicheEncaissementModal, type CibleFiche } from '@/features/finance/FicheEncaissementModal';
 import { Card, Modal, PageHeader, formatTND, useToast } from '@logixpress/ui';
 import { PermissionCode } from '@logixpress/types';
 import { caisseApi, type LigneCaisseLivreur, type PaiementLivreur, type ResumeCaisse } from '@/lib/api';
@@ -72,6 +73,7 @@ export default function CaissePage() {
   const [note, setNote] = useState('');
   const [envoi, setEnvoi] = useState(false);
   const [historique, setHistorique] = useState<Record<string, PaiementLivreur[]>>({});
+  const [fiche, setFiche] = useState<CibleFiche | null>(null);
 
   const charger = useCallback(async () => {
     setChargement(true);
@@ -396,6 +398,16 @@ export default function CaissePage() {
                       </p>
                       <p className="md:col-span-2 text-right text-sm tabular-nums text-slate-700">{formatTND(l.gainPeriode)}</p>
                       <div className="col-span-2 md:col-span-3 flex items-center justify-end gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setFiche({ driverId: l.driverId, driverCode: l.driverCode, fullName: l.fullName })}
+                          title="Fiche d’encaissement à imprimer"
+                          aria-label={`Fiche d’encaissement de ${l.fullName}`}
+                          data-testid="caisse-imprimer"
+                          className="p-1.5 rounded-md border border-slate-200 bg-white text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                        >
+                          <Printer className="w-4 h-4" aria-hidden="true" />
+                        </button>
                         {l.resteAPayer > 0 ? (
                           <>
                             <span className="text-base font-bold tabular-nums text-slate-900">{formatTND(l.resteAPayer)}</span>
@@ -444,7 +456,24 @@ export default function CaissePage() {
                                     {new Date(p.paidAt).toLocaleDateString('fr-TN')}
                                     {p.note ? <span className="text-slate-400"> — {p.note}</span> : null}
                                   </span>
-                                  <span className="font-medium tabular-nums">{formatTND(p.amount)}</span>
+                                  <span className="flex items-center gap-2">
+                                    <span className="font-medium tabular-nums">{formatTND(p.amount)}</span>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setFiche({
+                                          driverId: l.driverId,
+                                          driverCode: l.driverCode,
+                                          fullName: l.fullName,
+                                          paiement: { reference: p.reference, amount: p.amount, paidAt: p.paidAt, note: p.note },
+                                        })
+                                      }
+                                      aria-label={`Imprimer le paiement ${p.reference}`}
+                                      className="text-slate-400 hover:text-slate-800"
+                                    >
+                                      <Printer className="w-3.5 h-3.5" aria-hidden="true" />
+                                    </button>
+                                  </span>
                                 </li>
                               ))}
                             </ul>
@@ -459,6 +488,8 @@ export default function CaissePage() {
           </Card>
         </section>
       </div>
+
+      <FicheEncaissementModal cible={fiche} caissier={user?.fullName ?? 'Caisse'} onClose={() => setFiche(null)} />
 
       <Modal
         isOpen={!!aPayer}

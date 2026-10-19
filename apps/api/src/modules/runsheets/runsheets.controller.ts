@@ -1,3 +1,4 @@
+import { runsheetValidationService } from './runsheet-validation.service';
 import { runsheetsService } from './runsheets.service';
 import type { Response } from 'express';
 import type { AuthenticatedRequest } from '../../common/auth/auth.middleware';
@@ -21,7 +22,7 @@ const RUNSHEET_STATUSES = [
 
 export class RunsheetsController {
   async getAll(req: AuthenticatedRequest, res: Response): Promise<void> {
-    const { driverId, status, date } = req.query;
+    const { driverId, status, date, vue } = req.query;
     // Le périmètre porté par le jeton prime sur tout paramètre : un livreur
     // ne peut pas élargir sa vue en passant l'identifiant d'un autre
     // chauffeur. Les rôles de bureau, sans périmètre chauffeur, conservent le
@@ -31,6 +32,11 @@ export class RunsheetsController {
       depositId: req.dataScope?.depositId,
       status: status as string,
       date: date as string,
+      vue: typeof vue === 'string' ? vue : undefined,
+    });
+    const compteurs = await runsheetValidationService.compteurs({
+      depositId: req.dataScope?.depositId,
+      driverId: req.dataScope?.assignedDriverId,
     });
 
     res.json({
@@ -38,8 +44,68 @@ export class RunsheetsController {
       data: list,
       meta: {
         total: list.length,
+        compteurs,
       },
     });
+  }
+
+  /** `GET /runsheets/:id/validation` — écran de validation (comme ADEX). */
+  async validation(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      res.json({ success: true, data: await runsheetValidationService.lire(String(req.params.id), req.dataScope?.depositId) });
+    } catch (err: unknown) {
+      respondError(res, err, 'Tournée indisponible.');
+    }
+  }
+
+  /** `POST /runsheets/:id/validation/scan` — `{ code, mode: "REPORTE" | "RETOUR" }`. */
+  async validationScan(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const mode = req.body?.mode === 'RETOUR' ? 'RETOUR' : 'REPORTE';
+      const r = await runsheetValidationService.scanner(String(req.params.id), String(req.body?.code ?? ''), mode, this.acteur(req));
+      res.json({ success: true, data: r.vue, message: r.message });
+    } catch (err: unknown) {
+      respondError(res, err, 'Scan impossible.');
+    }
+  }
+
+  /** `PATCH /runsheets/:id/validation/colis/:packageId` — `{ montant }`. */
+  async validationMontant(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const montant = Number(String(req.body?.montant ?? '').replace(',', '.'));
+      const vue = await runsheetValidationService.corrigerMontant(String(req.params.id), String(req.params.packageId), montant, this.acteur(req));
+      res.json({ success: true, data: vue, message: 'Montant corrigé.' });
+    } catch (err: unknown) {
+      respondError(res, err, 'Correction impossible.');
+    }
+  }
+
+  /** `POST /runsheets/:id/validation` — `{ especesRemises?, notes? }`. */
+  async validationValider(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const brut = req.body?.especesRemises;
+      const especesRemises = brut === undefined || brut === null || brut === '' ? undefined : Number(String(brut).replace(',', '.'));
+      const vue = await runsheetValidationService.valider(String(req.params.id), { especesRemises, notes: req.body?.notes }, this.acteur(req));
+      res.json({
+        success: true,
+        data: vue,
+        message:
+          vue.status === 'CLOTUREE_DEFICIT'
+            ? `Tournée ${vue.runsheetNumber} validée avec un déficit de ${vue.totaux.deficit.toFixed(3)} DT.`
+            : `Tournée ${vue.runsheetNumber} validée : caisse conforme.`,
+      });
+    } catch (err: unknown) {
+      respondError(res, err, 'Validation impossible.');
+    }
+  }
+
+  private acteur(req: AuthenticatedRequest) {
+    return {
+      id: req.user?.id,
+      fullName: req.user?.fullName || 'Caisse',
+      role: req.user?.role as RoleType | undefined,
+      depositId: req.dataScope?.depositId,
+    };
   }
 
   async getByNumber(req: AuthenticatedRequest, res: Response): Promise<void> {

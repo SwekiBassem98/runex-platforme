@@ -161,6 +161,7 @@ export const AUDIT_ACTIONS: Readonly<Record<string, AuditActionDefinition>> = {
   RUNSHEET_DEPART: { label: 'Départ en tournée', category: 'TOURNEE' },
   RUNSHEET_ANNULEE: { label: 'Tournée annulée', category: 'TOURNEE', critical: true },
   RUNSHEET_STATUT: { label: 'Statut de la tournée modifié', category: 'TOURNEE' },
+  RUNSHEET_VALIDATION_SCAN: { label: 'Colis reporté / retourné à la validation de la tournée', category: 'TOURNEE' },
   CAISSE_DECLAREE: {
     label: 'Caisse déclarée par le livreur',
     category: 'FINANCE',

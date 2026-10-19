@@ -1403,6 +1403,78 @@ export interface FicheFinanceExpediteur extends LigneFinanceExpediteur {
   monthly: { month: string; paid: number; withheld: number }[];
 }
 
+export type EtatColisValidation = 'LIVRE' | 'REPORTE' | 'RETOUR' | 'NON_TRAITE' | 'ANNULE';
+
+/** Écran « Validation runsheet » (`GET /runsheets/:id/validation`). */
+export interface ValidationTournee {
+  id: string;
+  runsheetNumber: string;
+  status: string;
+  validable: boolean;
+  tourDate: string;
+  createdAt: string;
+  closedAt: string | null;
+  driver: { id: string; name: string; code: string; plate: string | null; vehicle: string | null };
+  depositName: string;
+  validatedBy: string | null;
+  totaux: {
+    colis: number;
+    pieces: number;
+    livres: number;
+    reportes: number;
+    retours: number;
+    nonTraites: number;
+    annules: number;
+    totalColisLivres: number;
+    totalReglement: number;
+    recetteEspece: number;
+    recetteCheque: number;
+    nbCheques: number;
+    recetteAutre: number;
+    ecart: number;
+    especesRemises: number;
+    deficit: number;
+  };
+  colis: {
+    id: string;
+    trackingNumber: string;
+    barcode: string;
+    pieceCount: number;
+    status: string;
+    statusLabel: string;
+    etat: EtatColisValidation;
+    customerName: string;
+    shipperName: string;
+    price: number;
+    paid: number;
+    ecart: number;
+    method: string | null;
+    paymentStatus: string | null;
+    modifiable: boolean;
+  }[];
+}
+
+export interface CompteursTournees {
+  aValider: number;
+  deficit: number;
+  conformes: number;
+  annulees: number;
+  total: number;
+}
+
+export const validationTourneeApi = {
+  lire: (id: string) => requestData<ValidationTournee>(`/runsheets/${encodeURIComponent(id)}/validation`),
+  scanner: (id: string, code: string, mode: 'REPORTE' | 'RETOUR') =>
+    request<ValidationTournee>(`/runsheets/${encodeURIComponent(id)}/validation/scan`, { method: 'POST', body: { code, mode } }),
+  montant: (id: string, packageId: string, montant: number) =>
+    request<ValidationTournee>(`/runsheets/${encodeURIComponent(id)}/validation/colis/${encodeURIComponent(packageId)}`, {
+      method: 'PATCH',
+      body: { montant },
+    }),
+  valider: (id: string, payload: { especesRemises?: number; notes?: string }) =>
+    request<ValidationTournee>(`/runsheets/${encodeURIComponent(id)}/validation`, { method: 'POST', body: payload }),
+};
+
 export const financeApi = {
   expediteurs: (search?: string) =>
     requestData<FinanceExpediteurs>('/payments/finance/expediteurs', { query: { search: search || undefined } }),
