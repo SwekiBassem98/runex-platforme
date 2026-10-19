@@ -30,6 +30,7 @@ const sansAccents = (v: string) => v.normalize('NFD').replace(/[\u0300-\u036f]/g
 const AGENCE_REGIONALE: Record<string, string> = {
   ariana: 'DEP-TUNIS-AGT',
   'la manouba': 'DEP-TUNIS-AGT',
+  manouba: 'DEP-TUNIS-AGT',
   bizerte: 'DEP-TUNIS-AGT',
   zaghouan: 'DEP-NABEUL-AGT',
   monastir: 'DEP-SOUSSE-AGT',
@@ -38,6 +39,7 @@ const AGENCE_REGIONALE: Record<string, string> = {
   beja: 'DEP-SILIANA-AGT',
   jendouba: 'DEP-SILIANA-AGT',
   'le kef': 'DEP-SILIANA-AGT',
+  kef: 'DEP-SILIANA-AGT',
   kasserine: 'DEP-GAFSA-AGT',
   'sidi bouzid': 'DEP-GAFSA-AGT',
   tozeur: 'DEP-GAFSA-AGT',
@@ -73,11 +75,14 @@ export async function resolveDestinationDepositId(
       });
       if (zone) return zone.depositId;
     }
-    const deposit = await client.deposit.findFirst({
-      where: { isActive: true, governorate: { equals: String(governorate).trim(), mode: 'insensitive' } },
-      orderBy: { isMainHub: 'desc' },
-      select: { id: true },
+    // Comparaison sans accents ni casse : « Gabès » et « Gabes » sont la même
+    // agence. La table des agences est courte, on la compare en mémoire.
+    const agences = await client.deposit.findMany({
+      where: { isActive: true },
+      orderBy: [{ isMainHub: 'desc' }, { createdAt: 'asc' }],
+      select: { id: true, governorate: true },
     });
+    const deposit = agences.find((a) => sansAccents(norm(a.governorate)) === sansAccents(gov));
     if (deposit) return deposit.id;
     // Gouvernorat sans agence : l'agence régionale qui le dessert.
     const region = AGENCE_REGIONALE[sansAccents(gov)];
@@ -92,12 +97,37 @@ export async function resolveDestinationDepositId(
   return mainHubId(client);
 }
 
-/** Agence de rattachement d'un expéditeur (d'après son gouvernorat). */
+/**
+ * Agence proposée pour un expéditeur d'après son gouvernorat — sert de valeur
+ * par défaut à la création du dossier. L'agence retenue est ensuite celle
+ * enregistrée sur la fiche (`Shipper.depositId`).
+ */
 export async function resolveShipperDepositId(
   client: Client,
   shipperGovernorate: string | null | undefined
 ): Promise<string | null> {
+  // Zone du hub (Tunis, Ben Arous) : l'expéditeur dépose ou fait ramasser ses
+  // colis directement au hub central (Acceptation Magasin).
+  if (estZoneHub(shipperGovernorate)) return mainHubId(client);
   return resolveDestinationDepositId(client, shipperGovernorate, null);
+}
+
+/**
+ * Agence de rattachement d'un expéditeur : celle choisie sur sa fiche, sinon
+ * (fiche ancienne ou agence désactivée) celle de son gouvernorat.
+ */
+export async function agenceRattachementExpediteur(
+  client: Client,
+  shipper: { depositId?: string | null; governorate?: string | null }
+): Promise<string | null> {
+  if (shipper.depositId) {
+    const agence = await client.deposit.findFirst({
+      where: { id: shipper.depositId, isActive: true },
+      select: { id: true },
+    });
+    if (agence) return agence.id;
+  }
+  return resolveShipperDepositId(client, shipper.governorate);
 }
 
 export const sameText = (a: string | null | undefined, b: string | null | undefined) => norm(a) === norm(b);
@@ -129,4 +159,17 @@ export const LIBELLE_ZONE_HUB = (process.env.HUB_ZONE_GOVERNORATES ?? 'Tunis,Ben
 /** Vrai si le gouvernorat est dans la zone du hub (Tunis, Ben Arous par défaut). */
 export function estZoneHub(governorate: string | null | undefined): boolean {
   return ZONE_HUB.includes(sansAccents(norm(governorate)));
+}
+
+/**
+ * Vrai si l'expéditeur relève de la zone du hub : son agence de rattachement est
+ * le hub central (ou une agence de la zone du hub). Sans agence enregistrée, on
+ * s'en tient au gouvernorat de la fiche.
+ */
+export function expediteurZoneHub(shipper: {
+  governorate?: string | null;
+  deposit?: { isMainHub: boolean; governorate: string | null } | null;
+}): boolean {
+  if (shipper.deposit) return shipper.deposit.isMainHub || estZoneHub(shipper.deposit.governorate);
+  return estZoneHub(shipper.governorate);
 }

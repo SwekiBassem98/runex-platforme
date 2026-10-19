@@ -1,7 +1,7 @@
 import { SELECT_TARIF, tarifDepuisConfig } from '../../common/tarifs/tarif-expediteur';
 import { colisService, DEFAULT_DELIVERY_FEE } from './colis.service';
 import { getPrisma } from '../../common/database/prisma-context';
-import { resolveDestinationDepositId, resolveShipperDepositId } from '../../common/routing/deposit-routing';
+import { agenceRattachementExpediteur, resolveDestinationDepositId, resolveShipperDepositId } from '../../common/routing/deposit-routing';
 import { auditService } from '../../common/audit/audit.service';
 import { receptionService } from '../depot/reception.service';
 import type { Response } from 'express';
@@ -79,7 +79,8 @@ export class ColisController {
   /**
    * `GET /colis/agences-livraison?governorate=&delegation=` — agences qui
    * peuvent livrer (champ « Agence de sortie » du formulaire) et celle que le
-   * routage propose pour l'adresse saisie.
+   * routage propose pour l'adresse saisie ; `suggestionRattachement` est
+   * l'agence proposée pour un expéditeur de ce gouvernorat.
    */
   async agencesLivraison(req: AuthenticatedRequest, res: Response): Promise<void> {
     const prisma = getPrisma();
@@ -93,22 +94,26 @@ export class ColisController {
     // Frais par type de colis : le formulaire affiche celui du type choisi.
     const tarifs = tarifDepuisConfig(config).livraison;
     const deliveryFee = config ? tarifs.MOYENNE : DEFAULT_DELIVERY_FEE;
-    // Agence de départ proposée : celle qui dessert l'adresse de l'expéditeur.
+    // Agence de départ proposée : l'agence de rattachement de l'expéditeur.
     const shipper = shipperId
-      ? await prisma.shipper.findUnique({ where: { id: shipperId }, select: { governorate: true } })
+      ? await prisma.shipper.findUnique({ where: { id: shipperId }, select: { governorate: true, depositId: true } })
       : null;
-    const suggestionDepart = shipper?.governorate ? await resolveShipperDepositId(prisma, shipper.governorate) : null;
-    const [agences, suggestion] = await Promise.all([
+    const suggestionDepart = shipper ? await agenceRattachementExpediteur(prisma, shipper) : null;
+    const gouvernorat = req.query.governorate ? String(req.query.governorate) : null;
+    const [agences, suggestion, suggestionRattachement] = await Promise.all([
       prisma.deposit.findMany({
         where: { isActive: true, status: { not: 'FERME' } },
         select: { id: true, name: true, governorate: true, isMainHub: true },
         orderBy: [{ isMainHub: 'desc' }, { name: 'asc' }],
       }),
-      req.query.governorate
-        ? resolveDestinationDepositId(prisma, String(req.query.governorate), req.query.delegation ? String(req.query.delegation) : null)
+      gouvernorat
+        ? resolveDestinationDepositId(prisma, gouvernorat, req.query.delegation ? String(req.query.delegation) : null)
         : Promise.resolve(null),
+      // Agence de rattachement proposée pour un expéditeur de ce gouvernorat
+      // (formulaire du dossier expéditeur).
+      gouvernorat ? resolveShipperDepositId(prisma, gouvernorat) : Promise.resolve(null),
     ]);
-    res.json({ success: true, data: { agences, suggestion, suggestionDepart, deliveryFee, tarifs } });
+    res.json({ success: true, data: { agences, suggestion, suggestionDepart, suggestionRattachement, deliveryFee, tarifs } });
   }
 
   async create(req: AuthenticatedRequest, res: Response): Promise<void> {
@@ -138,9 +143,9 @@ export class ColisController {
         res.status(400).json({ success: false, message: 'Identifiant expéditeur invalide.' });
         return;
       }
-      // Un expéditeur ne choisit pas les agences : le départ est l'agence qui
-      // dessert l'adresse de son compte (gouvernorat saisi à la création du
-      // compte), la sortie celle qui dessert l'adresse du destinataire.
+      // Un expéditeur ne choisit pas les agences : le départ est son agence de
+      // rattachement (choisie à la création de son dossier), la sortie celle
+      // qui dessert l'adresse du destinataire.
       const corps = staff
         ? req.body
         : (() => {

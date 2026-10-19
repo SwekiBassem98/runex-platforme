@@ -7,7 +7,13 @@ sécurité et d'intégrité de RUNEX.
 ## Routage des colis
 - **Agence de destination** : celle qui livre l'adresse — zone de livraison
   (gouvernorat + délégation), sinon agence du même gouvernorat, sinon le hub.
-- **Agence d'origine** : celle de l'expéditeur (gouvernorat de l'expéditeur).
+- **Agence d'origine** : l'**agence de rattachement** de l'expéditeur, choisie
+  sur son dossier (`Shipper.depositId`, Administration › Expéditeurs). Elle est
+  proposée d'après le gouvernorat (hub central pour Tunis et Ben Arous, agence
+  du gouvernorat, sinon agence régionale) et reste modifiable. Un colis créé y
+  est attendu : c'est son départ et son dépôt actuel jusqu'à la réception.
+  Changer l'agence d'un dossier déplace ses colis pas encore reçus ; ceux déjà
+  en circulation gardent leur position et y reviendront en cas de retour.
   C'est vers elle que repartent ses retours.
 - Calculées à la création du colis, recalculées si l'adresse change avant le
   départ. La migration `20261011000000_interdepot_scan_flow` corrige les colis existants.
@@ -47,8 +53,8 @@ de l'API, par défaut `Tunis,Ben Arous`).
 
 | Écran | Reçoit |
 |---|---|
-| Dépôt › Acceptation Magasin | les colis des expéditeurs **de Tunis et Ben Arous**, déposés directement au hub. Un colis d'un autre gouvernorat est refusé (`WRONG_CHANNEL`, 409) avec un lien vers l'acceptation inter dépôt. Les retours (`RETOUR_DEPOT`) restent acceptés. |
-| Inter dépôt livraison › Acceptation | les colis des expéditeurs **hors zone** (Sousse, Sfax…), arrivés de leur agence, avec ou sans bordereau. Sans bordereau, le colis (créé, ramassé…) passe « reçu au dépôt » (journal `INTERDEPOT_ACCEPTATION_DIRECTE`). Un colis d'un expéditeur de la zone est renvoyé vers l'Acceptation Magasin. |
+| Dépôt › Acceptation Magasin | les colis des expéditeurs **rattachés au hub** (zone Tunis et Ben Arous), déposés directement au hub. Un colis d'un autre gouvernorat est refusé (`WRONG_CHANNEL`, 409) avec un lien vers l'acceptation inter dépôt. Les retours (`RETOUR_DEPOT`) restent acceptés. |
+| Inter dépôt livraison › Acceptation | les colis des expéditeurs **rattachés à une autre agence** (Sousse, Sfax…), arrivés de leur agence, avec ou sans bordereau. Sans bordereau, le colis (créé, ramassé…) passe « reçu au dépôt » (journal `INTERDEPOT_ACCEPTATION_DIRECTE`). Un colis d'un expéditeur de la zone est renvoyé vers l'Acceptation Magasin. |
 | Inter dépôt retours › Acceptation | les retours de **toutes les agences**, avec ou sans bordereau. Sans bordereau : colis en retour dans une autre agence, reporté ou en échec, hors tournée → « retour au dépôt » (journal `INTERDEPOT_RETOUR_DIRECT`). |
 | Inter dépôt retours › Ajouter | *agence source* : uniquement les agences **hors zone**. Les retours des expéditeurs de Tunis et Ben Arous se rendent par « Retours expéditeur » ; l'API refuse un bordereau de retours vers une agence de la zone. |
 

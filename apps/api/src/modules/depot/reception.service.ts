@@ -34,7 +34,7 @@ import {
   type ScannedCodeKind,
 } from './package-identity';
 import { PackageStatus, RoleType, packageStatusLabel } from '@logixpress/types';
-import { LIBELLE_ZONE_HUB, estZoneHub } from '../../common/routing/deposit-routing';
+import { LIBELLE_ZONE_HUB, expediteurZoneHub } from '../../common/routing/deposit-routing';
 
 /**
  * Statuts depuis lesquels une réception a encore un sens.
@@ -252,15 +252,15 @@ export class ReceptionService {
       };
     }
 
-    // Acceptation Magasin : expéditeurs de Tunis et Ben Arous seulement. Les
-    // colis des autres gouvernorats arrivent par leur agence, en inter-dépôt.
+    // Acceptation Magasin : expéditeurs rattachés au hub (zone Tunis, Ben
+    // Arous) seulement. Les autres arrivent par leur agence, en inter-dépôt.
     const premiereEntree = record.status !== PackageStatus.RETOUR_DEPOT;
-    if (premiereEntree && !estZoneHub(record.shipper.governorate)) {
+    if (premiereEntree && !expediteurZoneHub(record.shipper)) {
       return {
         outcome: 'WRONG_CHANNEL',
         accepted: false,
         message:
-          `Expéditeur de ${record.shipper.governorate || 'hors zone'} : l'Acceptation Magasin ne reçoit que les colis des expéditeurs de ${LIBELLE_ZONE_HUB}. ` +
+          `Expéditeur rattaché à ${record.shipper.deposit?.name ?? record.shipper.governorate ?? 'une autre agence'} : l'Acceptation Magasin ne reçoit que les colis des expéditeurs de ${LIBELLE_ZONE_HUB}. ` +
           'Acceptez ce colis dans « Inter dépôt livraison › Acceptation ».',
         package: await this.toPreview(record),
         receivedAtDeposit: deposit.name,
@@ -418,7 +418,13 @@ export class ReceptionService {
         currentDepositId: true,
         customer: { select: { fullName: true, primaryPhone: true } },
         customerAddress: { select: { governorate: true, delegation: true } },
-        shipper: { select: { companyName: true, governorate: true } },
+        shipper: {
+          select: {
+            companyName: true,
+            governorate: true,
+            deposit: { select: { name: true, isMainHub: true, governorate: true } },
+          },
+        },
         currentDeposit: { select: { name: true } },
       },
     });

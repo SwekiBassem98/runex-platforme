@@ -196,6 +196,7 @@ export class ShippersController {
         email: body.email,
         governorate: body.governorate,
         address: body.address,
+        depositId: body.depositId ?? null,
         isActive: booleen(body.isActive),
         tarif: body.tarif,
         ...(body.compte

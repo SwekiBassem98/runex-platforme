@@ -95,9 +95,9 @@ const DEPOSITS = [
 
 const SHIPPERS = [
 
-  { code: 'EXP-BLUESTAR', companyName: 'BlueStar E-Commerce', brandName: 'BlueStar', taxId: '1234567/A/M/000', phone: '58199108', email: 'contact@bluestar.tn', governorate: 'Ben Arous', address: 'Zone industrielle, Ben Arous', secretCode: '1234' },
-  { code: 'EXP-BENHCINE', companyName: 'Benhcine Delivery', brandName: 'Benhcine', taxId: '7654321/B/M/000', phone: '71234567', email: 'commandes@benhcine.tn', governorate: 'Tunis', address: 'Avenue Habib Bourguiba, Tunis', secretCode: '5678' },
-  { code: 'EXP-TECHSTORE', companyName: 'TechStore Tunisie', brandName: 'TechStore', taxId: '9876543/C/M/000', phone: '70345678', email: 'support@techstore.tn', governorate: 'Sousse', address: 'Avenue Yasser Arafat, Sousse', secretCode: '9012' },
+  { code: 'EXP-BLUESTAR', companyName: 'BlueStar E-Commerce', brandName: 'BlueStar', taxId: '1234567/A/M/000', phone: '58199108', email: 'contact@bluestar.tn', governorate: 'Ben Arous', address: 'Zone industrielle, Ben Arous', depot: 'DEP-BEN-AROUS-HUB', secretCode: '1234' },
+  { code: 'EXP-BENHCINE', companyName: 'Benhcine Delivery', brandName: 'Benhcine', taxId: '7654321/B/M/000', phone: '71234567', email: 'commandes@benhcine.tn', governorate: 'Tunis', address: 'Avenue Habib Bourguiba, Tunis', depot: 'DEP-BEN-AROUS-HUB', secretCode: '5678' },
+  { code: 'EXP-TECHSTORE', companyName: 'TechStore Tunisie', brandName: 'TechStore', taxId: '9876543/C/M/000', phone: '70345678', email: 'support@techstore.tn', governorate: 'Sousse', address: 'Avenue Yasser Arafat, Sousse', depot: 'DEP-SOUSSE-AGT', secretCode: '9012' },
 ];
 
 const CUSTOMERS = [
@@ -234,6 +234,8 @@ async function seedReferenceData(): Promise<SeedContext> {
         email: shipper.email,
         governorate: shipper.governorate,
         address: shipper.address,
+        // Agence de rattachement : le hub pour la zone Tunis / Ben Arous.
+        depositId: deposits.get(shipper.depot)?.id ?? hub.id,
         config: {
           create: {
             defaultDeliveryFee: '8.000',

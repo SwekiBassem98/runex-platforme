@@ -7,7 +7,8 @@
  * `GET /colis/agences-livraison` renvoie la liste des agences, celle que le
  * routage propose pour l'adresse saisie (agence de sortie), celle qui dessert
  * l'expéditeur (agence de départ proposée), et les frais de livraison de
- * l'expéditeur (8 DT par défaut) qui s'ajoutent au prix du colis.
+ * l'expéditeur (8 DT par défaut) qui s'ajoutent au prix du colis — et
+ * l'agence de rattachement proposée pour un expéditeur du gouvernorat donné.
  */
 
 import { useEffect, useState } from 'react';
@@ -30,6 +31,7 @@ export function useAgencesLivraison(governorate: string, delegation: string, shi
   const [agences, setAgences] = useState<AgenceLivraison[]>([]);
   const [suggestion, setSuggestion] = useState<string | null>(null);
   const [suggestionDepart, setSuggestionDepart] = useState<string | null>(null);
+  const [suggestionRattachement, setSuggestionRattachement] = useState<string | null>(null);
   const [fraisNormal, setFraisNormal] = useState<number>(FRAIS_LIVRAISON_DEFAUT);
   const [tarifs, setTarifs] = useState<Partial<Record<string, number>>>({});
 
@@ -41,6 +43,7 @@ export function useAgencesLivraison(governorate: string, delegation: string, shi
         agences: AgenceLivraison[];
         suggestion: string | null;
         suggestionDepart?: string | null;
+        suggestionRattachement?: string | null;
         deliveryFee: number;
         tarifs?: Record<string, number>;
       }>(
@@ -58,6 +61,7 @@ export function useAgencesLivraison(governorate: string, delegation: string, shi
           setAgences(r.agences);
           setSuggestion(r.suggestion);
           setSuggestionDepart(r.suggestionDepart ?? null);
+          setSuggestionRattachement(r.suggestionRattachement ?? null);
           if (Number.isFinite(r.deliveryFee)) setFraisNormal(r.deliveryFee);
           setTarifs(r.tarifs ?? {});
         })
@@ -71,7 +75,7 @@ export function useAgencesLivraison(governorate: string, delegation: string, shi
 
   const choisi = taille ? tarifs[taille] : undefined;
   const frais = typeof choisi === 'number' && Number.isFinite(choisi) ? choisi : fraisNormal;
-  return { agences, suggestion, suggestionDepart, frais, tarifs };
+  return { agences, suggestion, suggestionDepart, suggestionRattachement, frais, tarifs };
 }
 
 /** Total à encaisser : prix du colis + frais de livraison (arrondi au millime). */

@@ -42,7 +42,7 @@ import {
 import { notFound, badRequest, conflict, asUuid, ApiError } from '../../common/errors/api-error';
 import { packageWorkflowService } from '../colis/package-workflow.service';
 import { nextTransferNumber, tunisDayStamp } from '../../common/database/numbering';
-import { GOUVERNORATS_ZONE_HUB, LIBELLE_ZONE_HUB, estZoneHub, mainHubId } from '../../common/routing/deposit-routing';
+import { GOUVERNORATS_ZONE_HUB, LIBELLE_ZONE_HUB, estZoneHub, expediteurZoneHub, mainHubId } from '../../common/routing/deposit-routing';
 
 /* ------------------------------------------------------------------ */
 /* Types publics                                                      */
@@ -287,7 +287,14 @@ async function findPackageByCode(client: Prisma.TransactionClient | ReturnType<t
     destinationDeposit: { select: { name: true } },
     originDeposit: { select: { name: true } },
     currentDeposit: { select: { name: true } },
-    shipper: { select: { companyName: true, brandName: true, governorate: true } },
+    shipper: {
+      select: {
+        companyName: true,
+        brandName: true,
+        governorate: true,
+        deposit: { select: { name: true, isMainHub: true, governorate: true } },
+      },
+    },
   } as const;
   // Le code complet d'abord (un numéro de suivi peut lui-même contenir un tiret).
   const exact = await client.package.findFirst({
@@ -1075,9 +1082,9 @@ export class InterDepotsService {
             : `Le colis ${pkg.trackingNumber} est « ${libelle} » : il n'est attendu dans aucun inter-dépôt en cours.`
         );
       }
-      if (estZoneHub(pkg.shipper.governorate)) {
+      if (expediteurZoneHub(pkg.shipper)) {
         throw conflict(
-          `Le colis ${pkg.trackingNumber} vient d'un expéditeur de ${pkg.shipper.governorate} : acceptez-le dans « Acceptation Magasin ». ` +
+          `Le colis ${pkg.trackingNumber} vient d'un expéditeur rattaché à ${pkg.shipper.deposit?.name ?? pkg.shipper.governorate} : acceptez-le dans « Acceptation Magasin ». ` +
             `Ici, on accepte les colis des expéditeurs hors ${LIBELLE_ZONE_HUB} (Sousse, Sfax…).`
         );
       }
@@ -1086,7 +1093,7 @@ export class InterDepotsService {
         to: PackageStatus.RECU_DEPOT,
         actor: acteur,
         title: `Reçu à ${nomDepot}`,
-        note: `Arrivé de ${pkg.originDeposit?.name ?? "l'agence de l'expéditeur"} (expéditeur de ${pkg.shipper.governorate}) — ${pkg.pieceCount} pièce(s)`,
+        note: `Arrivé de ${pkg.originDeposit?.name ?? pkg.shipper.deposit?.name ?? "l'agence de l'expéditeur"} (expéditeur de ${pkg.shipper.governorate}) — ${pkg.pieceCount} pièce(s)`,
         location: nomDepot,
         auditAction: 'INTERDEPOT_ACCEPTATION_DIRECTE',
         reason: `Accepté au dépôt ${nomDepot} sans bordereau`,
@@ -1129,7 +1136,7 @@ export class InterDepotsService {
     return {
       message:
         type === InterDepotType.LIVRAISON
-          ? `Colis ${pkg.trackingNumber} reçu à ${nomDepot} (${pkg.pieceCount}/${pkg.pieceCount}) — expéditeur de ${pkg.shipper.governorate}.`
+          ? `Colis ${pkg.trackingNumber} reçu à ${nomDepot} (${pkg.pieceCount}/${pkg.pieceCount}) — expéditeur rattaché à ${pkg.shipper.deposit?.name ?? pkg.shipper.governorate}.`
           : `Retour ${pkg.trackingNumber} reçu à ${nomDepot} (venu de ${provenance}).`,
       trackingNumber: pkg.trackingNumber,
       pieceNumber: pkg.pieceCount,

@@ -29,6 +29,8 @@ import {
   type TarifSaisie,
 } from '@/features/expediteur-admin/TarifExpediteur';
 import React, { useCallback, useEffect, useState } from 'react';
+import { GOUVERNORATS } from '@/features/expediteur/lib/libelles';
+import { useAgencesLivraison } from '@/features/colis/useAgencesLivraison';
 import { Building2, Pencil, Plus, RotateCcw, ShieldCheck, UserPlus, UserX } from 'lucide-react';
 import {
   Badge,
@@ -128,6 +130,7 @@ export default function AdminExpediteursPage() {
     email: '',
     governorate: '',
     address: '',
+    depositId: '',
     isActive: true,
     compteFullName: '',
     compteEmail: '',
@@ -135,6 +138,16 @@ export default function AdminExpediteursPage() {
     comptePassword: '',
     compteRole: 'EXPEDITEUR_ADMIN',
   });
+
+  // Agence de rattachement : proposée d'après le gouvernorat (le hub central
+  // pour Tunis et Ben Arous), modifiable. Une fois choisie à la main, elle ne
+  // suit plus le gouvernorat.
+  const [agenceChoisie, setAgenceChoisie] = useState(false);
+  const { agences, suggestionRattachement } = useAgencesLivraison(form.governorate, '');
+  useEffect(() => {
+    if (!formulaireOuvert || agenceChoisie || !suggestionRattachement || !form.governorate) return;
+    setForm((f) => (f.depositId === suggestionRattachement ? f : { ...f, depositId: suggestionRattachement }));
+  }, [formulaireOuvert, agenceChoisie, suggestionRattachement, form.governorate]);
 
   /** Met à jour un champ et efface l'erreur de validation qui lui était attachée. */
   const majForm = (patch: Partial<typeof form>) => {
@@ -188,6 +201,7 @@ export default function AdminExpediteursPage() {
     setErreurForm(null);
     setErreursChamps({});
     setAvecCompte(true);
+    setAgenceChoisie(false);
     setTarif(TARIF_SAISIE_VIDE);
     setForm({
       code: '',
@@ -199,6 +213,7 @@ export default function AdminExpediteursPage() {
       email: '',
       governorate: '',
       address: '',
+      depositId: '',
       isActive: true,
       compteFullName: '',
       compteEmail: '',
@@ -214,6 +229,8 @@ export default function AdminExpediteursPage() {
     setErreurForm(null);
     setErreursChamps({});
     setAvecCompte(false);
+    // Dossier existant : on garde son agence (sauf s'il n'en avait pas).
+    setAgenceChoisie(Boolean(s.depositId));
     setTarif(saisieDepuisTarif(s.tarif));
     setForm({
       code: s.code,
@@ -225,6 +242,7 @@ export default function AdminExpediteursPage() {
       email: s.email,
       governorate: s.governorate,
       address: s.address,
+      depositId: s.depositId ?? '',
       isActive: s.isActive,
       compteFullName: '',
       compteEmail: '',
@@ -257,6 +275,7 @@ export default function AdminExpediteursPage() {
     if (!form.email.trim()) erreurs.email = 'L’adresse e-mail du dossier est obligatoire.';
     if (!form.governorate.trim()) erreurs.governorate = 'Le gouvernorat est obligatoire.';
     if (!form.address.trim()) erreurs.address = 'L’adresse est obligatoire.';
+    if (!form.depositId) erreurs.depositId = 'Choisissez l’agence de rattachement.';
     if (!enEdition && avecCompte) {
       if (!form.compteFullName.trim()) erreurs.compteFullName = 'Le nom du contact est obligatoire.';
       if (!form.compteEmail.trim()) erreurs.compteEmail = 'L’e-mail du compte est obligatoire.';
@@ -283,6 +302,7 @@ export default function AdminExpediteursPage() {
           email: form.email,
           governorate: form.governorate,
           address: form.address,
+          depositId: form.depositId,
           tarif: corpsTarif(tarif),
         });
         setMessage(`Expéditeur « ${form.companyName} » mis à jour.`);
@@ -297,6 +317,7 @@ export default function AdminExpediteursPage() {
           email: form.email,
           governorate: form.governorate,
           address: form.address,
+          depositId: form.depositId,
           isActive: form.isActive,
           tarif: corpsTarif(tarif),
         };
@@ -493,6 +514,7 @@ export default function AdminExpediteursPage() {
                 identifiant={`${s.code} · ${s.phone}`}
                 champs={[
                   { libelle: 'Gouvernorat', valeur: s.governorate },
+                  { libelle: 'Agence', valeur: s.depositName ?? '—' },
                   {
                     libelle: 'Colis',
                     valeur: typeof s.packagesCount === 'number' ? String(s.packagesCount) : '—',
@@ -545,7 +567,10 @@ export default function AdminExpediteursPage() {
                   <Td>
                     <div className="text-sm text-slate-700">{s.phone}</div>
                     <div className="text-xs text-slate-500">{s.email}</div>
-                    <div className="text-xs text-slate-400">{s.governorate}</div>
+                    <div className="text-xs text-slate-400">
+                      {s.governorate}
+                      {s.depositName ? ` · ${s.depositName}` : ''}
+                    </div>
                   </Td>
                   <Td>
                     <span className="text-sm font-medium text-slate-900">
@@ -719,12 +744,22 @@ export default function AdminExpediteursPage() {
 
           <div className="grid gap-4 sm:grid-cols-2">
             <FormField label="Gouvernorat" required error={erreursChamps.governorate}>
-              <input
+              <select
                 value={form.governorate}
                 onChange={(e) => majForm({ governorate: e.target.value })}
                 className={CHAMP_SAISIE}
-                autoComplete="off"
-              />
+              >
+                <option value="">Choisir…</option>
+                {/* Ancienne saisie libre hors liste : conservée pour ne rien perdre. */}
+                {form.governorate && !(GOUVERNORATS as readonly string[]).includes(form.governorate) ? (
+                  <option value={form.governorate}>{form.governorate}</option>
+                ) : null}
+                {GOUVERNORATS.map((g) => (
+                  <option key={g} value={g}>
+                    {g}
+                  </option>
+                ))}
+              </select>
             </FormField>
             <FormField label="Adresse" required error={erreursChamps.address}>
               <input
@@ -735,6 +770,31 @@ export default function AdminExpediteursPage() {
               />
             </FormField>
           </div>
+
+          <FormField
+            label="Agence de rattachement"
+            required
+            error={erreursChamps.depositId}
+            helpText="Ses colis y sont déposés ou ramassés et en partent ; ses retours y reviennent. Proposée d’après le gouvernorat."
+          >
+            <select
+              value={form.depositId}
+              onChange={(e) => {
+                setAgenceChoisie(true);
+                majForm({ depositId: e.target.value });
+              }}
+              className={CHAMP_SAISIE}
+              data-testid="agence-rattachement"
+            >
+              <option value="">Choisir…</option>
+              {agences.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                  {a.isMainHub ? ' (hub central)' : ''}
+                </option>
+              ))}
+            </select>
+          </FormField>
 
           <ChampsTarif
             valeur={tarif}
@@ -870,7 +930,7 @@ export default function AdminExpediteursPage() {
         isOpen={detail !== null}
         onClose={() => setDetail(null)}
         title={detail?.companyName ?? ''}
-        subtitle={detail ? `${detail.code} · ${detail.governorate}` : undefined}
+        subtitle={detail ? `${detail.code} · ${detail.governorate} · ${detail.depositName ?? 'agence non définie'}` : undefined}
         size="lg"
       >
         {detail ? (
@@ -900,6 +960,13 @@ export default function AdminExpediteursPage() {
                   </Badge>
                 </div>
               </Card>
+            </div>
+
+            <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+              <span className="text-slate-500">Agence de rattachement : </span>
+              <span className="font-medium text-slate-900" data-testid="detail-agence">
+                {detail.depositName ?? 'Non définie'}
+              </span>
             </div>
 
             <div>
