@@ -117,6 +117,8 @@ export class RunsheetsService {
     depositId?: string;
     status?: string;
     date?: string;
+    /** `actives` : tournées en cours ; `historique` : validées ou annulées. */
+    vue?: string;
   }): Promise<RunsheetSummaryDto[]> {
     const prisma = getPrisma();
     const persistedStatus = filters?.status
@@ -134,11 +136,17 @@ export class RunsheetsService {
           ? { driverId: asUuid(filters.driverId) ?? '00000000-0000-0000-0000-000000000000' }
           : {}),
         ...(filters?.depositId ? { depositId: filters.depositId } : {}),
-        ...(persistedStatus ? { status: persistedStatus } : {}),
+        ...(persistedStatus
+          ? { status: persistedStatus }
+          : filters?.vue === 'historique'
+            ? { status: { in: ['CLOTUREE_CONFORME', 'CLOTUREE_DEFICIT', 'ANNULEE'] as never } }
+            : filters?.vue === 'actives'
+              ? { status: { notIn: ['CLOTUREE_CONFORME', 'CLOTUREE_DEFICIT', 'ANNULEE'] as never } }
+              : {}),
         ...(filters?.date ? { tourDate: parseTourDate(filters.date) } : {}),
       },
       include: RUNSHEET_INCLUDE,
-      orderBy: { tourDate: 'desc' },
+      orderBy: filters?.vue === 'historique' ? [{ closureTime: 'desc' }, { tourDate: 'desc' }] : [{ tourDate: 'desc' }, { createdAt: 'desc' }],
       take: 200,
     });
 
@@ -1186,6 +1194,7 @@ export class RunsheetsService {
       collectedChecks: Number(record.collectedChecks),
       deficitAmount: Number(record.deficitAmount),
       failedCount: failed.length,
+      montantLivre: Math.round(delivered.reduce((s, p) => s + Number(p.collectedAmount ?? 0), 0) * 1000) / 1000,
       notes: record.notes ?? undefined,
       packages,
       validatedAt: record.closedByUserId ? record.updatedAt.toISOString() : undefined,

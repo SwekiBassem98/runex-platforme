@@ -291,6 +291,25 @@ Tarif par expéditeur et Finance (19/10) — migration `20261019000000_tarifs_ex
   recherche d'un expéditeur et sa fiche (tarif, calcul du prochain paiement,
   bordereaux). Test : `qa/qa-tarifs-finance-38.mjs`.
 
+Validation des tournées et fiche d'encaissement (19/10) — aucune migration :
+
+- liste des tournées : compteurs (à valider, non soldées, validées correctes,
+  toutes), onglets « Tournées en cours » / « Historique », colonnes non traité,
+  livré, reportés/retours, montant livré, déficit ; boutons « Valider » et
+  « Imprimer » sur chaque tournée ;
+- écran « Validation de la tournée » (`/runsheets/<n°>/validation`, comme
+  ADEX) : clôture (total des colis livrés, total réglé, recette espèces et
+  chèques, compteurs), recette calculée, espèces remises et déficit, scan des
+  colis non livrés en « Reporté » ou « Retour définitif », montant payé
+  corrigeable, liste des colis avec écarts ; « Valider » clôture la tournée
+  (conforme ou déficit), valide les encaissements (ou les écarte s'ils ne
+  correspondent pas au prix), libère les colis non livrés et range la tournée
+  dans l'historique ;
+- Caisse société & livreurs : bouton d'impression sur chaque livreur et
+  chaque paiement → fiche « ENCAISSEMENT » (billets et pièces, opérations,
+  total, fond de caisse, décalage, signatures). Test :
+  `qa/qa-validation-tournee-39.mjs`.
+
 ## 7. Liste de contrôle finale
 
 - [ ] `/api/v1/health` : ok, base `up`

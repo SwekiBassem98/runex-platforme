@@ -87,7 +87,10 @@ import {
   type PackageDto,
   type AuthUser,
 } from '@logixpress/types';
-import { createApiFetch } from '@/lib/api';
+import { createApiFetch, validationTourneeApi, type CompteursTournees } from '@/lib/api';
+import { imprimerValidationTournee } from '@/lib/impression-documents';
+import { useRouter } from 'next/navigation';
+import { CompteursValidation } from '@/features/runsheets/CompteursValidation';
 import { playFeedback } from '@/lib/feedback';
 import { CarteScanAjoutRetrait, type ModeScan } from '@/features/scan/CarteScanAjoutRetrait';
 import { PermissionCode } from '@logixpress/types';
@@ -119,6 +122,9 @@ const RUNSHEET_STATUS_BADGES: Record<string, { label: string; bg: string; text: 
   ANNULEE: { label: 'Annulée', bg: 'bg-rose-50', text: 'text-rose-800', border: 'border-rose-300' },
 };
 
+/** Tournées que la caisse peut valider (bouton « Valider »). */
+const TOURNEE_VALIDABLE = ['EN_ATTENTE', 'VALIDEE_DEPART', 'EN_COURS', 'RETOUR_DEPOT'];
+
 /** Statuts de tournée où l'on peut encore ajouter ou retirer un colis (y compris en tournée). */
 const TOURNEE_MODIFIABLE = ['BROUILLON', 'EN_ATTENTE', 'VALIDEE_DEPART', 'EN_COURS'];
 
@@ -126,6 +132,10 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
   const { addToast } = useToast();
 
   const [viewMode, setViewMode] = useState<'list' | 'detail'>('list');
+  const router = useRouter();
+  /** « En cours » : tournées à suivre et à valider ; « Historique » : validées ou annulées. */
+  const [vue, setVue] = useState<'actives' | 'historique'>('actives');
+  const [compteurs, setCompteurs] = useState<CompteursTournees | null>(null);
   const [selectedRunsheetId, setSelectedRunsheetId] = useState<string | null>(null);
   const [runsheet, setRunsheet] = useState<RunsheetSummaryDto | null>(null);
 
@@ -229,6 +239,7 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
       if (statusFilter !== 'ALL') params.append('status', statusFilter);
       if (driverFilter !== 'ALL') params.append('driverId', driverFilter);
       if (dateFilter) params.append('date', dateFilter);
+      params.append('vue', vue);
 
       const res = await fetch(`/api/v1/runsheets?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -241,6 +252,7 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
       }
       setErreur(null);
       setRunsheets(data.data);
+      setCompteurs(data.meta?.compteurs ?? null);
     } catch {
       setRunsheets([]);
       setErreur('Impossible de joindre le serveur RUNEX. Vérifiez votre connexion.');
@@ -313,7 +325,16 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
 
   useEffect(() => {
     loadRunsheets();
-  }, [statusFilter, driverFilter, dateFilter]);
+  }, [statusFilter, driverFilter, dateFilter, vue]);
+
+  const ouvrirValidation = (r: { runsheetNumber: string }) => router.push(`/runsheets/${encodeURIComponent(r.runsheetNumber)}/validation`);
+  const imprimerTournee = async (r: { runsheetNumber: string }) => {
+    try {
+      imprimerValidationTournee(await validationTourneeApi.lire(r.runsheetNumber));
+    } catch (e) {
+      addToast({ type: 'error', title: 'Impression impossible', message: e instanceof Error ? e.message : '' });
+    }
+  };
 
   useEffect(() => {
     if (selectedRunsheetId) {
@@ -750,6 +771,39 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
           />
 
           <div className="px-4 sm:px-6 space-y-4">
+            <CompteursValidation
+              compteurs={compteurs}
+              actif={vue}
+              onChoisir={(v, statut) => {
+                setVue(v);
+                setStatusFilter(statut ?? 'ALL');
+              }}
+            />
+
+            <div role="tablist" aria-label="Tournées" className="inline-flex p-1 rounded-xl bg-slate-100 border border-slate-200">
+              {(
+                [
+                  ['actives', 'Tournées en cours'],
+                  ['historique', 'Historique (validées et annulées)'],
+                ] as const
+              ).map(([cle, libelle]) => (
+                <button
+                  key={cle}
+                  type="button"
+                  role="tab"
+                  aria-selected={vue === cle}
+                  data-testid={`onglet-${cle}`}
+                  onClick={() => {
+                    setVue(cle);
+                    setStatusFilter('ALL');
+                  }}
+                  className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${vue === cle ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                >
+                  {libelle}
+                </button>
+              ))}
+            </div>
+
             <FilterBar
               hasActiveFilters={aFiltres}
               resume={resumeFiltres}
@@ -775,16 +829,22 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
                 selectedValue={statusFilter}
                 actif={statusFilter !== 'ALL'}
                 onChange={setStatusFilter}
-                options={[
-                  { label: 'Tous les statuts', value: 'ALL' },
-                  { label: 'Brouillon', value: 'BROUILLON' },
-                  { label: 'Prête au départ', value: 'EN_ATTENTE' },
-                  { label: 'En tournée', value: 'EN_COURS' },
-                  { label: 'Retour dépôt (caisse à valider)', value: 'RETOUR_DEPOT' },
-                  { label: 'Clôturée conforme', value: 'CLOTUREE_CONFORME' },
-                  { label: 'Clôturée en déficit', value: 'CLOTUREE_DEFICIT' },
-                  { label: 'Annulée', value: 'ANNULEE' },
-                ]}
+                options={
+                  vue === 'actives'
+                    ? [
+                        { label: 'Tous les statuts', value: 'ALL' },
+                        { label: 'Brouillon', value: 'BROUILLON' },
+                        { label: 'Prête au départ', value: 'EN_ATTENTE' },
+                        { label: 'En tournée', value: 'EN_COURS' },
+                        { label: 'Retour dépôt (caisse à valider)', value: 'RETOUR_DEPOT' },
+                      ]
+                    : [
+                        { label: 'Tous les statuts', value: 'ALL' },
+                        { label: 'Validée conforme', value: 'CLOTUREE_CONFORME' },
+                        { label: 'Validée en déficit', value: 'CLOTUREE_DEFICIT' },
+                        { label: 'Annulée', value: 'ANNULEE' },
+                      ]
+                }
               />
 
               <FilterSelect
@@ -902,6 +962,9 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
                             ]}
                           />
                           <div className="flex items-center gap-2 px-3 pb-3">
+                            {peutValiderCaisse && TOURNEE_VALIDABLE.includes(String(r.status)) && (
+                              <button type="button" onClick={() => ouvrirValidation(r)} className="flex-1 py-1.5 rounded bg-emerald-600 text-white text-xs font-semibold flex items-center justify-center gap-1"><Check className="w-3.5 h-3.5" /> Valider</button>
+                            )}
                             <button type="button" onClick={() => { setSelectedRunsheetId(r.runsheetNumber); setViewMode('detail'); }} className="flex-1 py-1.5 rounded border border-slate-200 bg-white text-slate-700 text-xs font-semibold flex items-center justify-center gap-1"><Eye className="w-3.5 h-3.5" /> Voir</button>
                             <button type="button" onClick={() => openEditModal(r)} disabled={!editable} title={!editable ? `Non modifiable (${r.status})` : r.totalPackages>0 ? 'Contient des colis' : 'Modifier'} className={`flex-1 py-1.5 rounded border text-xs font-semibold flex items-center justify-center gap-1 ${editable && r.totalPackages===0 ? 'border-slate-200 bg-white text-slate-700' : 'border-slate-100 bg-slate-50 text-slate-300'}`}><Pencil className="w-3.5 h-3.5" /> Modifier</button>
                             <button type="button" onClick={() => setSuppressionAConfirmer(r)} disabled={!deletable} title={!deletable ? (r.totalPackages>0 ? `Contient ${r.totalPackages} colis` : `Non supprimable (${r.status})`) : 'Supprimer'} className={`flex-1 py-1.5 rounded border text-xs font-semibold flex items-center justify-center gap-1 ${deletable ? 'border-red-200 bg-red-50 text-red-700' : 'border-slate-100 bg-slate-50 text-slate-300'}`}><Trash2 className="w-3.5 h-3.5" /> Supprimer</button>
@@ -917,14 +980,16 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
                   <Thead>
                     <tr>
                       <Th figee>N° Runsheet</Th>
-                      <Th>Livreur responsable</Th>
-                      <Th priorite="secondaire">Date tournée</Th>
-                      <Th align="center" priorite="secondaire">Colis prévus</Th>
-                      <Th align="center">Livrés</Th>
+                      <Th priorite="secondaire">Date</Th>
+                      <Th priorite="tertiaire">Clôture</Th>
+                      <Th>Livreur</Th>
+                      <Th align="center" priorite="secondaire">Colis</Th>
+                      <Th align="center">Non traité</Th>
+                      <Th align="center">Livré</Th>
                       <Th align="center" priorite="tertiaire">Rep / Ret</Th>
-                      <Th align="right" priorite="tertiaire">À encaisser</Th>
-                      <Th align="right">Encaissé</Th>
-                      <Th align="center" priorite="tertiaire">Statut</Th>
+                      <Th align="right">Mnt livré</Th>
+                      <Th align="right" priorite="tertiaire">Déficit</Th>
+                      <Th align="center" priorite="tertiaire">État</Th>
                       <Th align="center">Actions</Th>
                     </tr>
                   </Thead>
@@ -953,27 +1018,36 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
                             <span className="font-mono font-bold text-red-600 block">{r.runsheetNumber}</span>
                             <span className="text-[11px] text-slate-500">{r.depositName}</span>
                           </Td>
+                          <Td priorite="secondaire" className="font-mono text-slate-700 whitespace-nowrap">
+                            {formatDate(r.tourDate)}
+                            <span className="block text-[10px] text-slate-400">{new Date(r.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</span>
+                          </Td>
+                          <Td priorite="tertiaire" className="text-[11px] text-slate-600 whitespace-nowrap">
+                            {r.closedAt ? new Date(r.closedAt).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}
+                          </Td>
                           <Td>
                             <span className="font-semibold text-slate-900 block">{r.driverName}</span>
-                          </Td>
-                          <Td priorite="secondaire" className="font-mono text-slate-700">
-                            {formatDate(r.tourDate)}
                           </Td>
                           <Td align="center" priorite="secondaire">
                             <span className="font-mono font-bold text-slate-900">{r.totalPackages}</span>
                             <span className="text-[11px] text-slate-500 block font-mono">{r.totalPieces} pcs</span>
                           </Td>
-                          <Td align="center" className="font-mono font-bold text-emerald-700">
-                            {r.deliveredCount}
+                          <Td align="center">
+                            <span className={`inline-block min-w-[2rem] px-1.5 py-0.5 rounded font-mono font-bold ${r.pendingCount > 0 ? 'bg-slate-200 text-slate-900' : 'text-slate-300'}`}>
+                              {r.pendingCount}
+                            </span>
                           </Td>
-                          <Td align="center" priorite="tertiaire" className="font-mono font-bold text-amber-700">
-                            {r.postponedCount + r.returnedCount}
+                          <Td align="center">
+                            <span className="inline-block min-w-[2rem] px-1.5 py-0.5 rounded font-mono font-bold bg-emerald-50 text-emerald-700">{r.deliveredCount}</span>
                           </Td>
-                          <Td align="right" priorite="tertiaire" className="font-mono font-bold text-slate-900 whitespace-nowrap">
-                            {formatTND(r.expectedCash)}
+                          <Td align="center" priorite="tertiaire">
+                            <span className="inline-block min-w-[2rem] px-1.5 py-0.5 rounded font-mono font-bold bg-amber-50 text-amber-700">{r.postponedCount + r.returnedCount}</span>
                           </Td>
-                          <Td align="right" className="font-mono font-bold text-emerald-700 whitespace-nowrap">
-                            {formatTND(r.collectedCash)}
+                          <Td align="right" className="font-mono font-bold text-slate-900 whitespace-nowrap">
+                            {formatTND(r.montantLivre ?? r.collectedCash)}
+                          </Td>
+                          <Td align="right" priorite="tertiaire" className={`font-mono font-bold whitespace-nowrap ${r.deficitAmount > 0 ? 'text-red-700' : 'text-slate-300'}`}>
+                            {r.deficitAmount > 0 ? formatTND(r.deficitAmount) : '—'}
                           </Td>
                           <Td align="center" priorite="tertiaire">
                             <span className={`px-2 py-0.5 rounded text-[11px] font-semibold border ${badge.bg} ${badge.text} ${badge.border}`}>
@@ -982,6 +1056,46 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
                           </Td>
                           <Td align="center">
                             <div className="flex items-center justify-center gap-1">
+                              {peutValiderCaisse && TOURNEE_VALIDABLE.includes(String(r.status)) && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    ouvrirValidation(r);
+                                  }}
+                                  data-testid={`valider-${r.runsheetNumber}`}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold transition cursor-pointer"
+                                  aria-label={`Valider ${r.runsheetNumber}`}
+                                >
+                                  <Check className="w-3.5 h-3.5" /> Valider
+                                </button>
+                              )}
+                              {['CLOTUREE_CONFORME', 'CLOTUREE_DEFICIT'].includes(String(r.status)) && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    ouvrirValidation(r);
+                                  }}
+                                  title="Voir la validation"
+                                  className="p-1.5 rounded border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 transition cursor-pointer"
+                                  aria-label={`Voir la validation de ${r.runsheetNumber}`}
+                                >
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void imprimerTournee(r);
+                                }}
+                                title="Imprimer"
+                                className="p-1.5 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition cursor-pointer"
+                                aria-label={`Imprimer ${r.runsheetNumber}`}
+                              >
+                                <Printer className="w-3.5 h-3.5" />
+                              </button>
                               <button
                                 type="button"
                                 onClick={(e) => {
@@ -1181,24 +1295,14 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
                     2. Valider le départ (en tournée)
                   </button>
                 )}
-                {String(runsheet.status) === 'EN_COURS' && peutValiderCaisse && (
+                {['EN_COURS', 'RETOUR_DEPOT'].includes(String(runsheet.status)) && peutValiderCaisse && (
                   <button
                     type="button"
-                    disabled={isSubmitting}
-                    onClick={() => setShowCloseModal(true)}
-                    className="px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white rounded font-semibold text-xs transition cursor-pointer"
-                  >
-                    3. Retour chauffeur : déclarer la caisse
-                  </button>
-                )}
-                {String(runsheet.status) === 'RETOUR_DEPOT' && peutValiderCaisse && (
-                  <button
-                    type="button"
-                    disabled={isSubmitting}
-                    onClick={() => void handleValidateRunsheet()}
+                    onClick={() => ouvrirValidation(runsheet)}
+                    data-testid="detail-valider"
                     className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded font-semibold text-xs transition cursor-pointer"
                   >
-                    4. Valider la caisse et clôturer
+                    3. Valider la tournée (caisse)
                   </button>
                 )}
                 {['CLOTUREE_CONFORME', 'CLOTUREE_DEFICIT'].includes(String(runsheet.status)) && (

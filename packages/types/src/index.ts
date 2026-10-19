@@ -712,6 +712,8 @@ export interface RunsheetSummaryDto {
   collectedChecks: number;
   deficitAmount: number;
   failedCount?: number;
+  /** Somme des montants payés sur les colis livrés (en direct). */
+  montantLivre?: number;
   notes?: string;
   packages?: PackageDto[];
   validatedAt?: string;
