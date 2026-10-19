@@ -121,17 +121,19 @@ ok(/\/validation$/.test(p.url()) && (await attendre(new RegExp(numero))), 'page 
 ok(await attendre(/Clôture[\s\S]*Recette \(calculée automatiquement\)/), 'sections Clôture et Recette');
 const etatsGauche = await p.$$eval('[data-testid=table-colis-validation] tbody tr[data-testid]', (l) => l.map((n) => n.getAttribute('data-testid')));
 const vueGauche = (await api(admin, 'GET', `/runsheets/${(p.url().match(/runsheets\/([^/]+)\/validation/) ?? [])[1]}/validation`)).d;
-ok(vueGauche && etatsGauche.length === vueGauche.totaux.livres, 'tableau de gauche : uniquement les colis livrés', `${etatsGauche.length} / ${vueGauche?.totaux.livres}`);
+const attendusGauche = vueGauche ? vueGauche.colis.filter((c) => c.etat !== 'REPORTE' && c.etat !== 'RETOUR').length : -1;
+ok(vueGauche && etatsGauche.length === attendusGauche, 'tableau de gauche : tous les colis (livrés, non traités…) hors reportés / retours', `${etatsGauche.length} / ${attendusGauche}`);
 const vueUi = (await api(admin, 'GET', `/runsheets/${numero}/validation`)).d;
 if (vueUi.totaux.nonTraites > 0) {
   ok(await p.$eval('[data-testid=bouton-valider]', (n) => n.disabled), 'bouton Valider désactivé tant qu’il reste des non traités');
   const premier = vueUi.colis.find((c) => c.etat === 'NON_TRAITE');
+  ok(!!(await p.$(`[data-testid=table-colis-validation] [data-testid="ligne-${premier.trackingNumber}"][data-etat=NON_TRAITE]`)), 'colis non traité : affiché à gauche avant le scan');
   await p.type('[data-testid=scan-validation]', premier.barcode); await p.keyboard.press('Enter');
   ok(await attendre(new RegExp(`${premier.trackingNumber} : reporté`)), 'scan à l’écran : reporté');
   await sleep(500);
   ok(!!(await p.$(`[data-testid=liste-reportes] [data-testid="lateral-${premier.trackingNumber}"]`)), 'colis scanné : ajouté à la liste de droite (reportés / retours)');
   ok(!(await p.$(`[data-testid=table-colis-validation] [data-testid="ligne-${premier.trackingNumber}"]`)), 'colis scanné : absent du tableau de gauche');
-  ok(!(await p.$(`[data-testid=liste-a-scanner] [data-testid="lateral-${premier.trackingNumber}"]`)), 'colis scanné : retiré des colis à scanner');
+  ok(!(await p.$('[data-testid=liste-a-scanner]')), 'plus de liste « à scanner » séparée : les non traités sont à gauche');
   if (vueUi.totaux.nonTraites > 1) {
     await p.click('[data-testid=traiter-tous]');
     await p.waitForFunction(() => !document.querySelector('[data-testid=traiter-tous]'), { timeout: 20000 }).catch(() => null);

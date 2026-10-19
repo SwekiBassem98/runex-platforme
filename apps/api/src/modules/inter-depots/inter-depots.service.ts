@@ -1197,6 +1197,64 @@ export class InterDepotsService {
     return (await this.findByNumber(transfer.id, transfer.sourceDepositId))!;
   }
 
+  /**
+   * Suppression d'un bordereau (administrateur).
+   *  - En attente (aucune pièce acceptée) : ses colis reviennent en stock au
+   *    dépôt d'origine, comme pour une annulation, puis le bordereau disparaît.
+   *  - Reçu ou annulé : seul le document disparaît ; les colis gardent leur
+   *    position et leur historique.
+   *  - Acceptation commencée (reçu partiel) ou en route : refusé.
+   */
+  async supprimer(identifier: string, actor: InterDepotActor): Promise<{ transferNumber: string; message: string }> {
+    const transfer = await this.requireTransfer(identifier);
+    let remis = 0;
+    await this.prisma.$transaction(async (tx) => {
+      const locked = await this.lockTransfer(tx, transfer.id);
+      const statut = locked.status;
+      if (statut !== 'CRE' && statut !== 'RECU' && statut !== 'ANNULE') {
+        throw conflict(
+          `Le bordereau ${transfer.transferNumber} est en cours d'acceptation à l'arrivée : terminez l'acceptation avant de le supprimer.`
+        );
+      }
+      if (statut === 'CRE') {
+        const items = await tx.interDepotItem.findMany({ where: { transferId: transfer.id } });
+        remis = items.length;
+        for (const item of items) {
+          await packageWorkflowService.transition({
+            packageId: item.packageId,
+            to: item.previousStatus as unknown as PackageStatus,
+            actor: { id: actor.id, fullName: actor.fullName, role: RoleType.ADMIN },
+            title: `Inter-dépôt ${transfer.transferNumber} supprimé`,
+            note: `Colis remis en stock à ${transfer.sourceDeposit.name}`,
+            location: transfer.sourceDeposit.name,
+            transferNumber: transfer.transferNumber,
+            auditAction: 'INTERDEPOT_SUPPRESSION',
+            reason: `Inter-dépôt ${transfer.transferNumber} supprimé`,
+            data: { currentDepositId: item.previousDepositId ?? transfer.sourceDepositId, interDepotTransferId: null },
+            client: tx,
+          });
+        }
+      }
+      await tx.package.updateMany({ where: { interDepotTransferId: transfer.id }, data: { interDepotTransferId: null } });
+      await tx.interDepotTransfer.delete({ where: { id: transfer.id } });
+      await auditService.record(
+        {
+          entityType: 'TRANSFER',
+          entityId: transfer.id,
+          action: 'TRANSFERT_SUPPRIME',
+          userId: actor.id ?? null,
+          reason: `Bordereau ${transfer.transferNumber} (${transfer.sourceDeposit.name} → ${transfer.destinationDeposit.name}, ${statut}) supprimé par ${actor.fullName}${remis ? ` — ${remis} colis remis en stock` : ''}.`,
+          previousValues: { transferNumber: transfer.transferNumber, status: statut, type: transfer.type },
+        },
+        tx
+      );
+    });
+    return {
+      transferNumber: transfer.transferNumber,
+      message: `Bordereau ${transfer.transferNumber} supprimé${remis ? ` : ${remis} colis remis en stock à ${transfer.sourceDeposit.name}` : ''}.`,
+    };
+  }
+
   /* ---------------------------- internes --------------------------- */
 
   async requireTransfer(identifier: string): Promise<TransferRecord> {

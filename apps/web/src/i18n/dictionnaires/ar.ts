@@ -494,6 +494,7 @@ export const ar: Dictionnaire = {
     'ستظهر هنا الطرود التي تصرّحها كإرجاع عند التسليم.',
   'retours.aucunPassage': 'لا يوجد أي مرور في الإرجاع لهذا الطرد.',
   'retours.bons.titre': 'وصولات الإرجاع',
+  'retours.bons.code': 'رمز التسليم — قدّمه لـ RUNEX عند استلام طرودك:',
   'retours.bons.colis': '{n} طرد',
   'retours.bons.remisLe': 'سُلّم في {date}',
   'retours.bons.enRoute': 'في الطريق مع {livreur}',

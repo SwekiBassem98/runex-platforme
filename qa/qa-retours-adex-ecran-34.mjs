@@ -102,7 +102,11 @@ await p.click('[data-testid=confirmer-etat]');
 ok(await attendre(/En route avec/), 'bon en cours de livraison');
 ok((await ja(admin, 'GET', `/colis/${retours[2].id}`)).d?.status === 'EN_RUNSHEET_RETOUR', 'colis en cours de restitution');
 await p.click('[data-testid=marquer-remis]'); await sleep(400);
-await p.type('.fixed input', 'Karim');
+// Code de remise donné par l'expéditeur (visible dans son espace seulement).
+const codeRemise = ((await ja(exp, 'GET', '/retours-expediteur/bons')).d ?? []).find((b) => b.id === idBon)?.handoverCode ?? '';
+ok(await p.$eval('[data-testid=confirmer-etat]', (n) => n.disabled), 'remise : « Confirmer » inactif sans code');
+await p.type('[data-testid=code-remise]', codeRemise);
+await p.type('.fixed input[maxlength="150"]', 'Karim');
 await p.click('[data-testid=confirmer-etat]');
 ok(await attendre(/Remis le/), 'bon remis à l’expéditeur');
 ok((await ja(admin, 'GET', `/colis/${retours[2].id}`)).d?.status === 'RETOURNE_EXPEDITEUR', 'colis restitué');

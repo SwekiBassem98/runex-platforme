@@ -4,15 +4,18 @@
  * Liste des inter-dépôts (livraison ou retours), vue depuis une agence.
  *
  * Quatre compteurs sur la période : envoyés en attente, envoyés reçus, à
- * recevoir, reçus. Tableau filtrable par colonne, actions voir / imprimer le
- * bordereau, et les deux entrées « Ajouter un inter dépôt » et
- * « Acceptation inter dépôt ».
+ * recevoir, reçus. Tableau filtrable par colonne, actions voir / imprimer /
+ * supprimer (administrateur) le bordereau, et les deux entrées « Ajouter un
+ * inter dépôt » et « Acceptation inter dépôt ».
+ *
+ * Retours et échanges : la liste s'ouvre sur la journée (bordereaux du jour) ;
+ * l'historique reste consultable en changeant la période.
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Eye, Filter, Plus, Printer, RotateCcw, ScanLine } from 'lucide-react';
+import { CalendarDays, Eye, Filter, Plus, Printer, RotateCcw, ScanLine } from 'lucide-react';
 import { PermissionCode, RoleType } from '@logixpress/types';
 import {
   Badge,
@@ -38,6 +41,9 @@ import {
   type InterDepotType,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { useToast } from '@logixpress/ui';
+import { BoutonSupprimer, usePeutSupprimer } from '@/components/admin/SuppressionDefinitive';
+import { ConfirmerSuppression } from '@/components/admin/ConfirmerSuppression';
 import { imprimerBordereau } from './bordereau';
 
 const VARIANTE: Record<string, BadgeVariant> = {
@@ -105,8 +111,10 @@ export function InterDepotListe({ type }: { type: InterDepotType }) {
   const estAgent = user?.role === RoleType.AGENT_DEPOT;
 
   const aujourdHui = new Date();
-  const [debut, setDebut] = useState(isoJour(new Date(aujourdHui.getFullYear(), aujourdHui.getMonth(), 1)));
-  const [fin, setFin] = useState(isoJour(aujourdHui));
+  const jour = isoJour(aujourdHui);
+  // Retours et échanges : la journée ; livraison : le mois en cours.
+  const [debut, setDebut] = useState(retour ? jour : isoJour(new Date(aujourdHui.getFullYear(), aujourdHui.getMonth(), 1)));
+  const [fin, setFin] = useState(jour);
   const [periode, setPeriode] = useState({ debut, fin });
   const [rows, setRows] = useState<InterDepotDto[]>([]);
   const [stats, setStats] = useState<InterDepotStats | null>(null);
@@ -116,6 +124,11 @@ export function InterDepotListe({ type }: { type: InterDepotType }) {
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState<string | null>(null);
   const [etat, setEtat] = useState<FiltreEtat>('ALL');
+  const { addToast } = useToast();
+  const peutSupprimer = usePeutSupprimer();
+  const [aSupprimer, setASupprimer] = useState<InterDepotDto | null>(null);
+  const [suppression, setSuppression] = useState(false);
+  const duJour = periode.debut === jour && periode.fin === jour;
   const [f, setF] = useState({ numero: '', livreur: '', origine: '', destination: '', cmdMin: '', cmdMax: '', colisMin: '', colisMax: '', sens: '' });
 
   useEffect(() => {
@@ -176,6 +189,21 @@ export function InterDepotListe({ type }: { type: InterDepotType }) {
     }
   };
 
+  const supprimer = async () => {
+    if (!aSupprimer) return;
+    setSuppression(true);
+    try {
+      const r = await interDepotsApi.supprimer(aSupprimer.transferNumber);
+      addToast({ type: 'success', title: r.message ?? `Bordereau ${aSupprimer.transferNumber} supprimé.` });
+      setASupprimer(null);
+      await charger();
+    } catch (e) {
+      addToast({ type: 'error', title: 'Suppression impossible', message: e instanceof Error ? e.message : undefined });
+    } finally {
+      setSuppression(false);
+    }
+  };
+
   const reinitialiser = () => {
     setEtat('ALL');
     setF({ numero: '', livreur: '', origine: '', destination: '', cmdMin: '', cmdMax: '', colisMin: '', colisMax: '', sens: '' });
@@ -192,7 +220,8 @@ export function InterDepotListe({ type }: { type: InterDepotType }) {
         <Card>
           <div className="flex flex-wrap items-end gap-3">
             <p className="text-sm text-slate-700">
-              Liste des <span className="text-red-600 font-semibold">{etat === 'ALL' ? 'toutes les' : ''} {libelleType}</span> du :
+              Liste des <span className="text-red-600 font-semibold">{etat === 'ALL' ? 'toutes les' : ''} {libelleType}</span>
+              {duJour ? <span className="font-semibold" data-testid="liste-du-jour"> du jour</span> : null} du :
             </p>
             <label className="text-xs text-slate-600">
               <span className="sr-only">Début</span>
@@ -210,6 +239,19 @@ export function InterDepotListe({ type }: { type: InterDepotType }) {
             >
               <Filter className="w-4 h-4" aria-hidden="true" /> Filtrer
             </button>
+            {!duJour && (
+              <button
+                type="button"
+                onClick={() => {
+                  setDebut(jour);
+                  setFin(jour);
+                  setPeriode({ debut: jour, fin: jour });
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-slate-300 bg-white hover:bg-slate-50 text-sm font-semibold text-slate-700 cursor-pointer"
+              >
+                <CalendarDays className="w-4 h-4" aria-hidden="true" /> Aujourd’hui
+              </button>
+            )}
             {!estAgent && options && (
               <label className="ms-auto text-xs text-slate-600 flex items-center gap-2">
                 Agence
@@ -345,7 +387,14 @@ export function InterDepotListe({ type }: { type: InterDepotType }) {
                   {visibles.length === 0 ? (
                     <Tr>
                       <Td colSpan={10}>
-                        <EmptyState title="Aucun inter-dépôt" description="Aucun bordereau ne correspond à la période et aux filtres." />
+                        <EmptyState
+                          title={duJour ? 'Aucun inter-dépôt aujourd’hui' : 'Aucun inter-dépôt'}
+                          description={
+                            duJour
+                              ? 'Aucun bordereau créé aujourd’hui. Changez la période pour consulter l’historique.'
+                              : 'Aucun bordereau ne correspond à la période et aux filtres.'
+                          }
+                        />
                       </Td>
                     </Tr>
                   ) : (
@@ -378,6 +427,7 @@ export function InterDepotListe({ type }: { type: InterDepotType }) {
                             <button type="button" onClick={() => void imprimer(t.transferNumber)} title="Imprimer le bordereau" aria-label={`Imprimer ${t.transferNumber}`} className="p-1.5 rounded border border-slate-200 hover:bg-slate-50 cursor-pointer">
                               <Printer className="w-3.5 h-3.5" aria-hidden="true" />
                             </button>
+                            {peutSupprimer && <BoutonSupprimer nom={`le bordereau ${t.transferNumber}`} onClick={() => setASupprimer(t)} />}
                           </span>
                         </Td>
                       </Tr>
@@ -389,6 +439,30 @@ export function InterDepotListe({ type }: { type: InterDepotType }) {
           )}
         </Card>
       </div>
+      {aSupprimer && (
+        <ConfirmerSuppression
+          titre={`Supprimer le bordereau ${aSupprimer.transferNumber} ?`}
+          bloque={
+            aSupprimer.status === 'CRE' || aSupprimer.status === 'RECU' || aSupprimer.status === 'ANNULE'
+              ? null
+              : 'L’acceptation de ce bordereau a commencé à l’arrivée : terminez-la avant de le supprimer.'
+          }
+          consequences={
+            aSupprimer.status === 'CRE'
+              ? [
+                  `Le bordereau ${aSupprimer.sourceDeposit} → ${aSupprimer.destinationDeposit} disparaît de la liste.`,
+                  `Ses ${aSupprimer.totalPackages} colis sont remis en stock à ${aSupprimer.sourceDeposit}.`,
+                ]
+              : [
+                  `Le bordereau ${aSupprimer.sourceDeposit} → ${aSupprimer.destinationDeposit} disparaît de la liste.`,
+                  'Les colis gardent leur position et leur historique.',
+                ]
+          }
+          enCours={suppression}
+          onClose={() => setASupprimer(null)}
+          onConfirm={() => void supprimer()}
+        />
+      )}
     </div>
   );
 }
