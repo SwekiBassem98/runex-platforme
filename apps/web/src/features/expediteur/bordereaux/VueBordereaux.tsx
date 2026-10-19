@@ -264,8 +264,15 @@ export function VueBordereaux() {
                     libelle={t('bordereaux.montant.fraisRetour')}
                     valeur={formatTND(b.returnFeesTotal)}
                   />
+                  {Number(b.managementFeesTotal ?? 0) > 0 && (
+                    <Montant libelle={t('bordereaux.montant.gestion')} valeur={formatTND(b.managementFeesTotal ?? 0)} />
+                  )}
                   <Montant
-                    libelle={t('bordereaux.montant.retenue')}
+                    libelle={
+                      Number(b.withholdingTaxRate ?? 0) > 0
+                        ? `${t('bordereaux.montant.retenue')} (${Math.round(Number(b.withholdingTaxRate) * 10000) / 100} %)`
+                        : t('bordereaux.montant.retenue')
+                    }
                     valeur={formatTND(b.withholdingTaxTotal)}
                   />
                   <Montant libelle={t('bordereaux.montant.net')} valeur={formatTND(b.netPayable)} fort />

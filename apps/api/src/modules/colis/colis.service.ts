@@ -16,6 +16,7 @@
  *     restreinte, tracée, et notifiée au chauffeur.
  */
 
+import { SELECT_TARIF, arrondi3, fraisPourTaille, tarifDepuisConfig } from '../../common/tarifs/tarif-expediteur';
 import { resolveDestinationDepositId, resolveShipperDepositId } from '../../common/routing/deposit-routing';
 import { packageCodeWhere } from '../../common/scan/package-code';
 import { Prisma, PackageStatus as PrismaPackageStatus } from '@prisma/client';
@@ -241,6 +242,9 @@ function assertDriverOwnsPackage(pkg: { assignedDriverId: string | null }, user:
     throw new BusinessRuleError("Ce colis n'est pas affecté à ce livreur.", 403);
   }
 }
+
+/** Statuts où le tarif d'un colis ne bouge plus. */
+const STATUTS_TARIF_FIGE = ['LIVRE', 'LIVRAISON_PARTIELLE', 'RETOURNE_EXPEDITEUR', 'ANNULE', 'EN_RUNSHEET_RETOUR'];
 
 /** Frais de livraison ajoutés au prix d'un colis quand l'expéditeur n'a pas de tarif propre. */
 export const DEFAULT_DELIVERY_FEE = 8;
@@ -809,7 +813,9 @@ export class ColisService {
     // les frais de livraison (8 DT par défaut, ou le tarif de l'expéditeur)
     // s'y ajoutent automatiquement et le livreur encaisse le total. L'ancien
     // champ `totalPrice` (montant à encaisser déjà calculé) reste accepté.
-    const deliveryFee = Number(shipper.config?.defaultDeliveryFee ?? DEFAULT_DELIVERY_FEE);
+    // Le tarif dépend du type de colis (légère, normale, lourde,
+    // volumineuse) : c'est celui fixé sur le dossier de l'expéditeur.
+    const deliveryFee = fraisPourTaille(tarifDepuisConfig(shipper.config), String(payload.sizeCategory ?? PackageSize.MOYENNE));
     const tarif = calculerTarif(payload, deliveryFee);
     const pieceCount = Number(payload.pieceCount ?? 1);
 
@@ -1109,6 +1115,23 @@ export class ColisService {
     if (payload.allowOpen !== undefined) data.allowOpen = payload.allowOpen === true;
     if (payload.isFragile !== undefined) data.isFragile = payload.isFragile === true;
     if (payload.sizeCategory !== undefined) data.sizeCategory = payload.sizeCategory as PackageSize;
+    // Changer le type de colis change son tarif, tant qu'il n'est ni livré,
+    // ni retourné, ni réglé à l'expéditeur.
+    const tailleChangee = payload.sizeCategory !== undefined && String(payload.sizeCategory) !== String(record.sizeCategory);
+    if (tailleChangee && !record.paymentVoucherId && !STATUTS_TARIF_FIGE.includes(String(record.status))) {
+      const config = await this.prisma.shipperConfig.findUnique({ where: { shipperId: record.shipperId }, select: SELECT_TARIF });
+      const frais = fraisPourTaille(tarifDepuisConfig(config), String(payload.sizeCategory));
+      if (frais !== Number(record.deliveryFee)) {
+        data.deliveryFee = frais;
+        if (amountChanged) {
+          // Le montant saisi fait foi ; le prix de la marchandise suit.
+          data.declaredValue = Math.max(arrondi3(Number(payload.totalPrice) - frais), 0);
+        } else {
+          data.totalPrice = arrondi3(Number(record.declaredValue) + frais);
+          criticalChanges.push(FIELD_LABELS.totalPrice!);
+        }
+      }
+    }
     if (payload.packageType !== undefined) data.packageType = payload.packageType as PackageType;
     if (payload.shipperNotes !== undefined) {
       const note = payload.shipperNotes === null ? '' : String(payload.shipperNotes).trim();

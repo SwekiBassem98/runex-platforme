@@ -1,3 +1,4 @@
+import { ficheFinanceExpediteur, listerFinanceExpediteurs } from './modules/payments/finance-expediteurs.service';
 import { Router } from 'express';
 import { healthController } from './modules/health/health.controller';
 import { authController } from './modules/auth/auth.controller';
@@ -850,6 +851,25 @@ export function createApiRouter(): Router {
     authenticateToken,
     requirePermissions(PermissionCode.PAYMENT_READ),
     asyncHandler((req, res) => paymentsController.getAll(req, res))
+  );
+
+  // Finance par expéditeur : tarif, à régler, à payer, payé (recherche ?search=).
+  router.get(
+    '/payments/finance/expediteurs',
+    authenticateToken,
+    requirePermissions(PermissionCode.PAYMENT_VALIDATE),
+    asyncHandler(async (req, res) => {
+      const search = typeof req.query.search === 'string' ? req.query.search.slice(0, 100) : undefined;
+      res.json({ success: true, data: await listerFinanceExpediteurs(search) });
+    })
+  );
+  router.get(
+    '/payments/finance/expediteurs/:id',
+    authenticateToken,
+    requirePermissions(PermissionCode.PAYMENT_VALIDATE),
+    asyncHandler(async (req, res) => {
+      res.json({ success: true, data: await ficheFinanceExpediteur(String(req.params.id)) });
+    })
   );
 
   router.get(

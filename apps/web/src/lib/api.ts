@@ -1184,6 +1184,9 @@ export interface CandidatsBordereau {
   encaisse: number;
   fraisLivraison: number;
   fraisRetour: number;
+  fraisGestion?: number;
+  tauxRas?: number;
+  ras?: number;
   netEstime: number;
 }
 
@@ -1321,7 +1324,90 @@ export interface ShipperDto {
   /** `null` quand aucune activité n'a jamais eu lieu — jamais une date inventée. */
   lastActivityAt?: string | null;
   users?: Array<{ id: string; fullName: string; email: string; isActive: boolean; role: RoleAttribuable | null }>;
+  /** Tarif fixé par l'administration. */
+  tarif?: TarifExpediteur;
 }
+
+export type TailleColis = 'LEGERE' | 'MOYENNE' | 'LOURDE' | 'VOLUMINEUSE';
+
+/** Tarif d'un expéditeur : frais par type de colis, retour, gestion, R.A.S. */
+export interface TarifExpediteur {
+  livraison: Record<TailleColis, number>;
+  /** Par colis retourné. */
+  retour: number;
+  /** Par paiement (bordereau). */
+  gestion: number;
+  rasActive: boolean;
+  /** En % (3 = 3 %), appliqué au net à payer. */
+  tauxRas: number;
+}
+
+export interface LigneFinanceExpediteur {
+  id: string;
+  code: string;
+  name: string;
+  brandName: string | null;
+  governorate: string;
+  phone: string;
+  isActive: boolean;
+  tarif: TarifExpediteur;
+  aRegler: {
+    livres: number;
+    retournes: number;
+    encaisse: number;
+    fraisLivraison: number;
+    fraisRetour: number;
+    fraisGestion: number;
+    ras: number;
+    net: number;
+  } | null;
+  aPayer: { count: number; net: number };
+  paye: { count: number; net: number; lastPaidAt: string | null };
+  chezClients: { count: number; amount: number };
+}
+
+export interface FinanceExpediteurs {
+  generatedAt: string;
+  totals: {
+    shippers: number;
+    toSettle: number;
+    toSettleCount: number;
+    toPay: number;
+    toPayCount: number;
+    paidThisMonth: number;
+    paidThisMonthCount: number;
+    withheldThisMonth: { delivery: number; returns: number; management: number; ras: number };
+    atCustomers: number;
+  };
+  items: LigneFinanceExpediteur[];
+}
+
+export interface FicheFinanceExpediteur extends LigneFinanceExpediteur {
+  email: string;
+  address: string;
+  vouchers: {
+    id: string;
+    voucherNumber: string;
+    status: string;
+    createdAt: string;
+    paidAt: string | null;
+    deliveredCount: number;
+    returnedCount: number;
+    gross: number;
+    deliveryFees: number;
+    returnFees: number;
+    managementFees: number;
+    ras: number;
+    net: number;
+  }[];
+  monthly: { month: string; paid: number; withheld: number }[];
+}
+
+export const financeApi = {
+  expediteurs: (search?: string) =>
+    requestData<FinanceExpediteurs>('/payments/finance/expediteurs', { query: { search: search || undefined } }),
+  expediteur: (id: string) => requestData<FicheFinanceExpediteur>(`/payments/finance/expediteurs/${encodeURIComponent(id)}`),
+};
 
 export interface DriverDto {
   id: string;

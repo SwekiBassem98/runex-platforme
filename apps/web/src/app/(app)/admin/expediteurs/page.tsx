@@ -19,6 +19,15 @@
 
 import { BoutonSupprimer, SuppressionDefinitive, usePeutSupprimer } from '@/components/admin/SuppressionDefinitive';
 import { useFeedbackOn } from '@/lib/useFeedbackOn';
+import {
+  ApercuTarif,
+  ChampsTarif,
+  TARIF_SAISIE_VIDE,
+  corpsTarif,
+  saisieDepuisTarif,
+  verifierTarif,
+  type TarifSaisie,
+} from '@/features/expediteur-admin/TarifExpediteur';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Building2, Pencil, Plus, RotateCcw, ShieldCheck, UserPlus, UserX } from 'lucide-react';
 import {
@@ -100,6 +109,7 @@ export default function AdminExpediteursPage() {
   useFeedbackOn(erreur, 'error');
   const [erreursChamps, setErreursChamps] = useState<Record<string, string>>({});
   const [avecCompte, setAvecCompte] = useState(true);
+  const [tarif, setTarif] = useState<TarifSaisie>(TARIF_SAISIE_VIDE);
 
   const [desactivation, setDesactivation] = useState<ShipperDto | null>(null);
   const [motifDesactivation, setMotifDesactivation] = useState('');
@@ -178,6 +188,7 @@ export default function AdminExpediteursPage() {
     setErreurForm(null);
     setErreursChamps({});
     setAvecCompte(true);
+    setTarif(TARIF_SAISIE_VIDE);
     setForm({
       code: '',
       companyName: '',
@@ -203,6 +214,7 @@ export default function AdminExpediteursPage() {
     setErreurForm(null);
     setErreursChamps({});
     setAvecCompte(false);
+    setTarif(saisieDepuisTarif(s.tarif));
     setForm({
       code: s.code,
       companyName: s.companyName,
@@ -250,6 +262,7 @@ export default function AdminExpediteursPage() {
       if (!form.compteEmail.trim()) erreurs.compteEmail = 'L’e-mail du compte est obligatoire.';
       if (form.comptePassword.length < 8) erreurs.comptePassword = '8 caractères minimum.';
     }
+    Object.assign(erreurs, verifierTarif(tarif));
     if (Object.keys(erreurs).length > 0) {
       setErreursChamps(erreurs);
       setErreurForm('Le dossier n’a pas pu être enregistré : corrigez les champs signalés.');
@@ -270,6 +283,7 @@ export default function AdminExpediteursPage() {
           email: form.email,
           governorate: form.governorate,
           address: form.address,
+          tarif: corpsTarif(tarif),
         });
         setMessage(`Expéditeur « ${form.companyName} » mis à jour.`);
       } else {
@@ -284,6 +298,7 @@ export default function AdminExpediteursPage() {
           governorate: form.governorate,
           address: form.address,
           isActive: form.isActive,
+          tarif: corpsTarif(tarif),
         };
         if (avecCompte) {
           corps.compte = {
@@ -721,9 +736,18 @@ export default function AdminExpediteursPage() {
             </FormField>
           </div>
 
+          <ChampsTarif
+            valeur={tarif}
+            onChange={(t) => {
+              setTarif(t);
+              setErreursChamps((prev) => Object.fromEntries(Object.entries(prev).filter(([cle]) => !cle.startsWith('tarif.'))));
+            }}
+            erreurs={erreursChamps}
+          />
+
           {!enEdition ? (
             <>
-              <label className="flex items-center gap-2 text-sm text-slate-700">
+              <label className="flex items-center gap-2 text-sm text-slate-700 border-t border-slate-200 pt-4">
                 <input
                   type="checkbox"
                   checked={avecCompte}
@@ -876,6 +900,11 @@ export default function AdminExpediteursPage() {
                   </Badge>
                 </div>
               </Card>
+            </div>
+
+            <div>
+              <h3 className="text-sm font-semibold text-slate-900 mb-2">Tarif</h3>
+              <ApercuTarif tarif={detail.tarif} />
             </div>
 
             <div>

@@ -24,6 +24,11 @@ import { sessionService } from '../../common/auth/session.service';
 import { auditService } from '../../common/audit/audit.service';
 import { badRequest, conflict, notFound, asUuid } from '../../common/errors/api-error';
 import { usersService, type ActorRef, type RoleSchema } from './users.service';
+import crypto from 'node:crypto';
+import { SELECT_TARIF, lireTarifSaisi, tarifDto, type TarifDto } from '../../common/tarifs/tarif-expediteur';
+
+/** Code de déblocage historique (non utilisé : la caisse lit le code du bordereau). */
+const codeDeblocageAleatoire = () => `non-defini:${crypto.randomBytes(16).toString('hex')}`;
 
 export interface ShipperDto {
   id: string;
@@ -48,6 +53,8 @@ export interface ShipperDto {
    * l'écran affiche « aucune activité » plutôt qu'un chiffre faux.
    */
   lastActivityAt?: string | null;
+  /** Tarif : frais par type de colis, frais de retour, frais de gestion, R.A.S. */
+  tarif: TarifDto;
   /** Comptes rattachés. Absent de la liste : ce n'est pas une donnée de tableau. */
   users?: Array<{ id: string; fullName: string; email: string; isActive: boolean; role: RoleSchema | null }>;
 }
@@ -73,6 +80,7 @@ const SHIPPER_SELECT = {
   isActive: true,
   createdAt: true,
   updatedAt: true,
+  config: { select: SELECT_TARIF },
 } satisfies Prisma.ShipperSelect;
 
 type ShipperRecord = Prisma.ShipperGetPayload<{ select: typeof SHIPPER_SELECT }>;
@@ -92,6 +100,7 @@ function toDto(s: ShipperRecord): ShipperDto {
     isActive: s.isActive,
     createdAt: s.createdAt.toISOString(),
     updatedAt: s.updatedAt.toISOString(),
+    tarif: tarifDto(s.config),
   };
 }
 
@@ -192,10 +201,12 @@ export class ShippersService {
       governorate: string;
       address: string;
       isActive?: boolean;
+      tarif?: unknown;
     },
     actor: ActorRef
   ): Promise<ShipperDto> {
     const prisma = getPrisma();
+    const tarif = lireTarifSaisi(input.tarif);
 
     const code = input.code?.trim().toUpperCase();
     const companyName = input.companyName?.trim();
@@ -224,6 +235,12 @@ export class ShippersService {
         governorate: input.governorate.trim(),
         address: input.address.trim(),
         isActive: input.isActive !== false,
+        config: {
+          create: {
+            secretPaymentCode: codeDeblocageAleatoire(),
+            ...(tarif as Omit<Prisma.ShipperConfigCreateWithoutShipperInput, 'secretPaymentCode'>),
+          },
+        },
       },
       select: SHIPPER_SELECT,
     });
@@ -236,7 +253,7 @@ export class ShippersService {
       userIp: actor.ip ?? null,
       userAgent: actor.userAgent ?? null,
       reason: `Création de l'expéditeur ${created.companyName} (${created.code}).`,
-      newValues: { code: created.code, companyName: created.companyName, email },
+      newValues: { code: created.code, companyName: created.companyName, email, tarif: tarifDto(created.config) },
     });
 
     return toDto(created);
@@ -253,6 +270,7 @@ export class ShippersService {
       email: string;
       governorate: string;
       address: string;
+      tarif: unknown;
     }>,
     actor: ActorRef
   ): Promise<ShipperDto> {
@@ -278,6 +296,19 @@ export class ShippersService {
       const v = valeur.trim();
       if (champ === 'email' && !EMAIL_PATTERN.test(v)) throw badRequest('Adresse e-mail invalide.');
       (data as Record<string, unknown>)[champ] = champ === 'email' ? v.toLowerCase() : v;
+    }
+
+    const tarif = lireTarifSaisi(input.tarif);
+    if (Object.keys(tarif).length > 0) {
+      data.config = {
+        upsert: {
+          create: {
+            secretPaymentCode: codeDeblocageAleatoire(),
+            ...(tarif as Omit<Prisma.ShipperConfigCreateWithoutShipperInput, 'secretPaymentCode'>),
+          },
+          update: tarif,
+        },
+      };
     }
 
     const updated = await prisma.shipper.update({ where: { id: uuid }, data, select: SHIPPER_SELECT });
@@ -420,6 +451,7 @@ export class ShippersService {
       address: string;
       isActive?: boolean;
       compte?: { fullName: string; email: string; phone: string; password: string; role?: RoleSchema };
+      tarif?: unknown;
     },
     actor: ActorRef
   ): Promise<ShipperDto> {

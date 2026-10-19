@@ -18,6 +18,7 @@ import { notFound, badRequest, conflict, asUuid, BusinessRuleError } from '../..
 import { auditService } from '../../common/audit/audit.service';
 import { codeASixChiffres, nextVoucherNumber } from '../../common/database/numbering';
 import { notificationDispatcher } from '../notifications/notification.dispatcher';
+import { SELECT_TARIF, calculerNet, tarifDepuisConfig, arrondi3 } from '../../common/tarifs/tarif-expediteur';
 
 /** Statuts « livré » d'un colis (la livraison partielle compte). */
 const LIVRES = ['LIVRE', 'LIVRAISON_PARTIELLE'] as const;
@@ -31,6 +32,10 @@ export interface CandidatsBordereau {
   encaisse: number;
   fraisLivraison: number;
   fraisRetour: number;
+  fraisGestion: number;
+  /** Taux de R.A.S. en % (3 = 3 %), 0 quand elle ne s'applique pas. */
+  tauxRas: number;
+  ras: number;
   netEstime: number;
 }
 
@@ -113,6 +118,8 @@ export class PaymentsService {
       deliveryFeesTotal: Number(record.deliveryFeesTotal),
       returnFeesTotal: Number(record.returnFeesTotal),
       withholdingTaxTotal: Number(record.withholdingTaxTotal),
+      managementFeesTotal: Number(record.managementFeesTotal),
+      withholdingTaxRate: Number(record.withholdingTaxRate),
       netPayable: Number(record.netPayable),
       paidAt: record.paidAt?.toISOString(),
       createdAt: record.createdAt.toISOString(),
@@ -144,6 +151,8 @@ export class PaymentsService {
       deliveryFeesTotal: Number(record.deliveryFeesTotal),
       returnFeesTotal: Number(record.returnFeesTotal),
       withholdingTaxTotal: Number(record.withholdingTaxTotal),
+      managementFeesTotal: Number(record.managementFeesTotal),
+      withholdingTaxRate: Number(record.withholdingTaxRate),
       netPayable: Number(record.netPayable),
       paidAt: record.paidAt?.toISOString(),
       createdAt: record.createdAt.toISOString(),
@@ -313,9 +322,15 @@ export class PaymentsService {
     const gross = delivered.reduce((sum, p) => sum + Number(p.collectedAmount ?? 0), 0);
     const deliveryFees = delivered.reduce((sum, p) => sum + Number(p.deliveryFee ?? 0), 0);
     const returnFees = returned.reduce((sum, p) => sum + Number(p.returnFee ?? 0), 0);
-    const rate = Number(voucher.shipper.config?.withholdingTaxRate ?? 0);
-    const withheld = deliveryFees * rate;
-    const net = gross - deliveryFees - returnFees - withheld;
+    // Tarif de l'expéditeur : frais de gestion par paiement, R.A.S. sur le net.
+    const tarif = tarifDepuisConfig(voucher.shipper.config);
+    const { ras: withheld, net } = calculerNet({
+      encaisse: gross,
+      fraisLivraison: deliveryFees,
+      fraisRetour: returnFees,
+      fraisGestion: tarif.gestion,
+      tauxRas: tarif.tauxRas,
+    });
 
     await prisma.paymentVoucher.update({
       where: { id: voucherId },
@@ -326,6 +341,8 @@ export class PaymentsService {
         deliveryFeesTotal: deliveryFees,
         returnFeesTotal: returnFees,
         withholdingTaxTotal: withheld,
+        managementFeesTotal: tarif.gestion,
+        withholdingTaxRate: tarif.tauxRas,
         netPayable: net,
       },
     });
@@ -344,11 +361,11 @@ export class PaymentsService {
         collectedAmount: true,
         deliveryFee: true,
         returnFee: true,
-        shipper: { select: { companyName: true, config: { select: { withholdingTaxRate: true } } } },
+        shipper: { select: { companyName: true, config: { select: SELECT_TARIF } } },
       },
       take: 20000,
     });
-    const parExp = new Map<string, CandidatsBordereau & { taux: number }>();
+    const parExp = new Map<string, CandidatsBordereau & { tarif: ReturnType<typeof tarifDepuisConfig> }>();
     for (const r of rows) {
       const g = parExp.get(r.shipperId) ?? {
         shipperId: r.shipperId,
@@ -358,12 +375,16 @@ export class PaymentsService {
         encaisse: 0,
         fraisLivraison: 0,
         fraisRetour: 0,
+        fraisGestion: 0,
+        tauxRas: 0,
+        ras: 0,
         netEstime: 0,
-        taux: Number(r.shipper.config?.withholdingTaxRate ?? 0),
+        tarif: tarifDepuisConfig(r.shipper.config),
       };
       if (r.status === 'RETOURNE_EXPEDITEUR') {
         g.retournes += 1;
-        g.fraisRetour += Number(r.returnFee ?? 0);
+        // Un retour sans frais fixés prend les frais de retour de l'expéditeur.
+        g.fraisRetour += Number(r.returnFee ?? 0) > 0 ? Number(r.returnFee) : g.tarif.retour;
       } else {
         g.livres += 1;
         g.encaisse += Number(r.collectedAmount ?? 0);
@@ -371,15 +392,26 @@ export class PaymentsService {
       }
       parExp.set(r.shipperId, g);
     }
-    const r3 = (v: number) => Math.round(v * 1000) / 1000;
     return [...parExp.values()]
-      .map(({ taux, ...g }) => ({
-        ...g,
-        encaisse: r3(g.encaisse),
-        fraisLivraison: r3(g.fraisLivraison),
-        fraisRetour: r3(g.fraisRetour),
-        netEstime: r3(g.encaisse - g.fraisLivraison - g.fraisRetour - g.fraisLivraison * taux),
-      }))
+      .map(({ tarif, ...g }) => {
+        const calcul = calculerNet({
+          encaisse: g.encaisse,
+          fraisLivraison: g.fraisLivraison,
+          fraisRetour: g.fraisRetour,
+          fraisGestion: tarif.gestion,
+          tauxRas: tarif.tauxRas,
+        });
+        return {
+          ...g,
+          encaisse: arrondi3(g.encaisse),
+          fraisLivraison: arrondi3(g.fraisLivraison),
+          fraisRetour: arrondi3(g.fraisRetour),
+          fraisGestion: tarif.gestion,
+          tauxRas: Math.round(tarif.tauxRas * 10000) / 100,
+          ras: calcul.ras,
+          netEstime: calcul.net,
+        };
+      })
       .sort((a, b) => b.netEstime - a.netEstime);
   }
 
@@ -399,7 +431,10 @@ export class PaymentsService {
       : null;
     const prisma = getPrisma();
     const voucher = await prisma.$transaction(async (tx) => {
-      const shipper = await tx.shipper.findUnique({ where: { id: shipperId }, select: { companyName: true } });
+      const shipper = await tx.shipper.findUnique({
+        where: { id: shipperId },
+        select: { companyName: true, config: { select: SELECT_TARIF } },
+      });
       if (!shipper) throw notFound('Expéditeur introuvable.');
       const where = { ...whereCandidats(shipperId), ...(ids ? { id: { in: ids } } : {}) };
       const candidats = await tx.package.findMany({ where, select: { id: true } });
@@ -423,6 +458,15 @@ export class PaymentsService {
         data: { paymentVoucherId: cree.id },
       });
       if (!count) throw conflict('Ces colis viennent d’être pris dans un autre bordereau.');
+      // Frais de retour : ceux du tarif de l'expéditeur, figés sur le colis
+      // au moment du bordereau (un colis qui en porte déjà les garde).
+      const fraisRetour = tarifDepuisConfig(shipper.config).retour;
+      if (fraisRetour > 0) {
+        await tx.package.updateMany({
+          where: { paymentVoucherId: cree.id, status: 'RETOURNE_EXPEDITEUR', returnFee: 0 },
+          data: { returnFee: fraisRetour },
+        });
+      }
       await auditService.record(
         {
           entityType: 'PAYMENT_VOUCHER',

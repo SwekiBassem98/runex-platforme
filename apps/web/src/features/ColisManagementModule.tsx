@@ -325,7 +325,8 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
   const livraison = useAgencesLivraison(
     newColisForm.governorate,
     newColisForm.delegation,
-    newColisForm.shipperId || null
+    newColisForm.shipperId || null,
+    newColisForm.sizeCategory
   );
   const [agenceChoisie, setAgenceChoisie] = useState(false);
   const agenceSortie = agenceChoisie ? newColisForm.destinationDepositId : (livraison.suggestion ?? '');
@@ -1240,10 +1241,19 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
                       value={newColisForm.sizeCategory}
                       onChange={(e) => setNewColisForm({ ...newColisForm, sizeCategory: e.target.value as PackageSize })}
                     >
-                      <option value={PackageSize.LEGERE}>Légère (&lt; 2 kg)</option>
-                      <option value={PackageSize.MOYENNE}>Moyenne (2 à 5 kg)</option>
-                      <option value={PackageSize.LOURDE}>Lourde (5 à 15 kg)</option>
-                      <option value={PackageSize.VOLUMINEUSE}>Volumineuse (&gt; 15 kg)</option>
+                      {(
+                        [
+                          [PackageSize.LEGERE, 'Légère (< 2 kg)'],
+                          [PackageSize.MOYENNE, 'Normale (2 à 5 kg)'],
+                          [PackageSize.LOURDE, 'Lourde (5 à 15 kg)'],
+                          [PackageSize.VOLUMINEUSE, 'Volumineuse (> 15 kg)'],
+                        ] as const
+                      ).map(([taille, libelle]) => (
+                        <option key={taille} value={taille}>
+                          {libelle}
+                          {typeof livraison.tarifs[taille] === 'number' ? ` — ${livraison.tarifs[taille]!.toFixed(3)} DT` : ''}
+                        </option>
+                      ))}
                     </Select>
                   </FormField>
 

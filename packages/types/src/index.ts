@@ -893,6 +893,10 @@ export interface PaymentVoucherDto {
   deliveryFeesTotal: number;
   returnFeesTotal: number;
   withholdingTaxTotal: number;
+  /** Frais de gestion déduits (tarif de l'expéditeur, par paiement). */
+  managementFeesTotal?: number;
+  /** Taux de R.A.S. appliqué au net (0,03 = 3 %). */
+  withholdingTaxRate?: number;
   netPayable: number;
   scheduledDate?: string;
   paidAt?: string;

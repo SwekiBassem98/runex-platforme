@@ -83,7 +83,7 @@ export function FormulaireColis() {
 
   const [form, setForm] = React.useState<EtatFormulaire>(VIDE);
   const delegationsConnues = useDelegationsConnues(form.governorate);
-  const { agences, suggestion, suggestionDepart, frais } = useAgencesLivraison(form.governorate, form.delegation);
+  const { agences, suggestion, suggestionDepart, frais, tarifs } = useAgencesLivraison(form.governorate, form.delegation, null, form.sizeCategory);
   // L'agence proposée suit l'adresse tant que l'expéditeur ne l'a pas choisie.
   // Agences : déterminées automatiquement, l'expéditeur ne les choisit pas.
   // Départ = l'agence qui dessert l'adresse de son compte ; sortie = celle qui
@@ -335,6 +335,7 @@ export function FormulaireColis() {
                 {Object.values(PackageSize).map((taille) => (
                   <option key={taille} value={taille}>
                     {voc.taille(taille)}
+                    {typeof tarifs[taille] === 'number' ? ` — ${tarifs[taille]!.toFixed(3)} DT` : ''}
                   </option>
                 ))}
               </Select>

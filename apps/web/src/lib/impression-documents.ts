@@ -97,7 +97,8 @@ export function imprimerBordereau(v: PaymentVoucherDto): void {
       <tr><td>Total encaissé</td><td class="r">${dt(v.grossCashCollected)}</td></tr>
       <tr><td>Frais de livraison</td><td class="r">− ${dt(v.deliveryFeesTotal)}</td></tr>
       <tr><td>Frais de retour</td><td class="r">− ${dt(v.returnFeesTotal)}</td></tr>
-      <tr><td>Retenue à la source</td><td class="r">− ${dt(v.withholdingTaxTotal)}</td></tr>
+      ${Number(v.managementFeesTotal ?? 0) > 0 ? `<tr><td>Frais de gestion</td><td class="r">− ${dt(v.managementFeesTotal ?? 0)}</td></tr>` : ''}
+      <tr><td>Retenue à la source${Number(v.withholdingTaxRate ?? 0) > 0 ? ` (${Math.round(Number(v.withholdingTaxRate) * 10000) / 100} % du net)` : ''}</td><td class="r">− ${dt(v.withholdingTaxTotal)}</td></tr>
       <tr class="tot"><td>Net à payer</td><td class="r">${dt(v.netPayable)}</td></tr></tbody></table>
       ${v.paidAt ? `<p>Réglé le ${date(v.paidAt)}.</p>` : ''}
       <div class="sign"><div>Caisse RUNEX</div><div>Expéditeur — nom et signature</div></div>`
