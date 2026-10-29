@@ -17,7 +17,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ArrowRight, PlusCircle, Printer, RotateCcw, SortAsc } from 'lucide-react';
+import { ArrowRight, CalendarDays, History, PlusCircle, Printer, RotateCcw, SortAsc } from 'lucide-react';
 import { PackageStatus, PackageType, type PackageDto } from '@logixpress/types';
 import {
   Badge,
@@ -84,6 +84,23 @@ const VUES: Array<{ id: VueColis; cle: Cle; statuts: PackageStatus[] }> = [
   },
 ];
 
+/** Journée en cours à Tunis (AAAA-MM-JJ) — celle que l'API entend par `date`. */
+function jourTunis(d = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Tunis', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+}
+
+/**
+ * Liste des colis de l'expéditeur.
+ *
+ * À l'ouverture de la page, la liste montre **les colis du jour** : c'est sur
+ * eux que portent « Imprimer tous les colis » et « Bons de livraison », pour
+ * que l'impression (et le scan qui suit) ne reprenne pas tout l'historique.
+ * L'historique reste à portée : « Historique » (tous les jours), le choix
+ * d'une date, ou une recherche — qui porte sur tout l'historique tant
+ * qu'aucune date n'a été choisie. Un lien qui arrive avec un filtre (tableau
+ * de bord : statut, catégorie, gouvernorat) ouvre sur tout l'historique, pour
+ * retrouver les chiffres qu'il annonçait.
+ */
 export function VueColis() {
   const { t, formatDate, formatDateTime, formatTND } = useI18n();
   const voc = useVocabulaire();
@@ -98,7 +115,18 @@ export function VueColis() {
   const [statut, setStatut] = React.useState(params.get('statut') ?? 'ALL');
   const [type, setType] = React.useState(params.get('type') ?? 'ALL');
   const [gouvernorat, setGouvernorat] = React.useState(params.get('ville') ?? 'ALL');
-  const [date, setDate] = React.useState(params.get('date') ?? '');
+  const aujourdhui = jourTunis();
+  // Entrée simple sur la page : les colis du jour. Lien filtré ou `date=tous` : tout l'historique.
+  const arriveeFiltree = ['vue', 'statut', 'type', 'ville', 'q'].some((k) => params.get(k));
+  const [date, setDate] = React.useState(() => {
+    const demandee = params.get('date');
+    if (demandee === 'tous') return '';
+    if (demandee) return demandee;
+    return arriveeFiltree ? '' : aujourdhui;
+  });
+  // Date choisie par l'utilisateur (ou portée par le lien) : elle s'applique
+  // aussi à la recherche. Sinon une recherche fouille tout l'historique.
+  const [dateChoisie, setDateChoisie] = React.useState(() => !!params.get('date'));
   const [page, setPage] = React.useState(1);
   const [taille, setTaille] = React.useState(20);
   const [tri, setTri] = React.useState<'recent' | 'ancien' | 'montant'>('recent');
@@ -112,6 +140,9 @@ export function VueColis() {
   const { addToast } = useToast();
 
   const rechercheAppliquee = useDifferee(recherche.trim(), 350);
+  const rechercheHistorique = !!rechercheAppliquee && !dateChoisie && date === aujourdhui;
+  const dateEffective = rechercheHistorique ? '' : date;
+  const duJour = dateEffective === aujourdhui;
 
   /*
    * « Retours » couvre quatre statuts et l'API n'en accepte qu'un par
@@ -131,7 +162,7 @@ export function VueColis() {
         ...(statut !== 'ALL' ? { status: statut } : {}),
         ...(type !== 'ALL' ? { type } : {}),
         ...(gouvernorat !== 'ALL' ? { city: gouvernorat } : {}),
-        ...(date ? { date } : {}),
+        ...(dateEffective ? { date: dateEffective } : {}),
       };
 
       try {
@@ -172,7 +203,7 @@ export function VueColis() {
     return () => {
       annule = true;
     };
-  }, [vue, rechercheAppliquee, statut, type, gouvernorat, date, page, taille]);
+  }, [vue, rechercheAppliquee, statut, type, gouvernorat, dateEffective, page, taille]);
 
   /*
    * Tri de la page affichée.
@@ -206,7 +237,8 @@ export function VueColis() {
     setStatut('ALL');
     setType('ALL');
     setGouvernorat('ALL');
-    setDate('');
+    setDate(aujourdhui);
+    setDateChoisie(false);
     setPage(1);
     setTri('recent');
     router.replace('/expediteur/colis', { scroll: false });
@@ -225,7 +257,7 @@ export function VueColis() {
         ...(statut !== 'ALL' ? { status: statut } : {}),
         ...(type !== 'ALL' ? { type } : {}),
         ...(gouvernorat !== 'ALL' ? { city: gouvernorat } : {}),
-        ...(date ? { date } : {}),
+        ...(dateEffective ? { date: dateEffective } : {}),
       };
 
       // Construit la fonction lister adaptée à la vue courante (retours = 4 statuts)
@@ -339,13 +371,25 @@ export function VueColis() {
     }
   };
 
+  // La journée en cours est l'affichage par défaut, pas un filtre.
   const filtresActifs =
     recherche.trim() !== '' ||
     statut !== 'ALL' ||
     type !== 'ALL' ||
     gouvernorat !== 'ALL' ||
-    date !== '' ||
+    (date !== '' && date !== aujourdhui) ||
     vue !== 'tous';
+
+  const choisirJour = (jour: string) => {
+    setDate(jour);
+    setDateChoisie(jour !== aujourdhui);
+    setPage(1);
+  };
+  const libelleImpression = duJour
+    ? t('colis.liste.imprimerJour', { n: total })
+    : filtresActifs
+      ? t('colis.liste.imprimerFiltres', { n: total })
+      : t('colis.liste.imprimerTous');
 
   const nbPages = Math.max(1, Math.ceil(total / taille));
 
@@ -355,7 +399,13 @@ export function VueColis() {
         <div>
           <h1 className="text-xl font-bold text-slate-900">{t('colis.liste.titre')}</h1>
           <p className="text-sm text-slate-500 mt-0.5">
-            {chargement ? t('commun.chargement') : t('colis.liste.compte', { n: total })}
+            {chargement
+              ? t('commun.chargement')
+              : duJour
+                ? t('colis.liste.compteJour', { n: total })
+                : dateEffective
+                  ? t('colis.liste.compteDate', { n: total, date: formatDate(`${dateEffective}T12:00:00`) })
+                  : t('colis.liste.compteHistorique', { n: total })}
           </p>
         </div>
         <Link
@@ -403,7 +453,7 @@ export function VueColis() {
                 gouvernorat !== 'ALL'
                   ? `${t('filtre.gouvernorat').toLowerCase()} ${voc.gouvernorat(gouvernorat).toLowerCase()}`
                   : null,
-                date ? `${t('colis.liste.creesLe').toLowerCase()} ${date}` : null,
+                dateEffective && dateEffective !== aujourdhui ? `${t('colis.liste.creesLe').toLowerCase()} ${dateEffective}` : null,
               ]
                 .filter(Boolean)
                 .join(' · ')
@@ -412,6 +462,7 @@ export function VueColis() {
       >
         <div className="w-full sm:w-64">
           <SearchInput
+            id="recherche-colis"
             libelle={t('colis.liste.recherche')}
             placeholder={t('colis.liste.rechercheAide')}
             value={recherche}
@@ -481,15 +532,53 @@ export function VueColis() {
         <FormField label={t('colis.liste.creesLe')} className="w-full sm:w-44">
           <Input
             type="date"
-            value={date}
-            max={new Date().toISOString().slice(0, 10)}
+            value={dateEffective}
+            max={aujourdhui}
             onChange={(e) => {
               setDate(e.target.value);
+              setDateChoisie(!!e.target.value);
               setPage(1);
             }}
+            data-testid="filtre-date"
           />
         </FormField>
+        <div className="flex items-end gap-1.5" role="group" aria-label={t('colis.liste.periode')}>
+          <button
+            type="button"
+            onClick={() => choisirJour(aujourdhui)}
+            aria-pressed={duJour}
+            data-testid="colis-du-jour"
+            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-xs font-semibold border transition cursor-pointer ${
+              duJour ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+            }`}
+          >
+            <CalendarDays className="w-3.5 h-3.5" aria-hidden="true" />
+            {t('colis.liste.aujourdhui')}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setDate('');
+              setDateChoisie(true);
+              setPage(1);
+            }}
+            aria-pressed={!dateEffective}
+            data-testid="colis-historique"
+            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-xs font-semibold border transition cursor-pointer ${
+              !dateEffective ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+            }`}
+          >
+            <History className="w-3.5 h-3.5" aria-hidden="true" />
+            {t('colis.liste.historique')}
+          </button>
+        </div>
       </FilterBar>
+
+      {rechercheHistorique && (
+        <p className="text-xs text-slate-500 -mt-2" data-testid="recherche-historique">
+          {t('colis.liste.rechercheHistorique')}
+        </p>
+      )}
 
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2">
@@ -528,13 +617,8 @@ export function VueColis() {
             type="button"
             onClick={() => void handleImprimer()}
             disabled={chargement || total === 0 || impressionEnCours}
-            title={
-              total === 0
-                ? t('colis.liste.impressionVide')
-                : filtresActifs
-                  ? t('colis.liste.imprimerFiltres', { n: total })
-                  : t('colis.liste.imprimerTous')
-            }
+            title={total === 0 ? t('colis.liste.impressionVide') : libelleImpression}
+            data-testid="imprimer-colis"
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-semibold border transition cursor-pointer ${
               chargement || total === 0
                 ? 'bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed'
@@ -547,11 +631,7 @@ export function VueColis() {
               <Printer className="w-3.5 h-3.5" aria-hidden="true" />
             )}
             <span>
-              {impressionEnCours
-                ? t('colis.liste.impressionEnCours')
-                : filtresActifs
-                  ? t('colis.liste.imprimerFiltres', { n: total })
-                  : t('colis.liste.imprimerTous')}
+              {impressionEnCours ? t('colis.liste.impressionEnCours') : libelleImpression}
             </span>
           </button>
         </div>
@@ -577,6 +657,27 @@ export function VueColis() {
           <ChargementEnCours message={t('colis.liste.chargement')} />
           <SkeletonTable rows={6} cols={6} />
         </>
+      ) : colisAffiches.length === 0 && duJour && !filtresActifs ? (
+        <EmptyState
+          icon={<PackageIcon />}
+          title={t('colis.liste.videJourTitre')}
+          description={t('colis.liste.videJourDescription')}
+          action={
+            <button
+              type="button"
+              onClick={() => {
+                setDate('');
+                setDateChoisie(true);
+                setPage(1);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 text-slate-700 rounded-md text-xs font-medium transition cursor-pointer"
+              data-testid="voir-historique"
+            >
+              <History className="w-3.5 h-3.5" aria-hidden="true" />
+              {t('colis.liste.voirHistorique')}
+            </button>
+          }
+        />
       ) : colisAffiches.length === 0 ? (
         <EmptyState
           icon={<PackageIcon />}
