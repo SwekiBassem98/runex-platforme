@@ -131,6 +131,17 @@ export const ar: Dictionnaire = {
 
   // ------------------------------------------------------------------ colis
   'colis.liste.titre': 'طرودي',
+  'colis.liste.compteJour': '{n} طرد أُنشئ اليوم',
+  'colis.liste.compteDate': '{n} طرد أُنشئ في {date}',
+  'colis.liste.compteHistorique': '{n} طرد — كامل السجل',
+  'colis.liste.imprimerJour': 'طباعة طرود اليوم ({n})',
+  'colis.liste.periode': 'الفترة',
+  'colis.liste.aujourdhui': 'اليوم',
+  'colis.liste.historique': 'السجل',
+  'colis.liste.rechercheHistorique': 'البحث في كامل سجل طرودك.',
+  'colis.liste.videJourTitre': 'لا توجد طرود أُنشئت اليوم',
+  'colis.liste.videJourDescription': 'تعرض القائمة طرود اليوم. طرود الأيام السابقة موجودة في السجل.',
+  'colis.liste.voirHistorique': 'عرض السجل',
   'colis.liste.compte': '{n} طرد',
   'colis.liste.categories': 'فئات الطرود',
   'colis.liste.categorie.tous': 'الكل',

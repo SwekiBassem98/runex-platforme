@@ -136,6 +136,17 @@ export const fr = {
 
   // ------------------------------------------------------------------ colis
   'colis.liste.titre': 'Mes colis',
+  'colis.liste.compteJour': '{n} colis créés aujourd’hui',
+  'colis.liste.compteDate': '{n} colis créés le {date}',
+  'colis.liste.compteHistorique': '{n} colis — tout l’historique',
+  'colis.liste.imprimerJour': 'Imprimer les {n} colis du jour',
+  'colis.liste.periode': 'Période',
+  'colis.liste.aujourdhui': 'Aujourd’hui',
+  'colis.liste.historique': 'Historique',
+  'colis.liste.rechercheHistorique': 'Recherche dans tout l’historique de vos colis.',
+  'colis.liste.videJourTitre': 'Aucun colis créé aujourd’hui',
+  'colis.liste.videJourDescription': 'La liste montre les colis du jour. Vos colis des jours précédents sont dans l’historique.',
+  'colis.liste.voirHistorique': 'Voir l’historique',
   'colis.liste.compte': '{n} colis',
   'colis.liste.categories': 'Catégories de colis',
   'colis.liste.categorie.tous': 'Tous',
