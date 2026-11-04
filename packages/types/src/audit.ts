@@ -48,6 +48,8 @@ export const AUDIT_ENTITY_TYPES = {
   RETURN_SLIP: 'Bon de retour expéditeur',
   REPORT: 'Rapport',
   ZONE: 'Zone de livraison',
+  SOUS_TRAITANCE: 'Sous-traitance JAX',
+  SYSTEME: 'Système',
 } as const;
 
 export type AuditEntityType = keyof typeof AUDIT_ENTITY_TYPES;
@@ -206,6 +208,20 @@ export const AUDIT_ACTIONS: Readonly<Record<string, AuditActionDefinition>> = {
   RETURN_SLIP_MODIFIE: { label: 'Bon de retour modifié (livreur, colis)', category: 'LIVRAISON' },
   RETURN_SLIP_EN_COURS: { label: 'Bon de retour en cours de livraison', category: 'LIVRAISON' },
   RETURN_SLIP_REVENU: { label: 'Bon de retour revenu au dépôt', category: 'LIVRAISON' },
+  RETURN_SLIP_SUPPRIME: { label: 'Bon de retour supprimé', category: 'LIVRAISON', critical: true },
+
+  // --- Sous-traitance de la livraison (partenaire JAX) --------------------
+  JAX_ENVOI: { label: 'Colis confié au partenaire JAX', category: 'LIVRAISON' },
+  JAX_ENVOI_ECHEC: { label: 'Envoi à JAX refusé', category: 'LIVRAISON' },
+  JAX_ENLEVEMENT: { label: 'Enlèvement demandé à JAX', category: 'LIVRAISON' },
+  JAX_LIVRE: { label: 'Colis livré par JAX', category: 'LIVRAISON', critical: true },
+  JAX_ANNULE: { label: 'Annulé chez JAX avant enlèvement', category: 'LIVRAISON' },
+  JAX_REPRIS: { label: 'Colis repris à JAX avant enlèvement', category: 'LIVRAISON' },
+  JAX_RETOUR_RECU: { label: 'Retour JAX reçu à l\'agence', category: 'LIVRAISON' },
+  JAX_COD_RECU: { label: 'Montant reversé par JAX', category: 'FINANCE', critical: true },
+  JAX_REFERENTIELS: { label: 'Référentiels JAX relus', category: 'PARAMETRAGE' },
+  JAX_ZONES: { label: 'Zones confiées à JAX modifiées', category: 'PARAMETRAGE' },
+  JAX_STATUT_CORRESPONDANCE: { label: 'Correspondance de statut JAX modifiée', category: 'PARAMETRAGE' },
   PAYMENT_REJECTED: {
     label: 'Paiement rejeté',
     category: 'FINANCE',
@@ -246,6 +262,8 @@ export const AUDIT_ACTIONS: Readonly<Record<string, AuditActionDefinition>> = {
   INTERDEPOT_RETOUR_DIRECT: { label: 'Retour accepté au dépôt (sans bordereau)', category: 'TRANSFERT', critical: true },
   INTERDEPOT_RETRAIT: { label: "Colis retiré d'un inter-dépôt", category: 'TRANSFERT' },
   INTERDEPOT_ANNULATION: { label: 'Inter-dépôt annulé', category: 'TRANSFERT', critical: true },
+  INTERDEPOT_SUPPRESSION: { label: 'Colis remis en stock (inter-dépôt supprimé)', category: 'TRANSFERT' },
+  TRANSFERT_SUPPRIME: { label: 'Inter-dépôt supprimé', category: 'TRANSFERT', critical: true },
   TRANSFERT_RECU: {
     label: 'Transfert réceptionné',
     category: 'TRANSFERT',
