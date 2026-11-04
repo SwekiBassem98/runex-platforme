@@ -93,6 +93,7 @@ export const PACKAGE_STATUS_TRANSITIONS: Readonly<Record<PackageStatus, readonly
     PackageStatus.EN_LOT_INTER_DEPOT,
     PackageStatus.EN_TRANSIT_INTER_DEPOT,
     PackageStatus.AFFECTE_RUNSHEET,
+    PackageStatus.SOUS_TRAITE,
     PackageStatus.ANNULE,
   ],
   // Les deux sorties « retour au dépôt d'origine » sont les annulations de
@@ -117,6 +118,17 @@ export const PACKAGE_STATUS_TRANSITIONS: Readonly<Record<PackageStatus, readonly
   [PackageStatus.RECU_DEPOT_DESTINATION]: [
     PackageStatus.AFFECTE_RUNSHEET,
     PackageStatus.EN_TRANSIT_INTER_DEPOT,
+    PackageStatus.SOUS_TRAITE,
+  ],
+
+  // --- Sous-traitance (partenaire JAX) ---
+  // Le partenaire livre (LIVRE) ou rend le colis à l'agence (RETOUR_DEPOT) ;
+  // repris avant enlèvement, le colis revient en stock (RECU_DEPOT). Aucune
+  // tournée ni inter-dépôt Runex tant qu'il est chez le partenaire.
+  [PackageStatus.SOUS_TRAITE]: [
+    PackageStatus.LIVRE,
+    PackageStatus.RETOUR_DEPOT,
+    PackageStatus.RECU_DEPOT,
   ],
 
   // --- Dernier kilomètre ---
@@ -236,6 +248,7 @@ export const PACKAGE_TRANSITION_REQUIREMENTS: Readonly<
   EN_LOT_INTER_DEPOT: NO_REQUIREMENT,
   EN_TRANSIT_INTER_DEPOT: NO_REQUIREMENT,
   RECU_DEPOT_DESTINATION: NO_REQUIREMENT,
+  SOUS_TRAITE: NO_REQUIREMENT,
   AFFECTE_RUNSHEET: NO_REQUIREMENT,
   EN_COURS_LIVRAISON: NO_REQUIREMENT,
 
@@ -401,6 +414,7 @@ export const PACKAGE_STATUS_LABELS: Readonly<Record<PackageStatus, string>> = {
   EN_LOT_INTER_DEPOT: 'En lot inter-dépôt',
   EN_TRANSIT_INTER_DEPOT: 'En transit inter-dépôt',
   RECU_DEPOT_DESTINATION: 'Reçu au dépôt de destination',
+  SOUS_TRAITE: 'Confié au partenaire JAX',
   AFFECTE_RUNSHEET: 'Affecté à une tournée',
   EN_COURS_LIVRAISON: 'En cours de livraison',
   LIVRE: 'Livré',

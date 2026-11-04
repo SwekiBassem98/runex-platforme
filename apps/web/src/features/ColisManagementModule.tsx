@@ -7,6 +7,9 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
+import { packageStatusLabel } from '@logixpress/types';
+import { CarteSousTraitanceColis } from '@/features/sous-traitance/CarteSousTraitanceColis';
+import { PastilleJax } from '@/features/sous-traitance/EtatJax';
 import { useDifferee } from '@logixpress/ui';
 import {
   Package,
@@ -982,7 +985,12 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
                           resume={`Colis ${pkg.trackingNumber}, ${pkg.customerName}, ${badge.label}, ${formatTND(pkg.totalPrice)}`}
                         >
                           <Td figee>
-                            <span className="font-mono font-bold text-red-600 block">{pkg.trackingNumber}</span>
+                            <span className="font-mono font-bold text-red-600 flex items-center gap-1.5">
+                              {pkg.trackingNumber}
+                              {pkg.sousTraitance && !['ANNULE', 'ECHEC_ENVOI'].includes(pkg.sousTraitance.etat) && (
+                                <PastilleJax titre={`JAX ${pkg.sousTraitance.codeExterne ?? ''} — ${pkg.sousTraitance.etatLibelle}`} />
+                              )}
+                            </span>
                             <span className="text-[11px] text-slate-500 font-mono">{pkg.barcode}</span>
                           </Td>
                           <Td>
@@ -1391,7 +1399,7 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
                           : 'online'
                       }
                       pulse={colis.status === PackageStatus.EN_COURS_LIVRAISON}
-                      label={colis.status}
+                      label={packageStatusLabel(colis.status)}
                     />
                   </div>
                   <p className="text-xs text-slate-500 mt-1 font-mono">
@@ -1416,6 +1424,31 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
               <span className="text-xs font-bold text-slate-500 uppercase tracking-wider mr-2">
                 Actions Rapides :
               </span>
+
+              {colis.status === PackageStatus.SOUS_TRAITE ? (
+                <>
+                  {/* Chez JAX : c'est le partenaire qui livre ; les gestes de
+                      livraison Runex ne s'appliquent pas (voir la carte JAX). */}
+                  <span className="text-xs text-violet-800 bg-violet-50 border border-violet-200 rounded px-2.5 py-1.5" data-testid="actions-jax">
+                    Livraison confiée à JAX : suivez et agissez depuis la carte « Livraison sous-traitée — JAX » ci-dessous.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        imprimerBonsLivraison([await colisApi.bonLivraison(colis.id)]);
+                      } catch (err) {
+                        addToast({ type: 'error', title: 'Impression impossible', message: err instanceof Error ? err.message : undefined });
+                      }
+                    }}
+                    className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+                  >
+                    <Printer className="w-3.5 h-3.5" aria-hidden="true" />
+                    <span>Bon de livraison</span>
+                  </button>
+                </>
+              ) : (
+                <>
 
               {/* 1. Assigner */}
               <button
@@ -1576,8 +1609,23 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
                   <span>Annuler</span>
                 </button>
               )}
+                </>
+              )}
             </div>
           </div>
+
+          {/* Livraison sous-traitée au partenaire JAX (ou à confier). */}
+          {(currentUser.role === RoleType.ADMIN || currentUser.role === RoleType.GESTIONNAIRE) && (
+            <CarteSousTraitanceColis
+              packageId={colis.id}
+              statut={colis.status}
+              sousTraitance={colis.sousTraitance}
+              onChange={() => {
+                loadColisDetails(colis.id);
+                loadPackages();
+              }}
+            />
+          )}
 
           {/* 2. GRILLE D'INFORMATIONS : CUSTOMER, EXPÉDITEUR, DELIVERY, FINANCIAL, CONTENT, NOTES */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">

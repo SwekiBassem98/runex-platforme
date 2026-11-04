@@ -36,6 +36,8 @@ export enum PackageStatus {
   EN_LOT_INTER_DEPOT = 'EN_LOT_INTER_DEPOT',
   EN_TRANSIT_INTER_DEPOT = 'EN_TRANSIT_INTER_DEPOT',
   RECU_DEPOT_DESTINATION = 'RECU_DEPOT_DESTINATION',
+  /** Confié au partenaire de livraison (JAX), qui l'enlève et le livre. */
+  SOUS_TRAITE = 'SOUS_TRAITE',
   AFFECTE_RUNSHEET = 'AFFECTE_RUNSHEET',
   EN_COURS_LIVRAISON = 'EN_COURS_LIVRAISON',
   LIVRE = 'LIVRE',
@@ -68,6 +70,7 @@ export const PACKAGE_STATUS_LABELS: Readonly<Record<PackageStatus, string>> = {
   EN_LOT_INTER_DEPOT: 'En lot inter-dépôt',
   EN_TRANSIT_INTER_DEPOT: 'En transit inter-dépôt',
   RECU_DEPOT_DESTINATION: 'Arrivé en agence',
+  SOUS_TRAITE: 'Confié au partenaire JAX',
   AFFECTE_RUNSHEET: 'Affecté à une tournée',
   EN_COURS_LIVRAISON: 'En cours de livraison',
   LIVRE: 'Livré',

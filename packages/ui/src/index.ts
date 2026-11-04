@@ -280,6 +280,7 @@ const statusStyle: Record<string, { bg: string; text: string; border: string }> 
   EN_LOT_INTER_DEPOT: { bg: 'bg-purple-50', text: 'text-purple-700', border: 'border-purple-200' },
   EN_TRANSIT_INTER_DEPOT: { bg: 'bg-purple-100', text: 'text-purple-800', border: 'border-purple-300' },
   RECU_DEPOT_DESTINATION: { bg: 'bg-teal-50', text: 'text-teal-700', border: 'border-teal-200' },
+  SOUS_TRAITE: { bg: 'bg-violet-50', text: 'text-violet-800', border: 'border-violet-300' },
   AFFECTE_RUNSHEET: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
   EN_COURS_LIVRAISON: { bg: 'bg-orange-50', text: 'text-orange-700', border: 'border-orange-200' },
   LIVRE: { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-300' },

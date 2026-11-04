@@ -33,7 +33,8 @@ export const ETAPES_ADMIN = {
   collecte: ['RAMASSE'],
   depot: ['RECU_DEPOT', 'RECU_DEPOT_DESTINATION'],
   transit: ['EN_LOT_INTER_DEPOT', 'EN_TRANSIT_INTER_DEPOT'],
-  livraison: ['AFFECTE_RUNSHEET', 'EN_COURS_LIVRAISON'],
+  // SOUS_TRAITE : en livraison chez le partenaire JAX.
+  livraison: ['AFFECTE_RUNSHEET', 'EN_COURS_LIVRAISON', 'SOUS_TRAITE'],
   reporte: ['REPORTE'],
   retour: ['ECHEC_LIVRAISON', 'RETOUR_DEPOT', 'EN_RUNSHEET_RETOUR'],
 } as const;

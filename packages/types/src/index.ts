@@ -415,6 +415,49 @@ export interface UserDto {
   agencyName?: string;
 }
 
+/** États d'un colis confié au partenaire de livraison. */
+export type EtatSousTraitance =
+  | 'ECHEC_ENVOI'
+  | 'EN_ATTENTE_ENLEVEMENT'
+  | 'ENLEVEMENT_DEMANDE'
+  | 'PRIS_EN_CHARGE'
+  | 'EN_LIVRAISON'
+  | 'LIVRE'
+  | 'RETOUR_EN_COURS'
+  | 'RETOURNE'
+  | 'ANNULE';
+
+export const ETATS_SOUS_TRAITANCE: Readonly<Record<EtatSousTraitance, string>> = {
+  ECHEC_ENVOI: 'Envoi à JAX en échec',
+  EN_ATTENTE_ENLEVEMENT: 'Créé chez JAX — en attente d’enlèvement',
+  ENLEVEMENT_DEMANDE: 'Enlèvement demandé à JAX',
+  PRIS_EN_CHARGE: 'Pris en charge par JAX',
+  EN_LIVRAISON: 'En cours de livraison par JAX',
+  LIVRE: 'Livré par JAX',
+  RETOUR_EN_COURS: 'Non livré — retour JAX en cours',
+  RETOURNE: 'Retour JAX reçu à l’agence',
+  ANNULE: 'Repris par Runex / annulé chez JAX',
+};
+
+export interface SousTraitanceColisDto {
+  partenaire: string;
+  /** Code du colis chez le partenaire (EAN). */
+  codeExterne: string | null;
+  etat: EtatSousTraitance;
+  etatLibelle: string;
+  mode: 'AUTO' | 'MANUEL' | string;
+  agence: string | null;
+  statutExterne: string | null;
+  statutExterneLe: string | null;
+  problemes: string | null;
+  envoyeLe: string | null;
+  enlevementDemandeLe: string | null;
+  derniereSyncLe: string | null;
+  derniereErreur: string | null;
+  codMontant: number;
+  codRecuLe: string | null;
+}
+
 export interface PackageDto {
   id: string;
   trackingNumber: string;
@@ -501,6 +544,11 @@ export interface PackageDto {
   auditLogs?: AuditModificationLog[];
   createdAt: string;
   updatedAt: string;
+  /**
+   * Sous-traitance de la livraison (partenaire JAX) : présente quand le colis
+   * a été confié au partenaire. Visible par l'exploitation et l'expéditeur.
+   */
+  sousTraitance?: SousTraitanceColisDto | null;
 }
 
 /**

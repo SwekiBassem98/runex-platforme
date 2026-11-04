@@ -2192,3 +2192,96 @@ export function createApiFetch(): typeof fetch {
     } as unknown as Response;
   }) as typeof fetch;
 }
+
+/* ------------------------------------------------------------------ */
+/* Sous-traitance de la livraison (partenaire JAX)                     */
+/* ------------------------------------------------------------------ */
+
+import type { SousTraitanceColisDto as DtoSousTraitance } from '@logixpress/types';
+export type { EtatSousTraitance, SousTraitanceColisDto } from '@logixpress/types';
+
+export interface ParametresJax {
+  configure: boolean;
+  url: string;
+  expediteur: { nom: string; tel: string | null };
+  syncMinutes: number;
+  zones: string[];
+  gouvernorats: { id: string; nom: string }[];
+  statuts: { code: string; libelle: string; etat: string | null; etatPropose: string | null; manuel: boolean }[];
+  etats: { etat: string; libelle: string }[];
+}
+
+export interface LigneSousTraitance extends DtoSousTraitance {
+  packageId: string;
+  trackingNumber: string;
+  statutRunex: string;
+  expediteur: string;
+  destinataire: string;
+  destination: string;
+  montant: number;
+}
+
+export interface ListeSousTraitance {
+  lignes: LigneSousTraitance[];
+  compteurs: Record<string, number>;
+  codARecevoir: { colis: number; total: number };
+}
+
+export interface ColisEligibleJax {
+  id: string;
+  trackingNumber: string;
+  status: string;
+  expediteur: string;
+  destinataire: string;
+  destination: string;
+  governorate: string;
+  agenceId: string | null;
+  agence: string | null;
+  montant: number;
+  pieces: number;
+  zoneJax: boolean;
+  echecPrecedent: string | null;
+}
+
+export interface EnlevementJax {
+  depositId: string | null;
+  agence: string;
+  aDemander: number;
+  demandes: number;
+  pieces: number;
+  colis: { trackingNumber: string; codeExterne: string; etat: string }[];
+}
+
+export interface ResultatEnvoiJax {
+  packageId: string;
+  trackingNumber: string;
+  ok: boolean;
+  codeExterne?: string | null;
+  message: string;
+}
+
+export const sousTraitanceApi = {
+  parametres: () => requestData<ParametresJax>('/sous-traitance/jax/parametres'),
+  referentiels: () => request<{ gouvernorats: number; statuts: number }>('/sous-traitance/jax/referentiels', { method: 'POST', body: {} }),
+  zones: (governorates: string[]) => request<string[]>('/sous-traitance/jax/zones', { method: 'PUT', body: { governorates } }),
+  statut: (code: string, etat: string | null) =>
+    request<null>(`/sous-traitance/jax/statuts/${encodeURIComponent(code)}`, { method: 'PATCH', body: { etat } }),
+  lister: (params?: { etat?: string; depositId?: string; q?: string; cod?: string }) =>
+    requestData<ListeSousTraitance>('/sous-traitance/jax/colis', { query: params }),
+  eligibles: (params?: { depositId?: string; governorate?: string; q?: string }) =>
+    requestData<ColisEligibleJax[]>('/sous-traitance/jax/eligibles', { query: params }),
+  envoyer: (packageIds: string[]) => request<ResultatEnvoiJax[]>('/sous-traitance/jax/envoyer', { method: 'POST', body: { packageIds } }),
+  enlevements: () => requestData<EnlevementJax[]>('/sous-traitance/jax/enlevements'),
+  demanderEnlevement: (depositId: string, note?: string) =>
+    request<{ agence: string; colis: number; pieces: number; reference: string | null }>('/sous-traitance/jax/enlevements', {
+      method: 'POST',
+      body: { depositId, note },
+    }),
+  sync: (packageIds?: string[]) =>
+    request<{ relus: number; changes: number; erreurs: string[] }>('/sous-traitance/jax/sync', { method: 'POST', body: packageIds ? { packageIds } : {} }),
+  detail: (packageId: string) => requestData<DtoSousTraitance | null>(`/sous-traitance/colis/${encodeURIComponent(packageId)}`),
+  retourRecu: (packageId: string) => request<null>(`/sous-traitance/jax/colis/${encodeURIComponent(packageId)}/retour-recu`, { method: 'POST', body: {} }),
+  reprendre: (packageId: string) => request<null>(`/sous-traitance/jax/colis/${encodeURIComponent(packageId)}/reprendre`, { method: 'POST', body: {} }),
+  codRecu: (packageIds: string[]) =>
+    request<{ colis: number; total: number }>('/sous-traitance/jax/encaissements', { method: 'POST', body: { packageIds } }),
+};

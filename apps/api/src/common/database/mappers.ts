@@ -7,6 +7,7 @@
  * modules ne dup---|quent pas la logique d'hydratation.
  */
 
+import { versDto as versDtoSousTraitance } from '../../modules/sous-traitance/sous-traitance.dto';
 import { Prisma } from '@prisma/client';
 import type { PackageDto, TrackingTimelineEvent, DeliveryAttempt } from '@logixpress/types';
 import { PackageStatus as SharedStatus } from '@logixpress/types';
@@ -42,6 +43,8 @@ export const PACKAGE_INCLUDE = {
     orderBy: { attemptedAt: 'desc' as const },
     include: { driver: { include: { user: true } } },
   },
+  // Sous-traitance de la livraison (partenaire JAX).
+  sousTraitance: { include: { deposit: { select: { name: true } } } },
   // Demande de changement de prix en attente d'approbation (au plus une).
   priceChangeRequests: {
     where: { status: 'EN_ATTENTE' as const },
@@ -173,6 +176,7 @@ export function toPackageDto(record: PackageWithRelations): PackageDto {
           validatedAt: record.partialDelivery.validatedAt.toISOString(),
         }
       : undefined,
+    sousTraitance: versDtoSousTraitance(record.sousTraitance),
     returns: record.returns.map((entry) => ({
       id: entry.id,
       returnNumber: entry.returnNumber,

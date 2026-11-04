@@ -1,6 +1,6 @@
 import { impressionTournee } from './modules/runsheets/runsheet-impression.service';
 import { ficheFinanceExpediteur, listerFinanceExpediteurs } from './modules/payments/finance-expediteurs.service';
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import { healthController } from './modules/health/health.controller';
 import { authController } from './modules/auth/auth.controller';
 import { colisController } from './modules/colis/colis.controller';
@@ -25,6 +25,7 @@ import { receptionController } from './modules/depot/reception.controller';
 import { caisseController } from './modules/caisse/caisse.controller';
 import { priceChangeController } from './modules/prix/price-change.controller';
 import { retoursExpediteurController } from './modules/retours/retours-expediteur.controller';
+import { sousTraitanceController } from './modules/sous-traitance/sous-traitance.controller';
 import {
   usersController,
   shippersController,
@@ -47,6 +48,7 @@ import {
   requireRoles,
   requirePermissions,
   requireAnyPermission,
+  type AuthenticatedRequest,
 } from './common/auth/auth.middleware';
 import { RoleType, PermissionCode } from '@logixpress/types';
 
@@ -1065,6 +1067,26 @@ export function createApiRouter(): Router {
     requireRoles(RoleType.ADMIN),
     asyncHandler((req, res) => retoursExpediteurController.supprimer(req, res))
   );
+
+  // Sous-traitance de la livraison au partenaire JAX : envoi des colis,
+  // enlèvement par agence, relecture des statuts, retours et reversements.
+  const SOUS_TRAITANCE = [RoleType.ADMIN, RoleType.GESTIONNAIRE];
+  const st = (methode: 'get' | 'post' | 'put' | 'patch', chemin: string, action: (req: AuthenticatedRequest, res: Response) => Promise<void>) =>
+    router[methode](chemin, authenticateToken, requireRoles(...SOUS_TRAITANCE), asyncHandler((req, res) => action(req as AuthenticatedRequest, res)));
+  st('get', '/sous-traitance/jax/parametres', (q, r) => sousTraitanceController.parametres(q, r));
+  st('post', '/sous-traitance/jax/referentiels', (q, r) => sousTraitanceController.referentiels(q, r));
+  st('put', '/sous-traitance/jax/zones', (q, r) => sousTraitanceController.zones(q, r));
+  st('patch', '/sous-traitance/jax/statuts/:code', (q, r) => sousTraitanceController.statut(q, r));
+  st('get', '/sous-traitance/jax/colis', (q, r) => sousTraitanceController.lister(q, r));
+  st('get', '/sous-traitance/jax/eligibles', (q, r) => sousTraitanceController.eligibles(q, r));
+  st('post', '/sous-traitance/jax/envoyer', (q, r) => sousTraitanceController.envoyer(q, r));
+  st('get', '/sous-traitance/jax/enlevements', (q, r) => sousTraitanceController.enlevements(q, r));
+  st('post', '/sous-traitance/jax/enlevements', (q, r) => sousTraitanceController.demanderEnlevement(q, r));
+  st('post', '/sous-traitance/jax/sync', (q, r) => sousTraitanceController.sync(q, r));
+  st('get', '/sous-traitance/colis/:id', (q, r) => sousTraitanceController.detail(q, r));
+  st('post', '/sous-traitance/jax/colis/:id/retour-recu', (q, r) => sousTraitanceController.retourRecu(q, r));
+  st('post', '/sous-traitance/jax/colis/:id/reprendre', (q, r) => sousTraitanceController.reprendre(q, r));
+  st('post', '/sous-traitance/jax/encaissements', (q, r) => sousTraitanceController.codRecu(q, r));
 
   // Caisse : encaissements, net expéditeurs, frais de livraison et
   // rémunération des livreurs (3 DT par livraison ou ramassage effectué).

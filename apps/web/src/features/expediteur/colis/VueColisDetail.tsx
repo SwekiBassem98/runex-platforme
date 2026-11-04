@@ -42,8 +42,7 @@ import {
   ShieldCheck,
   Truck,
   User,
-  XCircle,
-} from 'lucide-react';
+  XCircle, Handshake } from 'lucide-react';
 import {
   PackageStatus,
   canShipperCancelOrDelete,
@@ -400,6 +399,39 @@ export function VueColisDetail({ identifiant }: { identifiant: string }) {
               </div>
             )}
           </Card>
+
+          {/* Livraison assurée par le partenaire JAX */}
+          {colis.sousTraitance && !['ECHEC_ENVOI', 'ANNULE'].includes(colis.sousTraitance.etat) && (
+            <section className="rounded-lg border border-violet-200 bg-violet-50/50 p-4 space-y-2" data-testid="expediteur-jax">
+              <h2 className="flex items-center gap-2 text-sm font-bold text-slate-900">
+                <Handshake className="w-4 h-4 text-violet-700" aria-hidden="true" />
+                {t('colis.detail.jax.titre')}
+              </h2>
+              <p className="text-xs text-slate-600">{t('colis.detail.jax.aide')}</p>
+              <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1.5 text-xs">
+                <div>
+                  <dt className="text-slate-500">{t('colis.detail.jax.etape')}</dt>
+                  <dd className="font-semibold text-slate-900">{t(`jax.etat.${colis.sousTraitance.etat}` as Cle)}</dd>
+                </div>
+                <div>
+                  <dt className="text-slate-500">{t('colis.detail.jax.statut')}</dt>
+                  <dd className="font-semibold text-slate-900">{colis.sousTraitance.statutExterne ?? '—'}</dd>
+                  {colis.sousTraitance.statutExterneLe && (
+                    <dd className="text-[11px] text-slate-400">{formatDateTime(colis.sousTraitance.statutExterneLe)}</dd>
+                  )}
+                </div>
+                <div>
+                  <dt className="text-slate-500">{t('colis.detail.jax.code')}</dt>
+                  <dd className="font-mono font-bold text-slate-900" dir="ltr">{colis.sousTraitance.codeExterne ?? '—'}</dd>
+                </div>
+              </dl>
+              {colis.sousTraitance.problemes && (
+                <p className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+                  {t('colis.detail.jax.probleme')} {colis.sousTraitance.problemes}
+                </p>
+              )}
+            </section>
+          )}
 
           {/* Chronologie */}
           <Card

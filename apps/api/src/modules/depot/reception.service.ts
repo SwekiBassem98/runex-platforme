@@ -34,6 +34,7 @@ import {
   type ScannedCodeKind,
 } from './package-identity';
 import { PackageStatus, RoleType, packageStatusLabel } from '@logixpress/types';
+import { sousTraitanceService } from '../sous-traitance/sous-traitance.service';
 import { LIBELLE_ZONE_HUB, expediteurZoneHub } from '../../common/routing/deposit-routing';
 
 /**
@@ -289,6 +290,8 @@ export class ReceptionService {
       },
       idempotencyKey: input.idempotencyKey ?? null,
     });
+    // Destination confiée à JAX : le colis part chez le partenaire (sans bloquer le scan).
+    void sousTraitanceService.envoiAutoSiEligible(record.id);
 
     // La réception renvoie l'état réellement écrit, relu après la transaction :
     // la réponse doit décrire ce qui est en base, pas ce qui était prévu.

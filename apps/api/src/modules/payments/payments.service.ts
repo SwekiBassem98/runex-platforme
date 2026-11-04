@@ -55,7 +55,12 @@ function whereCandidats(shipperId?: string): Prisma.PackageWhereInput {
     paymentVoucherId: null,
     ...(shipperId ? { shipperId } : {}),
     OR: [
-      { status: { in: [...LIVRES] }, NOT: { payment: { is: { status: 'EN_ATTENTE' } } } },
+      {
+        status: { in: [...LIVRES] },
+        NOT: { payment: { is: { status: 'EN_ATTENTE' } } },
+        // Livré par JAX : réglé à l'expéditeur une fois le montant reversé par JAX.
+        OR: [{ sousTraitance: { is: null } }, { sousTraitance: { is: { codRecuLe: { not: null } } } }],
+      },
       { status: 'RETOURNE_EXPEDITEUR' },
     ],
   };
