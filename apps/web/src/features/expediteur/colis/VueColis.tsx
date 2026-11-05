@@ -45,6 +45,7 @@ import {
 } from '@logixpress/ui';
 import { listerColis, lireBonsLivraison, type FiltresColis } from '@/features/expediteur/lib/client';
 import { imprimerBonsLivraison } from '@/features/colis/bonLivraison';
+import { PastilleJax } from '@/features/sous-traitance/EtatJax';
 import { GOUVERNORATS, VARIANTE_TYPE, useVocabulaire } from '@/features/expediteur/lib/libelles';
 import { useI18n, type Cle } from '@/i18n';
 import {
@@ -789,8 +790,11 @@ export function VueColis() {
                       resume={`${t('colis.liste.libelle')} ${c.trackingNumber}, ${c.customerName}, ${badge.label}`}
                     >
                       <Td figee>
-                        <span className="font-mono text-xs font-bold text-red-600 block" dir="ltr">
+                        <span className="font-mono text-xs font-bold text-red-600 flex items-center gap-1.5" dir="ltr">
                           {c.trackingNumber}
+                          {c.sousTraitance && !['ECHEC_ENVOI', 'ANNULE'].includes(c.sousTraitance.etat) && (
+                            <PastilleJax titre={t('colis.liste.jax')} />
+                          )}
                         </span>
                         <span className="font-mono text-[10px] text-slate-500" dir="ltr">
                           {c.barcode}

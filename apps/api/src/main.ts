@@ -7,6 +7,7 @@ import type { Request, Response, NextFunction } from 'express';
 import { APP_CONFIG } from '@logixpress/config';
 import { auditContextMiddleware } from './common/audit/audit-context.middleware';
 import { createApiRouter } from './app.router';
+import { demarrerSynchronisationJax } from './modules/sous-traitance/sous-traitance.service';
 import { errorHandler } from './common/http/async-handler';
 import { securityHeaders } from './common/http/rate-limit';
 import { rejectNullBytes } from './common/http/input-guard';
@@ -183,6 +184,9 @@ async function bootstrap() {
   console.log(
     `[RUNEX API] Canaux de notification : in_app, socket, push${pushStatus.enabled ? '' : ' (désactivé: ' + (pushStatus.error ?? 'non configuré') + ')'}` 
   );
+
+  // Sous-traitance JAX : relecture périodique des statuts.
+  if (databaseReady) demarrerSynchronisationJax();
 
   // Ménage des sessions expirées : au démarrage puis chaque jour.
   const purge = () =>

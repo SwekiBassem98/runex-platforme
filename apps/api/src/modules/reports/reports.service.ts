@@ -96,6 +96,7 @@ const SANS_FIN: string[] = [
   'EN_LOT_INTER_DEPOT',
   'EN_TRANSIT_INTER_DEPOT',
   'RECU_DEPOT_DESTINATION',
+  'SOUS_TRAITE',
   'AFFECTE_RUNSHEET',
   'EN_COURS_LIVRAISON',
 ];
@@ -109,6 +110,7 @@ const LIBELLE_STATUT: Record<string, string> = {
   EN_LOT_INTER_DEPOT: 'En lot inter-dépôts',
   EN_TRANSIT_INTER_DEPOT: 'En transit inter-dépôts',
   RECU_DEPOT_DESTINATION: 'Reçu au dépôt de destination',
+  SOUS_TRAITE: 'Confié au partenaire JAX',
   AFFECTE_RUNSHEET: 'Affecté à une tournée',
   EN_COURS_LIVRAISON: 'En cours de livraison',
   LIVRE: 'Livré',

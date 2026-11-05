@@ -52,6 +52,7 @@ enum PackageStatus {
   EN_LOT_INTER_DEPOT // Conditionné dans un lot pour transfert
   EN_TRANSIT_INTER_DEPOT // En acheminement vers le dépôt de destination
   RECU_DEPOT_DESTINATION // Arrivé et pointé au dépôt de livraison
+  SOUS_TRAITE // Confié au partenaire de livraison (JAX) qui le livre
   AFFECTE_RUNSHEET // Intégré à la feuille de route d'un livreur
   EN_COURS_LIVRAISON // En cours de distribution par le livreur
   LIVRE // Livraison conforme & paiement perçu
@@ -503,6 +504,7 @@ model Deposit {
   returnRecords     ReturnRecord[]       @relation("ReturnDeposit")
   inboundTransfers  InterDepotTransfer[] @relation("DestinationDeposit")
   homeShippers      Shipper[]            @relation("ShipperHomeDeposit")
+  sousTraitances    SousTraitance[]
 
   // Runsheets
   runsheets Runsheet[]
@@ -829,6 +831,7 @@ model Package {
   statusHistory    PackageTimeline[]
   payment          Payment?
   interDepotItems  InterDepotItem[]
+  sousTraitance    SousTraitance?
 
   @@index([trackingNumber])
   @@index([barcode])
@@ -1449,4 +1452,93 @@ model ReturnSlip {
   @@index([status])
   @@index([driverId])
   @@index([createdAt])
+}
+
+// ==============================================================================
+// SOUS-TRAITANCE — partenaire de livraison (JAX)
+// ==============================================================================
+
+/// Avancement d'un colis confié au partenaire.
+enum EtatSousTraitance {
+  ECHEC_ENVOI           // Création refusée par l'API du partenaire (colis resté chez Runex)
+  EN_ATTENTE_ENLEVEMENT // Créé chez le partenaire, encore à l'agence Runex
+  ENLEVEMENT_DEMANDE    // Enlèvement demandé au partenaire
+  PRIS_EN_CHARGE        // Enlevé : dans le réseau du partenaire
+  EN_LIVRAISON          // En cours de livraison par le partenaire
+  LIVRE                 // Livré par le partenaire (montant encaissé par lui)
+  RETOUR_EN_COURS       // Non livré, en retour vers l'agence Runex
+  RETOURNE              // Retour reçu à l'agence Runex
+  ANNULE                // Repris par Runex avant enlèvement, ou annulé chez le partenaire
+}
+
+/// Colis confié à un partenaire : code chez lui, état, enlèvement, encaissement.
+model SousTraitance {
+  id                String            @id @default(uuid()) @db.Uuid
+  packageId         String            @unique @db.Uuid
+  partenaire        String            @default("JAX") @db.VarChar(20)
+  /// Code du colis chez le partenaire (EAN JAX, ex. SOU2215617325044).
+  codeExterne       String?           @db.VarChar(60)
+  etat              EtatSousTraitance @default(EN_ATTENTE_ENLEVEMENT)
+  /// Envoi automatique (zone confiée au partenaire) ou manuel.
+  mode              String            @default("MANUEL") @db.VarChar(10)
+  /// Agence Runex qui remet le colis au partenaire.
+  depositId         String?           @db.Uuid
+  statutExterne     String?           @db.VarChar(150)
+  statutExterneCode String?           @db.VarChar(30)
+  statutExterneLe   DateTime?         @db.Timestamptz(6)
+  problemes         String?           @db.VarChar(1000)
+  enlevementRef     String?           @db.VarChar(100)
+  enlevementDemandeLe DateTime?       @db.Timestamptz(6)
+  envoyeLe          DateTime?         @db.Timestamptz(6)
+  envoyeParNom      String?           @db.VarChar(150)
+  derniereSyncLe    DateTime?         @db.Timestamptz(6)
+  derniereErreur    String?           @db.VarChar(500)
+  /// Contre-remboursement encaissé par le partenaire, à reverser à Runex.
+  codMontant        Decimal           @default(0.000) @db.Decimal(10, 3)
+  codRecuLe         DateTime?         @db.Timestamptz(6)
+  createdAt         DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime          @updatedAt @db.Timestamptz(6)
+
+  package Package  @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  deposit Deposit? @relation(fields: [depositId], references: [id], onDelete: SetNull)
+
+  @@unique([partenaire, codeExterne])
+  @@index([etat])
+  @@index([depositId])
+}
+
+/// Référentiel des gouvernorats du partenaire (identifiants numériques JAX).
+model PartenaireGouvernorat {
+  id         String   @id @default(uuid()) @db.Uuid
+  partenaire String   @default("JAX") @db.VarChar(20)
+  externeId  String   @db.VarChar(20)
+  nom        String   @db.VarChar(80)
+  updatedAt  DateTime @updatedAt @db.Timestamptz(6)
+
+  @@unique([partenaire, externeId])
+}
+
+/// Statuts du partenaire et leur correspondance dans le flux Runex
+/// (proposée d'après le libellé, modifiable par l'administrateur).
+model PartenaireStatut {
+  id         String             @id @default(uuid()) @db.Uuid
+  partenaire String             @default("JAX") @db.VarChar(20)
+  code       String             @db.VarChar(30)
+  libelle    String             @db.VarChar(150)
+  etat       EtatSousTraitance?
+  /// Vrai quand l'administrateur a fixé la correspondance lui-même.
+  manuel     Boolean            @default(false)
+  updatedAt  DateTime           @updatedAt @db.Timestamptz(6)
+
+  @@unique([partenaire, code])
+}
+
+/// Gouvernorats de destination confiés automatiquement au partenaire.
+model SousTraitanceZone {
+  id          String   @id @default(uuid()) @db.Uuid
+  partenaire  String   @default("JAX") @db.VarChar(20)
+  governorate String   @db.VarChar(50)
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([partenaire, governorate])
 }

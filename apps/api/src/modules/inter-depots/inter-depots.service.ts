@@ -42,6 +42,7 @@ import {
 import { notFound, badRequest, conflict, asUuid, ApiError } from '../../common/errors/api-error';
 import { packageWorkflowService } from '../colis/package-workflow.service';
 import { nextTransferNumber, tunisDayStamp } from '../../common/database/numbering';
+import { sousTraitanceService } from '../sous-traitance/sous-traitance.service';
 import { GOUVERNORATS_ZONE_HUB, LIBELLE_ZONE_HUB, estZoneHub, expediteurZoneHub, mainHubId } from '../../common/routing/deposit-routing';
 
 /* ------------------------------------------------------------------ */
@@ -1037,6 +1038,9 @@ export class InterDepotsService {
         .catch(() => undefined);
     }
 
+    // Zone confiée à JAX : le colis complet part chez le partenaire.
+    if (outcome.complete && type === InterDepotType.LIVRAISON) void sousTraitanceService.envoiAutoSiEligible(pkg.id);
+
     return {
       message: outcome.complete
         ? `Colis ${pkg.trackingNumber} reçu (${outcome.pieceCount}/${outcome.pieceCount}).`
@@ -1104,6 +1108,7 @@ export class InterDepotsService {
           receivedByName: actor.fullName,
         },
       });
+      void sousTraitanceService.envoiAutoSiEligible(pkg.id);
     } else {
       const RETOURNABLES = ['RETOUR_DEPOT', 'REPORTE', 'ECHEC_LIVRAISON', 'LIVRAISON_PARTIELLE'];
       if (!RETOURNABLES.includes(statut)) {

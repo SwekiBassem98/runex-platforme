@@ -176,6 +176,8 @@ const NOT_REASSIGNABLE: PackageStatus[] = [
   PackageStatus.EN_TRANSIT_INTER_DEPOT,
   PackageStatus.EN_RUNSHEET_RETOUR,
   PackageStatus.RETOUR_DEPOT,
+  // Confié à JAX : c'est le partenaire qui livre, pas un livreur Runex.
+  PackageStatus.SOUS_TRAITE,
 ];
 
 function round3(value: number): number {
@@ -950,6 +952,15 @@ export class ColisService {
     if (isLockedForEditing(record.status as PackageStatus)) {
       throw new BusinessRuleError(
         `Modification strictement interdite : ce colis est au statut « ${record.status} », son cycle opérationnel est clôturé.`,
+        409
+      );
+    }
+
+    // Confié à JAX : la fiche est chez le partenaire, qui n'offre pas de
+    // modification par API — une correction ici ne lui parviendrait pas.
+    if (String(record.status) === 'SOUS_TRAITE') {
+      throw new BusinessRuleError(
+        'Modification impossible : ce colis est confié au partenaire de livraison JAX. Contactez RUNEX pour toute correction.',
         409
       );
     }

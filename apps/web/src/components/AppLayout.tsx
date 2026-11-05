@@ -36,6 +36,7 @@ import {
   Undo2,
   Users,
   Wallet,
+  Handshake,
 } from 'lucide-react';
 import { AppShell, type NavItem } from '@logixpress/ui';
 import { RoleType, PermissionCode } from '@logixpress/types';
@@ -66,6 +67,7 @@ const NAV_ROUTES: Record<string, string> = {
   'inter-depots': '/inter-depots',
   'inter-depots-retours': '/inter-depots/retours',
   'retours-expediteur': '/retours-expediteur',
+  'sous-traitance': '/sous-traitance',
   inventaire: '/inventaire',
   rapports: '/rapports',
   audit: '/audit',
@@ -243,6 +245,15 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             id: 'retours-expediteur',
             label: 'Retours expéditeur',
             icon: <PackageX className="w-4 h-4" />,
+          },
+        ]
+      : []),
+    ...(peutDeciderPrix
+      ? [
+          {
+            id: 'sous-traitance',
+            label: 'Sous-traitance JAX',
+            icon: <Handshake className="w-4 h-4" />,
           },
         ]
       : []),
