@@ -93,7 +93,7 @@ function styles(): string {
   .page:last-child { page-break-after: auto; break-after: auto; }
   .bon { width: 100%; border: 1.2px solid #000; padding: 3mm 4mm 4mm; position: relative; }
   .entete { display: grid; grid-template-columns: 42mm 1fr 42mm; align-items: center; border-bottom: 1.2px solid #000; padding-bottom: 2mm; }
-  .logo img { max-height: 13mm; max-width: 40mm; display: block; }
+  .logo img { max-height: 17mm; max-width: 40mm; display: block; }
   .numero { text-align: center; }
   .numero small { display: block; font-size: 8pt; color: #333; }
   .numero b { font-size: 14pt; letter-spacing: .5px; font-family: "DejaVu Sans Mono", Menlo, Consolas, monospace; }
@@ -252,7 +252,9 @@ ${auto ? `<script>window.addEventListener('load',function(){setTimeout(function(
 
 /** Ouvre la fenêtre d'impression (iframe en secours si les fenêtres sont bloquées). */
 export function imprimerBonsLivraison(bons: BonLivraisonDto[]): void {
-  const logoUrl = `${window.location.origin}/brand/runex-logo.jpeg`;
+  // Variante claire du logo, réservée au bon : le logo de l'application est
+  // sur fond noir et sortait en pavé sombre à l'impression.
+  const logoUrl = `${window.location.origin}/brand/runex-logo-impression.png`;
   const html = genererHtmlBonsLivraison(bons, { logoUrl });
   const win = window.open('', '_blank', 'width=900,height=1000');
   if (win) {

@@ -78,11 +78,18 @@ export function useAgencesLivraison(governorate: string, delegation: string, shi
   return { agences, suggestion, suggestionDepart, suggestionRattachement, frais, tarifs };
 }
 
-/** Total à encaisser : prix du colis + frais de livraison (arrondi au millime). */
-export function totalAEncaisser(prix: string | number, frais: number): number | null {
+/**
+ * Total à encaisser : prix du colis + frais de livraison (arrondi au millime).
+ *
+ * `prixNegatif` (exploitation) : le prix peut descendre jusqu'à « − frais »
+ * pour un colis à 0 DT (−7 + 7 de frais = 0). Le total n'est jamais négatif.
+ */
+export function totalAEncaisser(prix: string | number, frais: number, prixNegatif = false): number | null {
   const p = Number(prix);
-  if (prix === '' || !Number.isFinite(p) || p < 0) return null;
-  return Math.round((p + frais) * 1000) / 1000;
+  if (prix === '' || !Number.isFinite(p)) return null;
+  if (p < 0 && !prixNegatif) return null;
+  const total = Math.round((p + frais) * 1000) / 1000;
+  return total < 0 ? null : total;
 }
 
 /** Trajet imprimé sur le bon de livraison : « départ => sortie => gouvernorat/délégation ». */

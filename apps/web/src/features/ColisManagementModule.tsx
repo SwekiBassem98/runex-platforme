@@ -337,7 +337,8 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
   const [departChoisi, setDepartChoisi] = useState(false);
   const agenceDepart = departChoisi ? newColisForm.originDepositId : (livraison.suggestionDepart ?? '');
   const trajetNouveau = libelleTrajet(livraison.agences, agenceDepart, agenceSortie, newColisForm.governorate, newColisForm.delegation);
-  const totalNouveau = totalAEncaisser(newColisForm.goodsPrice, livraison.frais);
+  // L'exploitation peut passer un colis à 0 DT : prix négatif jusqu'à « − frais ».
+  const totalNouveau = totalAEncaisser(newColisForm.goodsPrice, livraison.frais, true);
 
   // Un compte sans expéditeur (exploitation) doit en désigner un.
   const saisiePourExpediteur = !currentUser.shipperId;
@@ -1152,12 +1153,12 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
                   <FormField
                     label="Prix du colis (TND) *"
                     required
-                    helpText={`Les frais de livraison (${livraison.frais.toFixed(3)} DT) s’ajoutent automatiquement.`}
+                    helpText={`Les frais de livraison (${livraison.frais.toFixed(3)} DT) s’ajoutent automatiquement. Colis à 0 DT : saisissez −${livraison.frais.toFixed(3)}.`}
                   >
                     <Input
                       type="number"
                       step="0.001"
-                      min="0"
+                      min={-livraison.frais}
                       required
                       value={newColisForm.goodsPrice}
                       onChange={(e) => setNewColisForm({ ...newColisForm, goodsPrice: e.target.value })}
@@ -1711,7 +1712,7 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
                 <div className="flex justify-between items-center py-1 border-b border-slate-100">
                   <span className="text-slate-500">Prix du colis :</span>
                   <span className="font-mono text-slate-900">
-                    {formatTND(colis.goodsPrice ?? Math.max(0, colis.totalPrice - colis.deliveryFee))}
+                    {formatTND(colis.goodsPrice ?? colis.totalPrice - colis.deliveryFee)}
                   </span>
                 </div>
                 <div className="flex justify-between items-center py-1 border-b border-slate-100">
@@ -1729,7 +1730,7 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
                 <div className="flex justify-between items-center py-1">
                   <span className="text-slate-500">Net Fournisseur Prévu :</span>
                   <span className="font-mono font-bold text-slate-900">
-                    {formatTND(Math.max(0, colis.totalPrice - colis.deliveryFee))}
+                    {formatTND(colis.goodsPrice ?? colis.totalPrice - colis.deliveryFee)}
                   </span>
                 </div>
               </div>
@@ -2644,10 +2645,11 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
                   className="font-mono"
                 />
               </FormField>
-              <FormField label="Montant à encaisser (TND)">
+              <FormField label="Montant à encaisser (TND)" helpText="0 pour un colis sans montant : le prix du colis devient − frais de livraison.">
                 <Input
                   type="number"
                   step="0.001"
+                  min="0"
                   value={actionPayload.totalPrice || 0}
                   onChange={(e) => setActionPayload({ ...actionPayload, totalPrice: parseFloat(e.target.value) || 0 })}
                   className="font-mono font-bold text-red-700"

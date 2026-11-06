@@ -6,6 +6,7 @@
 |---|---|---|
 | `runex-logo.jpeg` | Logo complet RUNEX | Copie **octet pour octet** de `apps/web/runex-logo.jpeg` (fourni, SHA-256 `a13a2503…aebe5e`) |
 | `runex-mark.png` | Variante carrée, pour les emplacements carrés (barre latérale repliée, favicon) | `runex-logo.jpeg` encadré de noir en carré, puis réduit à 512 × 512 |
+| `runex-logo-impression.png` | Variante **claire**, réservée au bon de livraison imprimé | `scripts/brand/logo-impression.py` (voir ci-dessous) |
 
 `apps/web/src/app/icon.png` est une copie de `runex-mark.png` : Next.js en fait
 la favicon du site.
@@ -36,3 +37,16 @@ les emplacements carrés, le logo est donc affiché entier sur un fond noir.
 - Fond clair (écran de chargement, états vides) : afficher le logo dans un
   conteneur à fond noir et à coins arrondis. Le logo étant lui-même sur fond
   noir, le conteneur disparaît et la marque reste lisible.
+## Variante claire pour l'impression (bon de livraison)
+
+Imprimé sur papier blanc, le logo sur fond noir sortait en pavé sombre où
+« RUNEX » se lisait mal. Le bon de livraison — et lui seul — utilise donc
+`runex-logo-impression.png`, produit par `scripts/brand/logo-impression.py` à
+partir de `runex-logo.jpeg` :
+
+- fond noir → blanc ; lettres « RUNEX » blanches → noires ;
+- facette sombre du R → gris, pour garder le relief ;
+- rouge conservé en aplat (sans le halo lumineux, qui imprime en tache rose) ;
+- recadrage serré autour du dessin, proportions inchangées.
+
+Partout ailleurs (écrans, autres documents), le logo d'origine reste en place.
