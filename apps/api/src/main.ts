@@ -8,6 +8,7 @@ import { APP_CONFIG } from '@logixpress/config';
 import { auditContextMiddleware } from './common/audit/audit-context.middleware';
 import { createApiRouter } from './app.router';
 import { demarrerSynchronisationJax } from './modules/sous-traitance/sous-traitance.service';
+import { purgerZonesDeLaVeille } from './modules/zones/zones.service';
 import { errorHandler } from './common/http/async-handler';
 import { securityHeaders } from './common/http/rate-limit';
 import { rejectNullBytes } from './common/http/input-guard';
@@ -184,6 +185,19 @@ async function bootstrap() {
   console.log(
     `[RUNEX API] Canaux de notification : in_app, socket, push${pushStatus.enabled ? '' : ' (désactivé: ' + (pushStatus.error ?? 'non configuré') + ')'}` 
   );
+
+  // Zones des livreurs : chaque journée a les siennes — celles de la veille
+  // sont effacées (au démarrage, puis chaque heure ; les lectures filtrent
+  // aussi sur la journée, l'effacement n'est qu'un ménage).
+  if (databaseReady) {
+    const purge = () =>
+      void purgerZonesDeLaVeille().then(
+        (n) => n && console.log(`[RUNEX API] ${n} zone(s) de livreur de la veille effacée(s).`),
+        (e: unknown) => console.warn('[RUNEX API] Effacement des zones de la veille impossible :', e instanceof Error ? e.message : String(e))
+      );
+    purge();
+    setInterval(purge, 60 * 60_000).unref();
+  }
 
   // Sous-traitance JAX : relecture périodique des statuts.
   if (databaseReady) demarrerSynchronisationJax();

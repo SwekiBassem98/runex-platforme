@@ -37,7 +37,6 @@ export async function getOwnDriverProfile(req: AuthenticatedRequest, res: Respon
       licensePlate: driver.licensePlate ?? undefined,
       isActive: driver.isActive,
       cashBalance: Number(driver.currentBalance),
-      cashCeiling: Number(driver.cashCeiling),
       depositId: driver.user.deposit?.id,
       depositName: driver.user.deposit?.name,
       governorate: driver.user.deposit?.governorate,
@@ -46,6 +45,7 @@ export async function getOwnDriverProfile(req: AuthenticatedRequest, res: Respon
         name: z.name,
         code: z.code,
         governorate: z.governorate,
+        delegation: z.delegation,
       })),
     },
   });

@@ -11,7 +11,9 @@
  * Ce que la zone porte ensuite :
  *  - l'agence de livraison du colis (routage, voir common/routing) ;
  *  - les livreurs qui la couvrent (DriverZone), proposés en premier à
- *    l'affectation d'un colis de la zone ;
+ *    l'affectation d'un colis de la zone. Ce choix vaut pour la journée
+ *    (heure de Tunis) : chaque jour a ses zones, le livreur les choisit à
+ *    nouveau le matin et celles de la veille sont effacées ;
  *  - les filtres et statistiques par zone (back-office, portail expéditeur) ;
  *  - l'écran « Mes zones » de l'application livreur.
  *
@@ -35,6 +37,21 @@ const clean = (v: unknown, max: number) => String(v ?? '').replace(/\s+/g, ' ').
 export function zoneCode(governorate: string, delegation: string): string {
   const key = `${governorate.trim().toLowerCase()}|${delegation.trim().toLowerCase()}`;
   return `Z-${createHash('md5').update(key).digest('hex').slice(0, 10).toUpperCase()}`;
+}
+
+/** Début de la journée en cours à Tunis (UTC+1, sans heure d'été). */
+export function debutJourTunis(maintenant = new Date()): Date {
+  const jour = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Tunis', year: 'numeric', month: '2-digit', day: '2-digit' }).format(maintenant);
+  return new Date(`${jour}T00:00:00+01:00`);
+}
+
+/**
+ * Efface les zones de livreur choisies avant aujourd'hui : chaque journée a
+ * ses zones. Appelé avant toute lecture des zones de livreur, et chaque heure.
+ */
+export async function purgerZonesDeLaVeille(client: Client = getPrisma()): Promise<number> {
+  const r = await client.driverZone.deleteMany({ where: { createdAt: { lt: debutJourTunis() } } });
+  return r.count;
 }
 
 /** Statuts d'un colis encore « en cours » (pas encore terminé). */
@@ -169,11 +186,13 @@ export class ZonesService {
           }
         : {}),
     };
+    await purgerZonesDeLaVeille(prisma);
     const zones = await prisma.deliveryZone.findMany({
       where,
       include: {
         deposit: { select: { name: true } },
         drivers: {
+          where: { createdAt: { gte: debutJourTunis() } },
           include: { driver: { select: { id: true, driverCode: true, isActive: true, user: { select: { fullName: true } } } } },
         },
       },
@@ -248,6 +267,7 @@ export class ZonesService {
     }
     if (input.isActive !== undefined) data.isActive = input.isActive === true || input.isActive === 'true';
 
+    await purgerZonesDeLaVeille(prisma);
     await prisma.$transaction(async (tx) => {
       if (Object.keys(data).length > 0) await tx.deliveryZone.update({ where: { id }, data });
       if (input.driverIds !== undefined) {
@@ -264,10 +284,11 @@ export class ZonesService {
     return (await this.list({})).find((z) => z.id === id)!;
   }
 
-  /** Zones d'un livreur. */
+  /** Zones d'un livreur pour la journée en cours. */
   async driverZones(driverId: string): Promise<ZoneDto[]> {
+    await purgerZonesDeLaVeille();
     const rows = await getPrisma().driverZone.findMany({
-      where: { driverId },
+      where: { driverId, createdAt: { gte: debutJourTunis() } },
       include: { zone: { include: { deposit: { select: { name: true } } } } },
       orderBy: { zone: { delegation: 'asc' } },
     });
@@ -282,6 +303,7 @@ export class ZonesService {
     if (zoneIds.length > 100) throw new BusinessRuleError('100 zones au plus par livreur.', 400);
     const valid = await prisma.deliveryZone.count({ where: { id: { in: zoneIds }, isActive: true } });
     if (valid !== zoneIds.length) throw new BusinessRuleError('Zone inconnue ou désactivée dans la sélection.', 400);
+    await purgerZonesDeLaVeille(prisma);
     await prisma.$transaction([
       prisma.driverZone.deleteMany({ where: { driverId, zoneId: { notIn: zoneIds } } }),
       prisma.driverZone.createMany({ data: zoneIds.map((zoneId) => ({ driverId, zoneId })), skipDuplicates: true }),
@@ -304,6 +326,7 @@ export class ZonesService {
     });
     if (!pkg) throw new BusinessRuleError('Colis introuvable.', 404);
     const zone = pkg.customerAddress?.zone ?? null;
+    const jour = debutJourTunis();
     const drivers = await prisma.driver.findMany({
       where: { isActive: true, deletedAt: null, user: { isActive: true } },
       select: {
@@ -311,7 +334,8 @@ export class ZonesService {
         driverCode: true,
         vehicleType: true,
         user: { select: { fullName: true } },
-        zones: zone ? { where: { zoneId: zone.id }, select: { zoneId: true } } : { take: 0, select: { zoneId: true } },
+        // Zones du jour seulement.
+        zones: zone ? { where: { zoneId: zone.id, createdAt: { gte: jour } }, select: { zoneId: true } } : { take: 0, select: { zoneId: true } },
       },
       orderBy: { driverCode: 'asc' },
     });

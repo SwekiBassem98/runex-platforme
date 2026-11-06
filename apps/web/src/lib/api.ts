@@ -1538,7 +1538,6 @@ export interface DriverDto {
   driverCode: string;
   vehicleType: string;
   licensePlate: string | null;
-  cashCeiling: number;
   currentBalance: number;
   rating: number | null;
   isActive: boolean;

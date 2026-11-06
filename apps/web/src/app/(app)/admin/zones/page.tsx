@@ -190,7 +190,7 @@ export default function ZonesPage() {
                 champs={[
                   { libelle: 'Agence', valeur: z.depositName ?? '—' },
                   { libelle: 'Colis en cours', valeur: String(z.openPackages ?? 0), numerique: true },
-                  { libelle: 'Livreurs', valeur: <Livreurs zone={z} /> },
+                  { libelle: 'Livreurs du jour', valeur: <Livreurs zone={z} /> },
                   { libelle: 'Tarif', valeur: formatTND(z.baseDeliveryFee), numerique: true },
                 ]}
               />
@@ -203,7 +203,7 @@ export default function ZonesPage() {
                 <Th>Zone</Th>
                 <Th>Agence</Th>
                 <Th>Colis en cours</Th>
-                <Th>Livreurs</Th>
+                <Th>Livreurs du jour</Th>
                 <Th>Tarif</Th>
                 <Th>État</Th>
                 <Th>
@@ -444,7 +444,8 @@ function EditionZone({
         <div>
           <div className="flex items-center justify-between gap-2 mb-2">
             <p className="text-sm font-semibold text-slate-900">
-              Livreurs de la zone <span className="text-slate-400 font-normal">({livreurs.length})</span>
+              Livreurs de la zone aujourd’hui <span className="text-slate-400 font-normal">({livreurs.length})</span>
+              <span className="block text-[11px] font-normal text-slate-500">Chaque journée a ses zones : ce choix est effacé à minuit.</span>
             </p>
             <input
               id="zone-filtre-livreurs"

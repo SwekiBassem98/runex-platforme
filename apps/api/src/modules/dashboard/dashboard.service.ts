@@ -310,7 +310,6 @@ export class DashboardService {
           where: { id: driverId },
           select: {
             currentBalance: true,
-            cashCeiling: true,
             lastSeenAt: true,
             user: { select: { fullName: true } },
           },
@@ -368,7 +367,6 @@ export class DashboardService {
     const enTournee = openRuns > 0 ? 1 : 0;
     const onlineDriver = isDriverOnline((driver?.lastSeenAt ?? null) as Date | null);
     const solde = round3(Number(driver?.currentBalance ?? 0));
-    const plafond = round3(Number(driver?.cashCeiling ?? 0));
     const nomLivreur = driver?.user.fullName ?? 'Livreur';
 
     const livreesParJour = new Map<string, number>();
@@ -408,13 +406,13 @@ export class DashboardService {
       },
       {
         id: 'drv-002',
-        type: solde >= plafond && plafond > 0 ? 'danger' : 'info',
+        type: solde > 0 ? 'warning' : 'info',
         category: 'SOLDE_CAISSE',
         title: 'Solde à reverser',
         count: solde > 0 ? 1 : 0,
         message:
           solde > 0
-            ? `${solde.toFixed(3)} DT en caisse, à reverser au dépôt (plafond ${plafond.toFixed(3)} DT).`
+            ? `${solde.toFixed(3)} DT en caisse, à reverser au dépôt.`
             : 'Aucune espèce en caisse.',
         actionLabel: 'Voir mes encaissements',
         actionUrl: '/colis',
