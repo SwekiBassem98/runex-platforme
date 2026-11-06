@@ -274,7 +274,6 @@ export class DriversController {
         driverCode: body.driverCode,
         vehicleType: body.vehicleType,
         licensePlate: body.licensePlate ?? null,
-        cashCeiling: body.cashCeiling !== undefined ? Number(body.cashCeiling) : undefined,
         userId: body.userId ?? null,
         depositId: body.depositId ?? null,
         isActive: booleen(body.isActive),
@@ -301,7 +300,6 @@ export class DriversController {
       {
         ...(body.vehicleType !== undefined ? { vehicleType: body.vehicleType } : {}),
         ...(body.licensePlate !== undefined ? { licensePlate: body.licensePlate } : {}),
-        ...(body.cashCeiling !== undefined ? { cashCeiling: Number(body.cashCeiling) } : {}),
         ...(body.userId !== undefined ? { userId: body.userId } : {}),
         ...(body.depositId !== undefined ? { depositId: body.depositId } : {}),
       },

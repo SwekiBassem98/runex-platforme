@@ -40,7 +40,6 @@ import {
   Thead,
   Tr,
   formatDate,
-  formatTND,
 } from '@logixpress/ui';
 import { driversApi, type DriverDto, type FiltresListe, type PageResultat } from '@/lib/api';
 
@@ -148,7 +147,6 @@ export default function AdminLivreursPage() {
     driverCode: '',
     vehicleType: '',
     licensePlate: '',
-    cashCeiling: '',
     isActive: true,
     userId: '',
     compteFullName: '',
@@ -212,7 +210,6 @@ export default function AdminLivreursPage() {
       driverCode: '',
       vehicleType: '',
       licensePlate: '',
-      cashCeiling: '',
       isActive: true,
       userId: '',
       compteFullName: '',
@@ -239,7 +236,6 @@ export default function AdminLivreursPage() {
       driverCode: d.driverCode,
       vehicleType: d.vehicleType,
       licensePlate: d.licensePlate ?? '',
-      cashCeiling: String(d.cashCeiling),
       isActive: d.isActive,
       userId: d.user?.id ?? '',
       compteFullName: '',
@@ -264,12 +260,6 @@ export default function AdminLivreursPage() {
     const erreurs: Record<string, string> = {};
     if (!form.driverCode.trim()) erreurs.driverCode = 'Le code livreur est obligatoire.';
     if (!form.vehicleType.trim()) erreurs.vehicleType = 'Le type de véhicule est obligatoire.';
-    if (form.cashCeiling.trim()) {
-      const plafond = Number(form.cashCeiling);
-      if (!Number.isFinite(plafond) || plafond <= 0) {
-        erreurs.cashCeiling = 'Le plafond de caisse doit être un montant positif.';
-      }
-    }
     if (!enEdition) {
       if (avecCompte) {
         if (!form.compteFullName.trim()) erreurs.compteFullName = 'Le nom complet est obligatoire.';
@@ -294,7 +284,6 @@ export default function AdminLivreursPage() {
         await driversApi.update(enEdition.id, {
           vehicleType: form.vehicleType,
           licensePlate: form.licensePlate || null,
-          ...(form.cashCeiling ? { cashCeiling: Number(form.cashCeiling) } : {}),
           ...(form.userId && form.userId !== enEdition.user?.id ? { userId: form.userId } : {}),
         });
         setMessage(`Livreur « ${form.driverCode} » mis à jour.`);
@@ -310,7 +299,6 @@ export default function AdminLivreursPage() {
           driverCode: form.driverCode,
           vehicleType: form.vehicleType,
           licensePlate: form.licensePlate || null,
-          cashCeiling: form.cashCeiling ? Number(form.cashCeiling) : undefined,
           isActive: form.isActive,
           ...(avecCompte
             ? {
@@ -472,7 +460,6 @@ export default function AdminLivreursPage() {
                       </span>
                     ),
                   },
-                  { libelle: 'Plafond de caisse', valeur: formatTND(d.cashCeiling), numerique: true },
                   {
                     libelle: 'Tournée',
                     valeur: d.currentAssignment
@@ -508,7 +495,6 @@ export default function AdminLivreursPage() {
                 <Th>Dépôt</Th>
                 <Th>Présence</Th>
                 <Th>Tournée en cours</Th>
-                <Th>Plafond</Th>
                 <Th>État</Th>
                 <Th>Actions</Th>
               </Tr>
@@ -561,9 +547,6 @@ export default function AdminLivreursPage() {
                     ) : (
                       <span className="text-sm text-slate-400">Aucune tournée ouverte</span>
                     )}
-                  </Td>
-                  <Td>
-                    <span className="text-sm text-slate-700">{formatTND(d.cashCeiling)}</span>
                   </Td>
                   <Td>
                     <Badge variant={varianteEtat(d.isActive)}>{d.isActive ? 'Actif' : 'Inactif'}</Badge>
@@ -670,21 +653,6 @@ export default function AdminLivreursPage() {
               <input
                 value={form.licensePlate}
                 onChange={(e) => majForm({ licensePlate: e.target.value.toUpperCase() })}
-                className={CHAMP_SAISIE}
-                autoComplete="off"
-              />
-            </FormField>
-            <FormField
-              label="Plafond de caisse (DT)"
-              error={erreursChamps.cashCeiling}
-              helpText="Montant maximum d’encaissements que le livreur peut détenir."
-            >
-              <input
-                type="number"
-                min="0"
-                step="0.001"
-                value={form.cashCeiling}
-                onChange={(e) => majForm({ cashCeiling: e.target.value })}
                 className={CHAMP_SAISIE}
                 autoComplete="off"
               />

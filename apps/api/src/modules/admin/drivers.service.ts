@@ -35,7 +35,6 @@ export interface DriverDto {
   driverCode: string;
   vehicleType: string;
   licensePlate: string | null;
-  cashCeiling: number;
   currentBalance: number;
   rating: number | null;
   isActive: boolean;
@@ -65,7 +64,6 @@ const DRIVER_SELECT = {
   driverCode: true,
   vehicleType: true,
   licensePlate: true,
-  cashCeiling: true,
   currentBalance: true,
   rating: true,
   isActive: true,
@@ -92,7 +90,6 @@ function toDto(d: DriverRecord, affectation: DriverDto['currentAssignment'] = nu
     driverCode: d.driverCode,
     vehicleType: d.vehicleType,
     licensePlate: d.licensePlate,
-    cashCeiling: Number(d.cashCeiling),
     currentBalance: Number(d.currentBalance),
     rating: d.rating === null ? null : Number(d.rating),
     isActive: d.isActive,
@@ -202,7 +199,6 @@ export class DriversService {
       driverCode: string;
       vehicleType: string;
       licensePlate?: string | null;
-      cashCeiling?: number;
       userId?: string | null;
       depositId?: string | null;
       isActive?: boolean;
@@ -216,9 +212,6 @@ export class DriversService {
     const vehicleType = input.vehicleType?.trim();
     if (!driverCode) throw badRequest('Le code livreur est obligatoire.');
     if (!vehicleType) throw badRequest('Le type de véhicule est obligatoire.');
-    if (input.cashCeiling !== undefined && (Number.isNaN(Number(input.cashCeiling)) || Number(input.cashCeiling) < 0)) {
-      throw badRequest('Le plafond de caisse doit être un montant positif.');
-    }
 
     const pris = await prisma.driver.findUnique({ where: { driverCode } });
     if (pris) throw conflict('Ce code livreur est déjà utilisé.');
@@ -268,7 +261,6 @@ export class DriversService {
         driverCode,
         vehicleType,
         licensePlate: input.licensePlate?.trim() || null,
-        cashCeiling: input.cashCeiling !== undefined ? new Prisma.Decimal(input.cashCeiling) : undefined,
         isActive: input.isActive !== false,
         userId,
       },
@@ -294,7 +286,6 @@ export class DriversService {
     input: Partial<{
       vehicleType: string;
       licensePlate: string | null;
-      cashCeiling: number;
       userId: string | null;
       depositId: string | null;
     }>,
@@ -314,12 +305,6 @@ export class DriversService {
       data.vehicleType = v;
     }
     if (input.licensePlate !== undefined) data.licensePlate = input.licensePlate?.trim() || null;
-    if (input.cashCeiling !== undefined) {
-      if (Number.isNaN(Number(input.cashCeiling)) || Number(input.cashCeiling) < 0) {
-        throw badRequest('Le plafond de caisse doit être un montant positif.');
-      }
-      data.cashCeiling = new Prisma.Decimal(input.cashCeiling);
-    }
 
     // Le dépôt vit sur le compte, pas sur la fiche : le changer ici met à jour
     // le compte rattaché, ce qui est ce que l'écran donne à comprendre.
@@ -368,12 +353,10 @@ export class DriversService {
       previousValues: {
         vehicleType: actuel.vehicleType,
         licensePlate: actuel.licensePlate,
-        cashCeiling: Number(actuel.cashCeiling),
       },
       newValues: {
         vehicleType: updated.vehicleType,
         licensePlate: updated.licensePlate,
-        cashCeiling: Number(updated.cashCeiling),
       },
     });
 
