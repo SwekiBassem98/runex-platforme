@@ -223,6 +223,7 @@ export const ar: Dictionnaire = {
   'colis.formulaire.adresseAide': '12، شارع المدارس، 1001',
   'colis.formulaire.prix': 'سعر الطرد',
   'colis.formulaire.prixAide': 'سعر البضاعة. تُضاف رسوم التوصيل ({frais} د.ت) تلقائيًا.',
+  'colis.formulaire.prixZeroAide': 'طرد بقيمة 0 د.ت: أدخل ‎−{frais}.',
   'colis.formulaire.fraisLivraison': 'رسوم التوصيل (تلقائية)',
   'colis.formulaire.agenceSortie': 'وكالة التسليم',
   'colis.formulaire.agenceSortieAide': 'الوكالة التي ستسلّم الطرد. مقترحة حسب العنوان، ويمكنك تغييرها.',

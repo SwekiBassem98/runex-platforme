@@ -256,40 +256,34 @@ export const DEFAULT_DELIVERY_FEE = 8;
  * encaisser est `goodsPrice + frais`. Sans lui, `totalPrice` est le total déjà
  * calculé (ancien contrat de l'API) et le prix de la marchandise s'en déduit.
  *
- * `prixNegatifAutorise` (exploitation seulement) : le prix du colis peut être
- * négatif, jusqu'à « − frais de livraison », pour qu'un colis passe à 0 DT
- * (transfert pour un expéditeur : −7 + 7 de frais = 0 à encaisser). Le total
- * à encaisser, lui, n'est jamais négatif. Un expéditeur saisit toujours un
- * prix positif ou nul.
+ * Le prix du colis peut être négatif, jusqu'à « − frais de livraison », pour
+ * qu'un colis passe à 0 DT (transfert : −7 + 7 de frais = 0 à encaisser) —
+ * côté exploitation comme côté expéditeur. Le total à encaisser, lui, n'est
+ * jamais négatif ; les frais restent dus par l'expéditeur au règlement.
  */
 export function calculerTarif(
   payload: Record<string, unknown>,
-  deliveryFee: number,
-  prixNegatifAutorise = false
+  deliveryFee: number
 ): { goodsPrice: number; deliveryFee: number; totalPrice: number } {
   const fee = Number.isFinite(deliveryFee) && deliveryFee >= 0 ? deliveryFee : DEFAULT_DELIVERY_FEE;
   const arrondi = (n: number) => Math.round(n * 1000) / 1000;
   if (payload.goodsPrice !== undefined && payload.goodsPrice !== null && payload.goodsPrice !== '') {
     const goods = arrondi(Number(payload.goodsPrice));
-    verifierPrixColis(goods, fee, prixNegatifAutorise);
+    verifierPrixColis(goods, fee);
     return { goodsPrice: goods, deliveryFee: fee, totalPrice: arrondi(goods + fee) };
   }
   const total = Number(payload.totalPrice ?? 0);
   const totalPrice = Number.isFinite(total) && total >= 0 ? arrondi(total) : 0;
-  const goods = prixNegatifAutorise ? totalPrice - fee : Math.max(totalPrice - fee, 0);
-  return { goodsPrice: arrondi(goods), deliveryFee: fee, totalPrice };
+  return { goodsPrice: arrondi(totalPrice - fee), deliveryFee: fee, totalPrice };
 }
 
 /**
- * Contrôle du prix du colis saisi. Négatif seulement pour l'exploitation, et
- * jamais en dessous de « − frais » : le montant à encaisser reste ≥ 0.
+ * Contrôle du prix du colis saisi : négatif permis, jamais en dessous de
+ * « − frais » — le montant à encaisser reste ≥ 0.
  */
-export function verifierPrixColis(goods: number, fee: number, prixNegatifAutorise: boolean): void {
+export function verifierPrixColis(goods: number, fee: number): void {
   if (!Number.isFinite(goods)) {
     throw new BusinessRuleError('Le prix du colis doit être un nombre.', 400);
-  }
-  if (!prixNegatifAutorise && goods < 0) {
-    throw new BusinessRuleError('Le prix du colis doit être un nombre positif ou nul.', 400);
   }
   if (Math.round((goods + fee) * 1000) < 0) {
     throw new BusinessRuleError(
@@ -299,10 +293,9 @@ export function verifierPrixColis(goods: number, fee: number, prixNegatifAutoris
   }
 }
 
-/** Prix de la marchandise déduit du montant à encaisser (≥ 0 pour un expéditeur). */
-function prixDepuisTotal(total: number, fee: number, prixNegatifAutorise: boolean): number {
-  const goods = Math.round((total - fee) * 1000) / 1000;
-  return prixNegatifAutorise ? goods : Math.max(goods, 0);
+/** Prix de la marchandise déduit du montant à encaisser (− frais pour un colis à 0 DT). */
+function prixDepuisTotal(total: number, fee: number): number {
+  return Math.round((total - fee) * 1000) / 1000;
 }
 
 /** Agence de sortie demandée à la saisie : un dépôt actif, sinon refus explicite. */
@@ -809,7 +802,7 @@ export class ColisService {
    */
   async create(
     payload: Record<string, unknown>,
-    user?: { id?: string; shipperId?: string; shipperName?: string; fullName?: string; staff?: boolean }
+    user?: { id?: string; shipperId?: string; shipperName?: string; fullName?: string }
   ): Promise<PackageDto> {
     const shipperId = user?.shipperId;
     if (!shipperId) {
@@ -849,7 +842,7 @@ export class ColisService {
     // Le tarif dépend du type de colis (légère, normale, lourde,
     // volumineuse) : c'est celui fixé sur le dossier de l'expéditeur.
     const deliveryFee = fraisPourTaille(tarifDepuisConfig(shipper.config), String(payload.sizeCategory ?? PackageSize.MOYENNE));
-    const tarif = calculerTarif(payload, deliveryFee, user?.staff === true);
+    const tarif = calculerTarif(payload, deliveryFee);
     const pieceCount = Number(payload.pieceCount ?? 1);
 
     const packageTypes = Object.values(PackageType) as string[];
@@ -999,11 +992,10 @@ export class ColisService {
     // Prix du colis : l'expéditeur demande, l'administration approuve. Le prix
     // n'est pas modifié ici ; une demande est créée et les admins notifiés.
     const fraisColis = Number(record.deliveryFee);
-    // L'exploitation peut passer un colis à 0 DT (prix négatif jusqu'à − frais).
-    const prixNegatifAutorise = !isShipper;
+    // Colis à 0 DT : prix négatif permis jusqu'à « − frais ».
     if (payload.goodsPrice !== undefined && payload.goodsPrice !== null && payload.goodsPrice !== '') {
       const goods = Math.round(Number(payload.goodsPrice) * 1000) / 1000;
-      verifierPrixColis(goods, fraisColis, prixNegatifAutorise);
+      verifierPrixColis(goods, fraisColis);
       payload = { ...payload, totalPrice: Math.round((goods + fraisColis) * 1000) / 1000 };
     }
     const { goodsPrice: _g, ...sansPrix } = payload;
@@ -1021,7 +1013,7 @@ export class ColisService {
       if (Math.round(total * 1000) !== Math.round(Number(record.totalPrice) * 1000)) {
         demande = await priceChangeService.demander(
           record.id,
-          Math.max(total - fraisColis, 0),
+          prixDepuisTotal(total, fraisColis),
           typeof payload.priceChangeReason === 'string' ? payload.priceChangeReason : null,
           user
         );
@@ -1067,8 +1059,6 @@ export class ColisService {
     payload: Record<string, unknown>,
     user: { id?: string; fullName: string; role: RoleType; shipperId?: string }
   ): Promise<{ package: PackageDto; driverNotified: boolean; notificationMessage?: string }> {
-    // Prix négatif (colis à 0 DT) : exploitation seulement.
-    const prixNegatifAutorise = user.role !== RoleType.EXPEDITEUR;
     const before: Record<string, unknown> = {
       totalPrice: Number(record.totalPrice),
       pieceCount: record.pieceCount,
@@ -1137,7 +1127,7 @@ export class ColisService {
     if (amountChanged) {
       data.totalPrice = Number(payload.totalPrice);
       // Le prix du colis suit : montant à encaisser − frais de livraison.
-      data.declaredValue = prixDepuisTotal(Number(payload.totalPrice), Number(record.deliveryFee), prixNegatifAutorise);
+      data.declaredValue = prixDepuisTotal(Number(payload.totalPrice), Number(record.deliveryFee));
       criticalChanges.push(FIELD_LABELS.totalPrice!);
     }
     if (quantityChanged) {
@@ -1169,7 +1159,7 @@ export class ColisService {
         data.deliveryFee = frais;
         if (amountChanged) {
           // Le montant saisi fait foi ; le prix de la marchandise suit.
-          data.declaredValue = prixDepuisTotal(Number(payload.totalPrice), frais, prixNegatifAutorise);
+          data.declaredValue = prixDepuisTotal(Number(payload.totalPrice), frais);
         } else {
           // Un colis à 0 DT (prix négatif) reste à 0 si les frais baissent :
           // le montant à encaisser n'est jamais négatif.

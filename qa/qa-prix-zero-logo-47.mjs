@@ -4,7 +4,8 @@
  *  1. Colis à 0 DT : l'exploitation saisit un prix négatif, jusqu'à « − frais
  *     de livraison » (−7 + 7 de frais = 0 à encaisser), à la création comme à
  *     la modification ; le bon de livraison imprime PRIX TOTAL 0.000 DT.
- *     Un expéditeur garde un prix positif ou nul.
+ *     L'expéditeur aussi (création directe ; modification = demande de prix
+ *     approuvée par l'admin), y compris depuis la fiche « Modifier le colis ».
  *  2. Bon de livraison : logo clair (variante d'impression), le logo de
  *     l'application reste inchangé ailleurs.
  *
@@ -45,8 +46,10 @@ r = await api(admin, 'POST', '/colis', { ...base, customerName: 'Q47 partiel', g
 ok(r.status === 201 && r.data.totalPrice === Math.round((frais - 2) * 1000) / 1000, 'admin : prix −2 → total = frais − 2', String(r.data?.totalPrice));
 r = await api(admin, 'POST', '/colis', { ...base, customerName: 'Q47 trop', goodsPrice: -(frais + 1) });
 ok(r.status === 400 && /ne peut pas descendre/.test(r.message ?? ''), 'admin : sous − frais → refusé (total négatif)', `${r.status} ${r.message}`);
-r = await api(exp, 'POST', '/colis', { ...base, customerName: 'Q47 exp', goodsPrice: -frais });
-ok(r.status === 400, 'expéditeur : prix négatif refusé', `${r.status} ${r.message}`);
+r = await api(exp, 'POST', '/colis', { ...base, customerName: 'Q47 exp zéro', goodsPrice: -frais });
+ok(r.status === 201 && r.data.totalPrice === 0 && r.data.goodsPrice === -frais, 'expéditeur : colis créé à 0 DT (prix − frais)', `${r.status} ${r.message}`);
+r = await api(exp, 'POST', '/colis', { ...base, customerName: 'Q47 exp trop', goodsPrice: -(frais + 1) });
+ok(r.status === 400, 'expéditeur : sous − frais refusé', `${r.status} ${r.message}`);
 r = await api(exp, 'POST', '/colis', { ...base, customerName: 'Q47 exp ok', goodsPrice: 0 });
 ok(r.status === 201 && r.data.totalPrice === frais, 'expéditeur : prix 0 → total = frais (inchangé)');
 const colisExp = r.data;
@@ -68,8 +71,14 @@ r = await api(admin, methode, `/colis/${m.id}`, { goodsPrice: -(frais + 0.5) });
 ok(r.status === 400, 'admin : modification sous − frais refusée', `${r.status}`);
 r = await api(admin, methode, `/colis/${m.id}`, { totalPrice: -1 });
 ok(r.status === 400, 'admin : montant à encaisser négatif refusé', `${r.status}`);
-r = await api(exp, methode, `/colis/${colisExp.id}`, { goodsPrice: -1 });
-ok(r.status === 400, 'expéditeur : modification à prix négatif refusée', `${r.status} ${r.message}`);
+r = await api(exp, methode, `/colis/${colisExp.id}`, { goodsPrice: -(frais + 1) });
+ok(r.status === 400, 'expéditeur : demande sous − frais refusée', `${r.status} ${r.message}`);
+r = await api(exp, methode, `/colis/${colisExp.id}`, { goodsPrice: -frais });
+const dem = (await api(admin, 'GET', `/colis/demandes-prix?status=EN_ATTENTE&packageId=${colisExp.id}`)).data?.[0];
+ok(r.status === 200 && Number(dem?.newTotal) === 0 && Number(dem?.newGoodsPrice) === -frais, 'expéditeur : demande de prix − frais (0 DT) enregistrée', `${r.status} ${r.message} ${JSON.stringify(dem ?? null).slice(0, 120)}`);
+r = await api(admin, 'POST', `/colis/demandes-prix/${dem?.id}/approuver`, {});
+fiche = (await api(admin, 'GET', `/colis/${colisExp.id}`)).data;
+ok(r.status === 200 && fiche.totalPrice === 0 && fiche.goodsPrice === -frais, 'admin approuve : colis à 0 DT', `${r.status} ${fiche.totalPrice}/${fiche.goodsPrice}`);
 
 console.log('\n3. Bon de livraison (API)');
 const bon = (await api(admin, 'GET', `/colis/${zero.id}/bon-livraison`)).data;
@@ -146,6 +155,34 @@ if (pop) {
     (await import('node:fs')).writeFileSync(`${SHOTS}/47-bon-zero.pdf`, await pop.pdf({ format: 'A4', preferCSSPageSize: true, printBackground: true }));
   }
   await pop.close();
+}
+// Portail expéditeur, fiche « Modifier le colis » (téléphone) : − frais accepté.
+{
+  const c2 = await b.createBrowserContext();
+  const e = await c2.newPage(); await e.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true });
+  e.on('pageerror', (x) => errs.push(x.message));
+  const cible = (await api(exp, 'POST', '/colis', { ...base, customerName: 'Q47 portail', goodsPrice: 30 })).data;
+  await e.goto(W + '/expediteur/login', { waitUntil: 'networkidle2' });
+  await e.type('input[type=email]', 'expediteur@bluestar.tn'); await e.type('input[type=password]', 'Exp123!');
+  await Promise.all([e.waitForNavigation({ waitUntil: 'networkidle2' }), e.keyboard.press('Enter')]);
+  await e.goto(`${W}/expediteur/colis/${cible.id}`, { waitUntil: 'networkidle2' }); await sleep(1200);
+  await e.evaluate(() => { const bt = [...document.querySelectorAll('button')].find((x) => /^Modifier$/.test(x.innerText.trim()) && x.getClientRects().length); bt?.click(); });
+  const champ = await e.waitForSelector('[data-testid=prix-colis-edition]', { timeout: 8000 }).catch(() => null);
+  ok(Boolean(champ), 'portail : fiche « Modifier le colis » ouverte');
+  if (champ) {
+    await champ.evaluate((x) => { x.scrollIntoView({ block: 'center' }); x.focus(); x.select(); });
+    await e.keyboard.press('Backspace'); await e.keyboard.type(String(-frais)); await sleep(300);
+    ok((await champ.evaluate((x) => x.checkValidity())) === true, `portail : prix −${frais} accepté (plus de « supérieure ou égale à 0 »)`, await champ.evaluate((x) => x.validationMessage));
+    const aide = await e.evaluate(() => document.body.innerText);
+    ok(/Colis à 0 DT : saisissez −/.test(aide), 'portail : aide « Colis à 0 DT »');
+    ok(/0[.,]000/.test(await e.$eval('[data-testid=avertissement-prix]', (x) => x.innerText).catch(() => '')), 'portail : montant à encaisser 0.000 annoncé');
+    if (SHOTS) await e.screenshot({ path: `${SHOTS}/47-portail-modifier.png` });
+    await e.evaluate(() => { const bt = [...document.querySelectorAll('button')].find((x) => /^Enregistrer$/.test(x.innerText.trim())); bt?.click(); });
+    await sleep(1500);
+    const d2 = (await api(admin, 'GET', `/colis/demandes-prix?status=EN_ATTENTE&packageId=${cible.id}`)).data?.[0];
+    ok(d2 && Number(d2.newTotal) === 0, 'portail : demande « 0 DT » envoyée à l’admin', JSON.stringify(d2 ?? null).slice(0, 120));
+  }
+  await c2.close();
 }
 // Le logo de l'application reste celui d'origine.
 await p.goto(W + '/connexion', { waitUntil: 'networkidle2' }).catch(() => {});

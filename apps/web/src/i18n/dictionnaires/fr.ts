@@ -229,6 +229,7 @@ export const fr = {
   'colis.formulaire.adresseAide': '12, rue des Écoles, 1001',
   'colis.formulaire.prix': 'Prix du colis',
   'colis.formulaire.prixAide': 'Prix de la marchandise. Les frais de livraison ({frais} DT) s’ajoutent automatiquement.',
+  'colis.formulaire.prixZeroAide': 'Colis à 0 DT : saisissez −{frais}.',
   'colis.formulaire.fraisLivraison': 'Frais de livraison (automatiques)',
   'colis.formulaire.agenceSortie': 'Agence de sortie',
   'colis.formulaire.agenceSortieAide': 'Agence qui livrera le colis. Proposée d’après l’adresse ; vous pouvez la changer.',

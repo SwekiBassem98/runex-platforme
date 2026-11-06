@@ -127,7 +127,7 @@ export function VueColisDetail({ identifiant }: { identifiant: string }) {
         delegation: fiche.delegation ?? '',
         address: fiche.address ?? '',
         goodsPrice: String(
-          fiche.goodsPrice ?? Math.max(Number(fiche.totalPrice ?? 0) - Number(fiche.deliveryFee ?? 0), 0)
+          fiche.goodsPrice ?? Number(fiche.totalPrice ?? 0) - Number(fiche.deliveryFee ?? 0)
         ),
         priceChangeReason: '',
         pieceCount: String(fiche.pieceCount ?? 1),
@@ -186,7 +186,7 @@ export function VueColisDetail({ identifiant }: { identifiant: string }) {
   const livre = colis.status === PackageStatus.LIVRE;
   const attendu = Number(colis.totalPrice ?? 0);
   const fraisColis = Number(colis.deliveryFee ?? 0);
-  const prixActuel = Number(colis.goodsPrice ?? Math.max(attendu - fraisColis, 0));
+  const prixActuel = Number(colis.goodsPrice ?? attendu - fraisColis);
   const prixSaisi = Number(form.goodsPrice);
   const prixChange = form.goodsPrice !== '' && Number.isFinite(prixSaisi) && Math.abs(prixSaisi - prixActuel) > 0.0005;
   const demandePrix = colis.pendingPriceChange ?? null;
@@ -852,12 +852,12 @@ export function VueColisDetail({ identifiant }: { identifiant: string }) {
             <FormField
               label={t('colis.detail.prix.titre')}
               required
-              helpText={t('colis.formulaire.prixAide', { frais: fraisColis.toFixed(3) })}
+              helpText={`${t('colis.formulaire.prixAide', { frais: fraisColis.toFixed(3) })} ${t('colis.formulaire.prixZeroAide', { frais: fraisColis.toFixed(3) })}`}
             >
               <Input
                 required
                 type="number"
-                min="0"
+                min={-fraisColis}
                 step="0.001"
                 className="font-mono font-semibold"
                 data-testid="prix-colis-edition"
