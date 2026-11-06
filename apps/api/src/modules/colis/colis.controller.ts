@@ -133,17 +133,12 @@ export class ColisController {
       // d'un expéditeur désigné explicitement : sans cela, l'écran « Nouveau
       // colis » du back-office échouait systématiquement.
       const staff = req.user?.role === RoleType.ADMIN || req.user?.role === RoleType.GESTIONNAIRE;
-      // Prix du colis : positif pour un expéditeur ; l'exploitation peut le
-      // passer en négatif (jusqu'à « − frais », contrôlé par le service) pour
-      // un colis à 0 DT.
-      if (staff) {
-        const g = req.body?.goodsPrice;
-        if (g !== undefined && g !== null && g !== '' && !Number.isFinite(Number(g))) {
-          res.status(400).json({ success: false, message: 'Le champ « Prix du colis » doit être un nombre.' });
-          return;
-        }
-      } else {
-        optionalNumber(req.body, 'goodsPrice', 'Prix du colis');
+      // Prix du colis : il peut être négatif, jusqu'à « − frais » (colis à
+      // 0 DT) — la borne dépend des frais, le service la contrôle.
+      const g = req.body?.goodsPrice;
+      if (g !== undefined && g !== null && g !== '' && !Number.isFinite(Number(g))) {
+        res.status(400).json({ success: false, message: 'Le champ « Prix du colis » doit être un nombre.' });
+        return;
       }
       const onBehalf = staff && typeof req.body?.shipperId === 'string' ? req.body.shipperId.trim() : '';
       if (staff && !req.user?.shipperId && !onBehalf) {
@@ -169,7 +164,6 @@ export class ColisController {
         shipperId: onBehalf || req.user?.shipperId,
         shipperName: onBehalf ? undefined : req.user?.shipperName,
         fullName: req.user?.fullName,
-        staff,
       });
       res.status(201).json({
         success: true,

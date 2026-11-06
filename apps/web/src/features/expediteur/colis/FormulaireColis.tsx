@@ -91,7 +91,7 @@ export function FormulaireColis() {
   const agenceSortie = suggestion ?? '';
   const agenceDepart = suggestionDepart ?? '';
   const trajet = libelleTrajet(agences, agenceDepart, agenceSortie, form.governorate, form.delegation);
-  const total = totalAEncaisser(form.goodsPrice, frais);
+  const total = totalAEncaisser(form.goodsPrice, frais, true);
   const [envoi, setEnvoi] = React.useState(false);
   const [erreur, setErreur] = React.useState<string | null>(null);
 
@@ -272,12 +272,12 @@ export function FormulaireColis() {
             <FormField
               label={t('colis.formulaire.prix')}
               required
-              helpText={t('colis.formulaire.prixAide', { frais: frais.toFixed(3) })}
+              helpText={`${t('colis.formulaire.prixAide', { frais: frais.toFixed(3) })} ${t('colis.formulaire.prixZeroAide', { frais: frais.toFixed(3) })}`}
             >
               <Input
                 required
                 type="number"
-                min="0"
+                min={-frais}
                 step="0.001"
                 value={form.goodsPrice}
                 onChange={(e) => modifier('goodsPrice', e.target.value)}

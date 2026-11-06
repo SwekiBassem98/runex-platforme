@@ -113,8 +113,8 @@ export class PriceChangeService {
     raison: string | null,
     acteur: Acteur
   ): Promise<PriceChangeDto | null> {
-    if (!Number.isFinite(nouveauPrix) || nouveauPrix < 0) {
-      throw new BusinessRuleError('Le prix du colis doit être un nombre positif ou nul.', 400);
+    if (!Number.isFinite(nouveauPrix)) {
+      throw new BusinessRuleError('Le prix du colis doit être un nombre.', 400);
     }
     const prisma = getPrisma();
     const resultat = await prisma.$transaction(async (tx) => {
@@ -129,9 +129,16 @@ export class PriceChangeService {
         throw new BusinessRuleError('Ce colis est clôturé : son prix ne peut plus changer.', 409);
       }
       const frais = Number(pkg.deliveryFee);
-      const prixActuel = r3(Number(pkg.declaredValue ?? Math.max(Number(pkg.totalPrice) - frais, 0)));
+      const prixActuel = r3(Number(pkg.declaredValue ?? Number(pkg.totalPrice) - frais));
       const prix = r3(nouveauPrix);
       const total = r3(prix + frais);
+      // Colis à 0 DT : prix jusqu'à « − frais », jamais un total négatif.
+      if (total < 0) {
+        throw new BusinessRuleError(
+          `Le prix du colis ne peut pas descendre sous −${frais.toFixed(3)} DT (frais de livraison) : le montant à encaisser serait négatif.`,
+          400
+        );
+      }
       if (total === r3(Number(pkg.totalPrice))) {
         // Retour au prix actuel : la demande en attente n'a plus d'objet.
         await tx.priceChangeRequest.updateMany({
@@ -246,11 +253,12 @@ export class PriceChangeService {
       });
       if (approuver) {
         const frais = Number(pkg.deliveryFee);
-        const total = r3(Number(d.newGoodsPrice) + frais);
+        // Les frais ont pu baisser depuis la demande : jamais de total négatif.
+        const total = Math.max(r3(Number(d.newGoodsPrice) + frais), 0);
         const delta = r3(total - Number(pkg.totalPrice));
         await tx.package.update({
           where: { id: pkg.id },
-          data: { declaredValue: d.newGoodsPrice, totalPrice: new Prisma.Decimal(total) },
+          data: { declaredValue: new Prisma.Decimal(r3(total - frais)), totalPrice: new Prisma.Decimal(total) },
         });
         if (pkg.currentRunsheetId && delta !== 0 && pkg.status !== 'ANNULE') {
           await tx.runsheet.update({
