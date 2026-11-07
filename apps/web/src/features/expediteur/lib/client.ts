@@ -33,6 +33,8 @@ export interface FiltresColis {
   city?: string;
   paymentStatus?: string;
   date?: string;
+  /** Avec `date` : aussi les colis encore « Créé » des jours précédents. */
+  avecCreesEnAttente?: boolean;
   page?: number;
   limit?: number;
 }

@@ -136,7 +136,7 @@ export const fr = {
 
   // ------------------------------------------------------------------ colis
   'colis.liste.titre': 'Mes colis',
-  'colis.liste.compteJour': '{n} colis créés aujourd’hui',
+  'colis.liste.compteJour': '{n} colis du jour — créés aujourd’hui ou encore « En préparation »',
   'colis.liste.compteDate': '{n} colis créés le {date}',
   'colis.liste.compteHistorique': '{n} colis — tout l’historique',
   'colis.liste.imprimerJour': 'Imprimer les {n} colis du jour',
@@ -144,8 +144,8 @@ export const fr = {
   'colis.liste.aujourdhui': 'Aujourd’hui',
   'colis.liste.historique': 'Historique',
   'colis.liste.rechercheHistorique': 'Recherche dans tout l’historique de vos colis.',
-  'colis.liste.videJourTitre': 'Aucun colis créé aujourd’hui',
-  'colis.liste.videJourDescription': 'La liste montre les colis du jour. Vos colis des jours précédents sont dans l’historique.',
+  'colis.liste.videJourTitre': 'Aucun colis du jour',
+  'colis.liste.videJourDescription': 'La liste montre les colis créés aujourd’hui et ceux encore « En préparation ». Vos autres colis sont dans l’historique.',
   'colis.liste.voirHistorique': 'Voir l’historique',
   'colis.detail.jax.titre': 'Livraison assurée par notre partenaire JAX',
   'colis.detail.jax.aide': 'RUNEX a confié la livraison de ce colis à son partenaire JAX. Son suivi s’affiche ici et dans la chronologie.',
