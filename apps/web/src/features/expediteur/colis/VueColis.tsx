@@ -93,8 +93,10 @@ function jourTunis(d = new Date()): string {
 /**
  * Liste des colis de l'expéditeur.
  *
- * À l'ouverture de la page, la liste montre **les colis du jour** : c'est sur
- * eux que portent « Imprimer tous les colis » et « Bons de livraison », pour
+ * À l'ouverture de la page, la liste montre **les colis du jour** — créés
+ * aujourd'hui, plus ceux des jours précédents encore « Créé » (aucune action
+ * dessus : ni ramassage, ni dépôt) : ils restent visibles jusqu'à leur prise
+ * en charge au lieu de disparaître à minuit. C'est sur eux que portent « Imprimer tous les colis » et « Bons de livraison », pour
  * que l'impression (et le scan qui suit) ne reprenne pas tout l'historique.
  * L'historique reste à portée : « Historique » (tous les jours), le choix
  * d'une date, ou une recherche — qui porte sur tout l'historique tant
@@ -164,6 +166,8 @@ export function VueColis() {
         ...(type !== 'ALL' ? { type } : {}),
         ...(gouvernorat !== 'ALL' ? { city: gouvernorat } : {}),
         ...(dateEffective ? { date: dateEffective } : {}),
+        // Colis du jour : aussi les colis encore « Créé » des jours précédents.
+        ...(duJour ? { avecCreesEnAttente: true } : {}),
       };
 
       try {
@@ -204,7 +208,7 @@ export function VueColis() {
     return () => {
       annule = true;
     };
-  }, [vue, rechercheAppliquee, statut, type, gouvernorat, dateEffective, page, taille]);
+  }, [vue, rechercheAppliquee, statut, type, gouvernorat, dateEffective, duJour, page, taille]);
 
   /*
    * Tri de la page affichée.
@@ -259,6 +263,8 @@ export function VueColis() {
         ...(type !== 'ALL' ? { type } : {}),
         ...(gouvernorat !== 'ALL' ? { city: gouvernorat } : {}),
         ...(dateEffective ? { date: dateEffective } : {}),
+        // Colis du jour : aussi les colis encore « Créé » des jours précédents.
+        ...(duJour ? { avecCreesEnAttente: true } : {}),
       };
 
       // Construit la fonction lister adaptée à la vue courante (retours = 4 statuts)

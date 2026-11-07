@@ -29,6 +29,7 @@ export class ColisController {
       type,
       paymentStatus,
       date,
+      avecCreesEnAttente,
       page,
       limit,
     } = req.query;
@@ -43,6 +44,7 @@ export class ColisController {
       type: type as string,
       paymentStatus: paymentStatus as string,
       date: date as string,
+      avecCreesEnAttente: avecCreesEnAttente === '1' || avecCreesEnAttente === 'true',
       page: page ? parseInt(page as string, 10) : 1,
       limit: limit ? parseInt(limit as string, 10) : 20,
       scope: req.dataScope,

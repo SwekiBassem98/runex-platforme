@@ -86,6 +86,12 @@ export interface ColisFilterParams {
   type?: string;
   paymentStatus?: string;
   date?: string;
+  /**
+   * Avec `date` : garder aussi les colis encore « Créé » des jours précédents
+   * (aucune action dessus depuis leur création). La liste du jour du portail
+   * expéditeur ne doit pas les perdre à minuit.
+   */
+  avecCreesEnAttente?: boolean;
   page?: number;
   limit?: number;
   scope?: ScopeFilter;
@@ -420,7 +426,9 @@ export class ColisService {
     if (params.date) {
       // Journée de Tunis, indépendante du fuseau du serveur (UTC en conteneur).
       const range = periode(params.date, params.date);
-      if (range) and.push({ createdAt: range });
+      if (range && params.avecCreesEnAttente) {
+        and.push({ OR: [{ createdAt: range }, { status: 'CREE' as PrismaPackageStatus, createdAt: { lt: range.gte } }] });
+      } else if (range) and.push({ createdAt: range });
       else and.push({ id: '00000000-0000-0000-0000-000000000000' });
     }
 

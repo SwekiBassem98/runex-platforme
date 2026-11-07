@@ -131,7 +131,7 @@ export const ar: Dictionnaire = {
 
   // ------------------------------------------------------------------ colis
   'colis.liste.titre': 'طرودي',
-  'colis.liste.compteJour': '{n} طرد أُنشئ اليوم',
+  'colis.liste.compteJour': '{n} طرد اليوم — أُنشئت اليوم أو ما زالت «قيد التحضير»',
   'colis.liste.compteDate': '{n} طرد أُنشئ في {date}',
   'colis.liste.compteHistorique': '{n} طرد — كامل السجل',
   'colis.liste.imprimerJour': 'طباعة طرود اليوم ({n})',
@@ -139,8 +139,8 @@ export const ar: Dictionnaire = {
   'colis.liste.aujourdhui': 'اليوم',
   'colis.liste.historique': 'السجل',
   'colis.liste.rechercheHistorique': 'البحث في كامل سجل طرودك.',
-  'colis.liste.videJourTitre': 'لا توجد طرود أُنشئت اليوم',
-  'colis.liste.videJourDescription': 'تعرض القائمة طرود اليوم. طرود الأيام السابقة موجودة في السجل.',
+  'colis.liste.videJourTitre': 'لا توجد طرود اليوم',
+  'colis.liste.videJourDescription': 'تعرض القائمة الطرود المُنشأة اليوم وتلك التي ما زالت «قيد التحضير». باقي طرودك موجودة في السجل.',
   'colis.liste.voirHistorique': 'عرض السجل',
   'colis.detail.jax.titre': 'التوصيل عبر شريكنا JAX',
   'colis.detail.jax.aide': 'عهدت RUNEX بتوصيل هذا الطرد إلى شريكها JAX. تتبّعه يظهر هنا وفي السجل الزمني.',
