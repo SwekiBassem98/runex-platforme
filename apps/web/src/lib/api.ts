@@ -2206,8 +2206,17 @@ export interface ParametresJax {
   syncMinutes: number;
   zones: string[];
   gouvernorats: { id: string; nom: string }[];
-  statuts: { code: string; libelle: string; etat: string | null; etatPropose: string | null; manuel: boolean }[];
+  statuts: {
+    code: string;
+    libelle: string;
+    etat: string | null;
+    etatPropose: string | null;
+    manuel: boolean;
+    statutRunex: string | null;
+    statutRunexPropose: string | null;
+  }[];
   etats: { etat: string; libelle: string }[];
+  statutsRunex: { statut: string; libelle: string }[];
 }
 
 export interface LigneSousTraitance extends DtoSousTraitance {
@@ -2291,6 +2300,8 @@ export const sousTraitanceApi = {
   zones: (governorates: string[]) => request<string[]>('/sous-traitance/jax/zones', { method: 'PUT', body: { governorates } }),
   statut: (code: string, etat: string | null) =>
     request<null>(`/sous-traitance/jax/statuts/${encodeURIComponent(code)}`, { method: 'PATCH', body: { etat } }),
+  statutRunex: (code: string, statutRunex: string | null) =>
+    request<null>(`/sous-traitance/jax/statuts/${encodeURIComponent(code)}`, { method: 'PATCH', body: { statutRunex } }),
   lister: (params?: { etat?: string; depositId?: string; q?: string; cod?: string }) =>
     requestData<ListeSousTraitance>('/sous-traitance/jax/colis', { query: params }),
   eligibles: (params?: { depositId?: string; governorate?: string; q?: string }) =>

@@ -43,7 +43,7 @@ const ONGLETS: { id: Onglet; libelle: string; icone: React.ElementType }[] = [
 ];
 const dt = (n: number) => `${(Number(n) || 0).toLocaleString('fr-FR', { minimumFractionDigits: 3, maximumFractionDigits: 3 })} DT`;
 const quand = (v: string | null) => (v ? new Date(v).toLocaleString('fr-TN', { dateStyle: 'short', timeStyle: 'short' }) : '—');
-const champ = 'border border-slate-300 rounded-md px-2.5 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/30';
+const champ = 'max-w-full border border-slate-300 rounded-md px-2.5 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/30';
 const bouton = 'inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-sm font-semibold transition cursor-pointer disabled:opacity-50';
 
 export default function SousTraitancePage() {
@@ -113,7 +113,7 @@ export default function SousTraitancePage() {
           ))}
         </div>
 
-        <nav className="flex gap-2 overflow-x-auto pb-1" aria-label="Sections de la sous-traitance">
+        <nav className="flex flex-wrap gap-2 pb-1" aria-label="Sections de la sous-traitance">
           {ONGLETS.map((o) => (
             <button
               key={o.id}
@@ -194,7 +194,7 @@ function Confies({ depots, notifier, onChange }: { depots: { id: string; name: s
   return (
     <Card>
       <div className="flex flex-wrap items-end gap-2 mb-4">
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="N° Runex ou code JAX" aria-label="Rechercher" className={`${champ} w-52`} />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="N° Runex ou code JAX" aria-label="Rechercher" className={`${champ} w-full sm:w-52`} />
         <select value={etat} onChange={(e) => setEtat(e.target.value)} aria-label="Étape" className={champ}>
           <option value="">Toutes les étapes</option>
           {Object.entries(liste?.compteurs ?? {}).map(([e, n]) => (
@@ -877,10 +877,13 @@ function Parametres({ params, recharger, notifier }: { params: ParametresJax | n
         </button>
       </Card>
 
-      <Card title="Statuts JAX → étapes Runex" className="lg:col-span-2">
+      <Card title="Statuts JAX → statuts Runex" className="lg:col-span-2">
         <p className="text-xs text-slate-500 mb-3">
-          Chaque statut lu chez JAX fait avancer le colis dans Runex. La correspondance est proposée d’après le libellé ; corrigez-la si un
-          statut JAX signifie autre chose. « Livré par JAX » passe le colis à Livré ; « retour » le met en retour en cours.
+          Chaque statut lu chez JAX (toutes les {params.syncMinutes} min, ou « Relire les statuts JAX ») donne au colis le statut Runex
+          correspondant, vu par l’exploitation et par l’expéditeur : en attente → En préparation, reçu à l’entrepôt → Reçu au dépôt,
+          transfert → En lot inter-dépôt, en cours de livraison → En cours de livraison, reçu à l’entrepôt après une sortie → Reporté,
+          annulé → Retour au dépôt, préparation du retour vers l’expéditeur → En retour fournisseur, livré → Livré. La correspondance est
+          proposée d’après le libellé ; corrigez-la si un statut JAX signifie autre chose.
         </p>
         {params.statuts.length === 0 ? (
           <p className="text-sm text-slate-500">Aucun statut : relisez les référentiels JAX.</p>
@@ -890,7 +893,8 @@ function Parametres({ params, recharger, notifier }: { params: ParametresJax | n
               <tr className="text-left text-[11px] uppercase tracking-wide text-slate-400 border-b border-slate-200">
                 <th className="py-2 pr-3">Code</th>
                 <th className="py-2 pr-3">Statut JAX</th>
-                <th className="py-2">Étape Runex</th>
+                <th className="py-2 pr-3">Statut du colis (Runex)</th>
+                <th className="py-2">Étape de sous-traitance</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -898,6 +902,26 @@ function Parametres({ params, recharger, notifier }: { params: ParametresJax | n
                 <tr key={s.code}>
                   <td className="py-2 pr-3 font-mono text-xs">{s.code}</td>
                   <td className="py-2 pr-3">{s.libelle}</td>
+                  <td className="py-2 pr-3">
+                    <select
+                      value={s.statutRunex ?? ''}
+                      onChange={(e) =>
+                        void action(`sr-${s.code}`, async () => ({ message: (await sousTraitanceApi.statutRunex(s.code, e.target.value || null)).message }), 'Enregistrement impossible')
+                      }
+                      aria-label={`Statut Runex pour ${s.libelle}`}
+                      data-testid={`statut-runex-${s.code}`}
+                      className={champ}
+                    >
+                      <option value="">
+                        Automatique : {params.statutsRunex.find((x) => x.statut === s.statutRunexPropose)?.libelle ?? 'inchangé'}
+                      </option>
+                      {params.statutsRunex.map((x) => (
+                        <option key={x.statut} value={x.statut}>
+                          {x.libelle}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
                   <td className="py-2">
                     <select
                       value={s.manuel ? (s.etat ?? '') : ''}

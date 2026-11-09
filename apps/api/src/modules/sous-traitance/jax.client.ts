@@ -24,7 +24,7 @@
  *   JAX_API_URL       défaut https://core.jax-delivery.com/api ;
  *   JAX_EXPEDITEUR_NOM / JAX_EXPEDITEUR_TEL  l'expéditeur vu par JAX (défaut RUNEX) ;
  *   JAX_STATUT_ENLEVEMENT  `colis_statut` d'une demande d'enlèvement (défaut 10, comme l'exemple JAX) ;
- *   JAX_SYNC_MINUTES  fréquence de relecture des statuts (défaut 30, 0 = désactivée).
+ *   JAX_SYNC_MINUTES  fréquence de relecture des statuts (défaut 10, 0 = désactivée).
  *
  * Le jeton n'apparaît jamais dans un message d'erreur ni dans un journal.
  */
@@ -60,7 +60,7 @@ export function jaxConfig(): JaxConfig {
     expediteurNom: process.env.JAX_EXPEDITEUR_NOM?.trim() || 'RUNEX',
     expediteurTel: process.env.JAX_EXPEDITEUR_TEL?.trim() || '',
     statutEnlevement: process.env.JAX_STATUT_ENLEVEMENT?.trim() || '10',
-    syncMinutes: Number(process.env.JAX_SYNC_MINUTES ?? 30),
+    syncMinutes: Number(process.env.JAX_SYNC_MINUTES ?? 10),
   };
 }
 

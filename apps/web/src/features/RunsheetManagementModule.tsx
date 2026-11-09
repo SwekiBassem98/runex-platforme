@@ -71,6 +71,7 @@ import {
   ChargementEnCours,
   FicheLigne,
   BasculeFiches,
+  useFichesSurTelephone,
   ConfirmDialog,
   formatTND,
   formatDate,
@@ -147,7 +148,7 @@ export function RunsheetManagementModule({ currentUser, token }: RunsheetManagem
   const [driverFilter, setDriverFilter] = useState('ALL');
   const [dateFilter, setDateFilter] = useState('');
   const [erreur, setErreur] = useState<string | null>(null);
-  const [enFiches, setEnFiches] = useState(false);
+  const [enFiches, setEnFiches] = useFichesSurTelephone();
   // Le filtrage de la liste est fait dans le navigateur : sans différé, chaque
   // frappe repeignait un tableau de dix colonnes.
   const searchTermDiffere = useDifferee(searchTerm, 200);

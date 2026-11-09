@@ -25,7 +25,7 @@
  */
 
 import { Prisma, type EtatSousTraitance as EtatPrisma } from '@prisma/client';
-import { ETATS_SOUS_TRAITANCE, NotificationEvent, PackageStatus, RoleType, type EtatSousTraitance, type SousTraitanceColisDto } from '@logixpress/types';
+import { ETATS_SOUS_TRAITANCE, NotificationEvent, PACKAGE_STATUS_LABELS, PackageStatus, RoleType, type EtatSousTraitance, type SousTraitanceColisDto } from '@logixpress/types';
 import { getPrisma } from '../../common/database/prisma-context';
 import { auditService } from '../../common/audit/audit.service';
 import { BusinessRuleError, asUuid } from '../../common/errors/api-error';
@@ -95,16 +95,64 @@ const n3 = (v: unknown) => Math.round(Number(v ?? 0) * 1000) / 1000;
 export function etatDepuisLibelle(libelle: string): EtatSousTraitance | null {
   const l = norm(libelle);
   if (!l) return null;
-  if (/annul/.test(l)) return 'ANNULE';
+  // Chez JAX, « Annulé » est rangé dans « En retour » : le colis revient.
+  if (/annul/.test(l)) return 'RETOUR_EN_COURS';
   if (/retour|retourne|rtn/.test(l)) return 'RETOUR_EN_COURS';
   if (/(non|pas) livr|echec|refus|injoignable|report|probleme|anomalie/.test(l)) return 'EN_LIVRAISON';
   if (/en cours de livraison|en livraison|sortie|en distribution|livreur/.test(l)) return 'EN_LIVRAISON';
   if (/livr|delivr|remis au client|paye/.test(l)) return 'LIVRE';
-  if (/enlev|ramass|pick|collect|recu|reception|depot|transit|hub|entrepot|en route|expedi/.test(l)) return 'PRIS_EN_CHARGE';
+  if (/enlev|ramass|pick|collect|recu|reception|depot|transit|transfert|hub|entrepot|en route|expedi/.test(l)) return 'PRIS_EN_CHARGE';
   if (/demande d enlevement|enlevement demande/.test(l)) return 'ENLEVEMENT_DEMANDE';
   if (/attente|cree|nouveau|enregistr|en preparation|valide/.test(l)) return 'EN_ATTENTE_ENLEVEMENT';
   return null;
 }
+
+/**
+ * Statut Runex du colis pour un statut JAX, d'après les rubriques de
+ * l'application JAX (liste fournie par le client, 10/11) :
+ *
+ *   En préparation    « en attente »                                   → Créé (En préparation)
+ *   Au dépôt          « reçu à l'entrepôt »                            → Reçu au dépôt
+ *   Inter-dépôt       « en cours de préparation au transfert … »       → En lot inter-dépôt
+ *   En livraison      « en cours de livraison »                        → En cours de livraison
+ *   Reportés          « reçu à l'entrepôt » après une sortie en livraison → Reporté
+ *   En retour         « annulé »                                       → Retour au dépôt
+ *   Retour expéditeur « en cours de préparation au retour vers l'exp. » → En retour fournisseur
+ *   (et « livré » → Livré, « retourné à l'expéditeur » → Retourné à l'expéditeur)
+ */
+export function statutRunexDepuisLibelle(libelle: string): string | null {
+  const l = norm(libelle);
+  if (!l) return null;
+  if (/retour/.test(l) && /exped|fournisseur|vendeur|client final/.test(l)) {
+    return /retourne|rendu|remis|livre a l exp/.test(l) && !/preparation|cours/.test(l) ? 'RETOURNE_EXPEDITEUR' : 'EN_RUNSHEET_RETOUR';
+  }
+  if (/annul|retour/.test(l)) return 'RETOUR_DEPOT';
+  if (/report/.test(l)) return 'REPORTE';
+  if (/(non|pas) livr|echec|refus|injoignable/.test(l)) return 'REPORTE';
+  if (/en cours de livraison|en livraison|en distribution|sortie|livreur/.test(l)) return 'EN_COURS_LIVRAISON';
+  if (/livr|delivr|remis au client/.test(l)) return 'LIVRE';
+  if (/transit/.test(l)) return 'EN_TRANSIT_INTER_DEPOT';
+  if (/transfert|inter ?depot|autre agence/.test(l)) return 'EN_LOT_INTER_DEPOT';
+  if (/entrepot|depot|recu|reception|hub|enlev|ramass|collect/.test(l)) return 'RECU_DEPOT';
+  if (/attente|cree|nouveau|enregistr|preparation|valide/.test(l)) return 'CREE';
+  return null;
+}
+
+/** Statuts Runex qu'un statut JAX peut donner au colis (choix de l'administrateur). */
+export const STATUTS_RUNEX_JAX = [
+  'CREE',
+  'RECU_DEPOT',
+  'EN_LOT_INTER_DEPOT',
+  'EN_TRANSIT_INTER_DEPOT',
+  'EN_COURS_LIVRAISON',
+  'REPORTE',
+  'LIVRE',
+  'RETOUR_DEPOT',
+  'EN_RUNSHEET_RETOUR',
+  'RETOURNE_EXPEDITEUR',
+] as const;
+/** Statuts Runex définitifs : une relecture JAX ne les change plus. */
+const STATUTS_RUNEX_FINAUX = ['LIVRE', 'LIVRAISON_PARTIELLE', 'RETOURNE_EXPEDITEUR', 'ANNULE'];
 
 const SELECT_COLIS = {
   id: true,
@@ -170,7 +218,10 @@ export class SousTraitanceService {
         etat: s.etat as EtatSousTraitance | null,
         etatPropose: etatDepuisLibelle(s.libelle),
         manuel: s.manuel,
+        statutRunex: s.statutRunex,
+        statutRunexPropose: statutRunexDepuisLibelle(s.libelle),
       })),
+      statutsRunex: STATUTS_RUNEX_JAX.map((statut) => ({ statut, libelle: PACKAGE_STATUS_LABELS[statut as PackageStatus] })),
       etats: Object.entries(ETATS_SOUS_TRAITANCE).map(([etat, libelle]) => ({ etat, libelle })),
     };
   }
@@ -237,6 +288,22 @@ export class SousTraitanceService {
       reason: liste.length ? `Zones confiées à JAX : ${liste.join(', ')}.` : 'Plus aucune zone confiée automatiquement à JAX.',
     });
     return liste;
+  }
+
+  /** Statut Runex du colis pour un statut JAX (null : déduit du libellé). */
+  async definirStatutRunex(code: string, statutRunex: unknown, acteur: ActeurST) {
+    const cible = statutRunex === null || statutRunex === '' ? null : String(statutRunex);
+    if (cible !== null && !(STATUTS_RUNEX_JAX as readonly string[]).includes(cible)) throw new BusinessRuleError('Statut Runex inconnu.', 400);
+    const s = await this.prisma.partenaireStatut.findUnique({ where: { partenaire_code: { partenaire: PARTENAIRE, code } } });
+    if (!s) throw new BusinessRuleError('Statut JAX inconnu : relisez les référentiels.', 404);
+    await this.prisma.partenaireStatut.update({ where: { id: s.id }, data: { statutRunex: cible } });
+    await auditService.record({
+      entityType: 'SOUS_TRAITANCE',
+      entityId: PARTENAIRE,
+      action: 'JAX_STATUT_CORRESPONDANCE',
+      userId: acteur.id ?? null,
+      reason: `Statut JAX « ${s.libelle} » (${code}) → colis ${cible ? `« ${PACKAGE_STATUS_LABELS[cible as PackageStatus]} »` : 'statut déduit du libellé'}.`,
+    });
   }
 
   async definirStatut(code: string, etat: unknown, acteur: ActeurST) {
@@ -879,6 +946,18 @@ export class SousTraitanceService {
     return etatDepuisLibelle(statut.libelle);
   }
 
+  /** Statut Runex du colis pour un statut JAX : choix de l'administrateur, sinon d'après le libellé. */
+  private async statutRunexPour(statut: StatutJax): Promise<string | null> {
+    if (statut.code) {
+      const s = await this.prisma.partenaireStatut.findUnique({ where: { partenaire_code: { partenaire: PARTENAIRE, code: statut.code } } });
+      if (s?.statutRunex) return s.statutRunex;
+      const depuis = statutRunexDepuisLibelle(statut.libelle.startsWith('Statut ') && s ? s.libelle : statut.libelle);
+      if (depuis) return depuis;
+      if (s) return statutRunexDepuisLibelle(s.libelle);
+    }
+    return statutRunexDepuisLibelle(statut.libelle);
+  }
+
   /** Relit les statuts JAX (tous les colis actifs, ou ceux demandés). */
   async synchroniser(packageIds?: unknown) {
     if (!jaxConfig().token) throw new BusinessRuleError('Sous-traitance JAX non configurée : le jeton JAX (JAX_API_TOKEN) est absent sur le serveur.', 409);
@@ -887,7 +966,7 @@ export class SousTraitanceService {
       where: {
         partenaire: PARTENAIRE,
         codeExterne: { not: null },
-        ...(ids && ids.length ? { packageId: { in: ids } } : { etat: { in: ACTIFS }, package: { is: { status: 'SOUS_TRAITE' as const } } }),
+        ...(ids && ids.length ? { packageId: { in: ids } } : { etat: { in: ACTIFS } }),
       },
       select: { packageId: true },
       take: 500,
@@ -954,10 +1033,10 @@ export class SousTraitanceService {
     const actuel = r.etat as EtatSousTraitance;
     // Statut plus ancien que l'étape connue (relecture tardive, ordre des
     // relectures) : on ne l'affiche pas, il contredirait l'étape.
-    const enRetard =
-      !!propose &&
-      propose !== actuel &&
-      (actuel === 'LIVRE' || actuel === 'RETOURNE' || actuel === 'ANNULE' || (propose !== 'ANNULE' && RANG[propose] < RANG[actuel]));
+    // Seul un colis à une étape finale (livré, retourné, annulé) ignore une
+    // relecture tardive : avant, le dernier statut JAX fait foi (un colis
+    // « reçu à l'entrepôt » après une sortie en livraison est reporté).
+    const enRetard = !!propose && propose !== actuel && (actuel === 'LIVRE' || actuel === 'RETOURNE' || actuel === 'ANNULE');
     const libelleChange = !enRetard && statut.libelle !== r.statutExterne;
     // Annulé chez JAX : avant enlèvement, le colis est toujours à l'agence ;
     // après, il doit revenir (retour).
@@ -969,8 +1048,15 @@ export class SousTraitanceService {
     if (cible === 'EN_ATTENTE_ENLEVEMENT' && actuel === 'ENLEVEMENT_DEMANDE') cible = actuel;
 
     const etatChange = cible !== actuel;
-    const lieu = r.deposit?.name ?? 'JAX';
     const acteur = ACTEUR_JAX;
+    // Statut Runex du colis : celui qui correspond au statut JAX lu.
+    const pkgStatus = r.package.status as string;
+    let statutCible = enRetard ? null : await this.statutRunexPour(statut);
+    // « Reportés » : JAX remet le colis à l'entrepôt après une sortie en livraison.
+    if (statutCible === 'RECU_DEPOT' && (pkgStatus === 'EN_COURS_LIVRAISON' || pkgStatus === 'REPORTE' || (!!problemes && actuel === 'EN_LIVRAISON'))) statutCible = 'REPORTE';
+    // « En attente » chez JAX : le colis garde son statut Runex (créé, ou confié en agence).
+    if (statutCible === 'CREE' && pkgStatus !== 'CREE') statutCible = null;
+    const statutChange = !!statutCible && statutCible !== pkgStatus && !STATUTS_RUNEX_FINAUX.includes(pkgStatus);
     await this.prisma.$transaction(async (tx) => {
       await tx.sousTraitance.update({
         where: { id: r.id },
@@ -987,49 +1073,44 @@ export class SousTraitanceService {
           ...(cible === 'LIVRE' ? { codMontant: r.package.totalPrice } : {}),
         },
       });
-      if (!etatChange && !libelleChange) return;
-      const pkgStatus = r.package.status as string;
-      if (etatChange && cible === 'LIVRE' && pkgStatus === 'SOUS_TRAITE') {
-        await packageWorkflowService.transition({
-          packageId: r.packageId,
-          to: PackageStatus.LIVRE,
-          actor: acteur,
-          title: 'Livré par JAX',
-          note: `JAX : ${statut.libelle} — montant encaissé par JAX, à reverser à Runex`,
-          location: 'Livré par le partenaire JAX',
-          auditAction: 'JAX_LIVRE',
-          data: { collectedAmount: r.package.totalPrice, deliveredAt: statut.le ?? maintenant, currentDepositId: null },
-          client: tx,
-        });
-      } else if (etatChange && cible === 'ANNULE' && pkgStatus === 'SOUS_TRAITE') {
-        await packageWorkflowService.transition({
-          packageId: r.packageId,
-          to: PackageStatus.RECU_DEPOT,
-          actor: acteur,
-          title: 'Annulé chez JAX avant enlèvement — de nouveau en stock',
-          note: `JAX : ${statut.libelle}`,
-          location: lieu,
-          auditAction: 'JAX_ANNULE',
-          data: { currentDepositId: r.depositId },
-          client: tx,
-        });
-      } else {
-        // Sortie de l'agence : le colis n'est plus dans le stock Runex.
-        if (etatChange && AVANT_ENLEVEMENT.includes(actuel) && (cible === 'PRIS_EN_CHARGE' || cible === 'EN_LIVRAISON' || cible === 'RETOUR_EN_COURS')) {
-          await tx.package.update({ where: { id: r.packageId }, data: { currentDepositId: null } });
-        }
-        await tx.packageTimeline.create({
+      if (!etatChange && !libelleChange && !statutChange) return;
+      if (statutChange && statutCible) {
+        // Le statut du colis suit celui de JAX : l'expéditeur et l'exploitation
+        // voient la même étape que dans l'application JAX.
+        await tx.package.update({
+          where: { id: r.packageId },
           data: {
-            packageId: r.packageId,
-            status: r.package.status,
-            title: etatChange ? ETATS_SOUS_TRAITANCE[cible] : `JAX : ${statut.libelle}`.slice(0, 150),
-            description: [`Statut JAX : ${statut.libelle}`, problemes ? `Problème signalé : ${problemes}` : null].filter(Boolean).join(' — ').slice(0, 500),
-            locationName: cible === 'PRIS_EN_CHARGE' || cible === 'EN_LIVRAISON' ? 'Réseau JAX' : lieu,
-            operatorName: acteur.fullName,
-            createdAt: maintenant,
+            status: statutCible as never,
+            // Chez JAX : dans aucune agence ni tournée Runex.
+            currentDepositId: null,
+            currentRunsheetId: null,
+            assignedDriverId: null,
+            ...(statutCible === 'LIVRE' ? { collectedAmount: r.package.totalPrice, deliveredAt: statut.le ?? maintenant } : {}),
           },
         });
+        await auditService.record(
+          {
+            entityType: 'PACKAGE',
+            entityId: r.packageId,
+            action: 'JAX_STATUT',
+            reason: `Colis ${r.package.trackingNumber} : « ${PACKAGE_STATUS_LABELS[statutCible as PackageStatus]} » (JAX : ${statut.libelle})`.slice(0, 255),
+            previousValues: { status: pkgStatus },
+            newValues: { status: statutCible },
+          },
+          tx
+        );
       }
+      await tx.packageTimeline.create({
+        data: {
+          packageId: r.packageId,
+          status: (statutChange && statutCible ? statutCible : r.package.status) as never,
+          title: (statutChange && statutCible ? PACKAGE_STATUS_LABELS[statutCible as PackageStatus] : etatChange ? ETATS_SOUS_TRAITANCE[cible] : `JAX : ${statut.libelle}`).slice(0, 150),
+          description: [`Statut JAX : ${statut.libelle}`, problemes ? `Problème signalé : ${problemes}` : null].filter(Boolean).join(' — ').slice(0, 500),
+          locationName: 'Réseau JAX',
+          operatorName: acteur.fullName,
+          createdAt: maintenant,
+        },
+      });
     });
 
     if (etatChange && (cible === 'LIVRE' || cible === 'RETOUR_EN_COURS' || cible === 'PRIS_EN_CHARGE')) {
@@ -1042,7 +1123,8 @@ export class SousTraitanceService {
         .notify({
           event: NotificationEvent.DELIVERY_STATUS_CHANGED,
           title: titres[cible] ?? 'Colis',
-          content: `Colis ${r.package.trackingNumber} : ${ETATS_SOUS_TRAITANCE[cible].toLowerCase()} (${statut.libelle}).`,
+          // L'expéditeur reçoit aussi cette notification : aucune mention du partenaire.
+          content: `Colis ${r.package.trackingNumber} : ${(statutCible ? PACKAGE_STATUS_LABELS[statutCible as PackageStatus] : titres[cible] ?? 'mis à jour').toLowerCase()}.`,
           relatedEntity: 'PACKAGE',
           relatedEntityId: r.packageId,
           packageId: r.packageId,
@@ -1071,23 +1153,32 @@ export class SousTraitanceService {
   /** Retour JAX arrivé à l'agence Runex : le colis repasse dans le circuit des retours. */
   async retourRecu(packageId: string, acteur: ActeurST) {
     const r = await this.ligne(packageId);
-    if (r.package.status !== 'SOUS_TRAITE' || r.etat === 'LIVRE') {
+    const enCours = r.etat === 'RETOUR_EN_COURS' || r.package.status === 'SOUS_TRAITE' || ['RETOUR_DEPOT', 'EN_RUNSHEET_RETOUR', 'REPORTE'].includes(String(r.package.status));
+    if (!enCours || r.etat === 'LIVRE' || STATUTS_RUNEX_FINAUX.includes(String(r.package.status))) {
       throw new BusinessRuleError(`Le colis ${r.package.trackingNumber} n’est pas un retour JAX en attente.`, 409);
     }
     const agence = r.deposit?.name ?? 'Agence';
     await this.prisma.$transaction(async (tx) => {
       await tx.sousTraitance.update({ where: { id: r.id }, data: { etat: 'RETOURNE' } });
-      await packageWorkflowService.transition({
-        packageId: r.packageId,
-        to: PackageStatus.RETOUR_DEPOT,
-        actor: { id: acteur.id, fullName: acteur.fullName, role: RoleType.ADMIN },
-        title: `Retour JAX reçu à ${agence}`,
-        reason: `Non livré par JAX${r.statutExterne ? ` (${r.statutExterne})` : ''}`,
-        location: agence,
-        auditAction: 'JAX_RETOUR_RECU',
-        data: { currentDepositId: r.depositId, assignedDriverId: null },
-        client: tx,
+      // Le statut du colis suit déjà JAX (retour en cours) : il revient en stock retour à l'agence.
+      await tx.package.update({
+        where: { id: r.packageId },
+        data: { status: 'RETOUR_DEPOT', currentDepositId: r.depositId, assignedDriverId: null, currentRunsheetId: null },
       });
+      await tx.packageTimeline.create({
+        data: {
+          packageId: r.packageId,
+          status: 'RETOUR_DEPOT',
+          title: `Retour JAX reçu à ${agence}`,
+          description: `Non livré par JAX${r.statutExterne ? ` (${r.statutExterne})` : ''} — suit le circuit des retours.`,
+          locationName: agence,
+          operatorName: acteur.fullName,
+        },
+      });
+      await auditService.record(
+        { entityType: 'PACKAGE', entityId: r.packageId, action: 'JAX_RETOUR_RECU', userId: acteur.id ?? null, reason: `Retour JAX ${r.package.trackingNumber} reçu à ${agence}.` },
+        tx
+      );
     });
     return { message: `Retour ${r.package.trackingNumber} reçu à ${agence} : il suit le circuit des retours.` };
   }

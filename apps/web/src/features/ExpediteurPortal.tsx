@@ -68,6 +68,7 @@ import {
   Spinner,
   SkeletonTable,
   BasculeFiches,
+  useFichesSurTelephone,
   ErrorBanner,
   FicheLigne,
   LigneVide,
@@ -149,7 +150,7 @@ export function ExpediteurPortal({ currentUser, token }: ExpediteurPortalProps) 
   const [totalPackages, setTotalPackages] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
-  const [enFiches, setEnFiches] = useState(false);
+  const [enFiches, setEnFiches] = useFichesSurTelephone();
   const [selectedPackageId, setSelectedPackageId] = useState<string | null>(null);
   const [detailedPackage, setDetailedPackage] = useState<PackageDto | null>(null);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);

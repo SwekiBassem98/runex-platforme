@@ -23,7 +23,9 @@ export class SousTraitanceController {
   }
   /** `PATCH /sous-traitance/jax/statuts/:code` — `{ etat }` (null : automatique) */
   async statut(req: AuthenticatedRequest, res: Response) {
-    await sousTraitanceService.definirStatut(String(req.params.code), req.body?.etat ?? null, acteur(req));
+    // `{ statutRunex }` : statut du colis ; `{ etat }` : étape de sous-traitance.
+    if (req.body && 'statutRunex' in req.body) await sousTraitanceService.definirStatutRunex(String(req.params.code), req.body.statutRunex ?? null, acteur(req));
+    else await sousTraitanceService.definirStatut(String(req.params.code), req.body?.etat ?? null, acteur(req));
     res.json({ success: true, data: null, message: 'Correspondance enregistrée.' });
   }
   /** `GET /sous-traitance/jax/colis?etat=&depositId=&q=&cod=a_recevoir` */

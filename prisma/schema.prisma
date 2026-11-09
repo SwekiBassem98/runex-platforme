@@ -1526,6 +1526,9 @@ model PartenaireStatut {
   code       String             @db.VarChar(30)
   libelle    String             @db.VarChar(150)
   etat       EtatSousTraitance?
+  /// Statut Runex du colis pour ce statut JAX, fixé par l'administrateur
+  /// (vide : déduit du libellé, voir statutRunexDepuisLibelle).
+  statutRunex String?           @db.VarChar(40)
   /// Vrai quand l'administrateur a fixé la correspondance lui-même.
   manuel     Boolean            @default(false)
   updatedAt  DateTime           @updatedAt @db.Timestamptz(6)

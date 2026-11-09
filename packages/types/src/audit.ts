@@ -217,6 +217,7 @@ export const AUDIT_ACTIONS: Readonly<Record<string, AuditActionDefinition>> = {
   JAX_LIVRE: { label: 'Colis livré par JAX', category: 'LIVRAISON', critical: true },
   JAX_ANNULE: { label: 'Annulé chez JAX avant enlèvement', category: 'LIVRAISON' },
   JAX_REPRIS: { label: 'Colis repris à JAX avant enlèvement', category: 'LIVRAISON' },
+  JAX_STATUT: { label: 'Statut du colis mis à jour d’après JAX', category: 'LIVRAISON' },
   JAX_RATTRAPAGE_AUTO: { label: 'Colis restés chez Runex envoyés à JAX (automatique, une fois)', category: 'LIVRAISON' },
   JAX_RETOUR_RECU: { label: 'Retour JAX reçu à l\'agence', category: 'LIVRAISON' },
   JAX_COD_RECU: { label: 'Montant reversé par JAX', category: 'FINANCE', critical: true },

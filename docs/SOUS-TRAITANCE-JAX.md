@@ -42,8 +42,8 @@ Sans jeton, la page l'indique et rien ne part chez JAX ; le reste de RUNEX fonct
    réception, ceux d'une zone cochée partent chez JAX ; les autres peuvent être confiés à la main (« À confier »).
    « Reprendre » avant la réception abandonne la fiche JAX (code à annuler chez JAX) ; un colis repris
    n'est pas renvoyé automatiquement.
-   **Bon de livraison :** il porte deux codes — le code RUNEX (QR et code-barres de chaque pièce) et le
-   **code JAX** (bloc « CODE JAX », en code-barres) que le livreur JAX scanne à l'enlèvement. La création
+   **Bon de livraison :** il porte deux codes — en **premier, tout en haut**, le **code JAX** en code-barres
+   (sans mention « JAX »), que le livreur JAX scanne ; puis le code RUNEX (QR et code-barres de chaque pièce). La création
    attend JAX quelques secondes (`JAX_ATTENTE_CREATION_MS`, défaut 8000) : le bon imprimé juste après porte
    donc le code JAX. Si JAX ne répondait pas, réimprimer le bon une fois le code reçu.
    Le code JAX contient l'identifiant du compte RUNEX chez JAX (ex. `TUN3762…`, compte 3762) : rien à configurer.
@@ -62,15 +62,28 @@ Sans jeton, la page l'indique et rien ne part chez JAX ; le reste de RUNEX fonct
    « Colis restés chez Runex envoyés à JAX »). `JAX_RATTRAPAGE_AUTO=0` pour s'en abstenir.
 3. **Enlèvement** — onglet « Enlèvements » : une demande par agence, avec ses codes EAN (seulement les
    colis déjà reçus en agence : JAX ne doit pas venir chercher un colis encore chez l'expéditeur).
-4. **Suivi** — les statuts JAX sont relus automatiquement (`JAX_SYNC_MINUTES`) et à la demande ;
-   chaque changement s'inscrit dans la chronologie du colis, visible par l'exploitation et l'expéditeur.
-   - enlevé / en dépôt JAX → *Pris en charge par JAX* (le colis sort du stock de l'agence) ;
-   - en livraison, reporté, problème → *En cours de livraison par JAX* (+ problème affiché) ;
-   - livré → le colis passe **Livré** ;
-   - retour → *Retour en cours* ; à l'arrivée physique, « Retour JAX reçu » le met en **Retour au dépôt**
-     et il suit le circuit habituel des retours ;
-   - annulé chez JAX avant enlèvement → de nouveau en stock.
-   Une relecture ne fait jamais reculer un colis.
+4. **Suivi** — les statuts JAX de **tous** les colis chez JAX (y compris ceux encore « En préparation » dans
+   RUNEX) sont relus automatiquement (`JAX_SYNC_MINUTES`, défaut 10 min) et à la demande. **Le statut RUNEX du
+   colis suit celui de JAX** (rubriques de l'application JAX, liste du client du 10/11) :
+
+   | Rubrique JAX | Statut JAX | Statut RUNEX |
+   |---|---|---|
+   | En préparation | en attente | En préparation (Créé) |
+   | Au dépôt | reçu à l'entrepôt | Reçu au dépôt |
+   | Inter dépôt | en cours de préparation au transfert à une autre agence | En lot inter-dépôt |
+   | En livraison | en cours de livraison | En cours de livraison |
+   | Reportés | reçu à l'entrepôt (après une sortie en livraison) | Reporté |
+   | En retour | annulé | Retour au dépôt |
+   | Retour expéditeur | en cours de préparation au retour vers l'expéditeur | En retour fournisseur |
+   | — | livré | Livré (montant encaissé par JAX, à reverser) |
+
+   La correspondance est proposée d'après le libellé et se corrige dans **Paramètres › Statuts JAX → statuts
+   Runex** (colonne « Statut du colis »). Un colis livré, retourné ou annulé ne change plus. Un colis chez JAX
+   n'est dans le stock d'aucune agence RUNEX et ne peut entrer ni dans une tournée, ni dans un inter-dépôt, ni
+   être livré par un livreur RUNEX. « Retour JAX reçu » le remet en **Retour au dépôt** à l'agence, et il suit
+   le circuit habituel des retours.
+   **L'expéditeur ne voit jamais JAX** : ni pastille, ni encart, ni mention dans la chronologie, l'historique
+   ou les notifications — seulement le statut RUNEX de son colis.
 5. **Encaissement** — JAX encaisse le montant des colis qu'il livre. L'onglet « Encaissements JAX » liste
    ce qui est à recevoir ; un colis livré par JAX n'entre dans un bordereau expéditeur qu'une fois son
    montant marqué « reçu de JAX ».

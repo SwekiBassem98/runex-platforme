@@ -85,7 +85,8 @@ ok(r.status === 409 && /JAX/.test(r.message ?? ''), 'annulation : refusée avec 
 let enl = (await api(admin, 'GET', '/sous-traitance/jax/enlevements')).data ?? [];
 ok(!enl.some((g) => g.colis.some((x) => x.trackingNumber === c.trackingNumber)), 'pas encore d’enlèvement proposé (colis pas en agence)');
 r = await api(admin, 'POST', '/sous-traitance/jax/sync', {});
-ok(r.status === 200 && sql(`SELECT "derniereSyncLe" IS NULL FROM "SousTraitance" WHERE "packageId" = '${c.id}'`) === 't', 'relecture automatique : le colis n’est pas relu avant sa réception', r.message);
+// Depuis le 10/11 : le statut d'un colis chez JAX est relu dès sa création (QA 52).
+ok(r.status === 200 && sql(`SELECT "derniereSyncLe" IS NOT NULL FROM "SousTraitance" WHERE "packageId" = '${c.id}'`) === 't' && (await lire(c.id)).status === 'CREE', 'relecture automatique : statut JAX relu dès la création (« en attente » : reste En préparation)', r.message);
 
 console.log('\n3. Réception en agence → confié à JAX (sans doublon)');
 const avant = (await chezJax()).length;

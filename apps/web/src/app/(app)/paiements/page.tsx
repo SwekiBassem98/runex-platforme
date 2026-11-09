@@ -17,6 +17,7 @@ import {
   PageHeader,
   Badge,
   BasculeFiches,
+  useFichesSurTelephone,
   ErrorBanner,
   FicheLigne,
   LigneVide,
@@ -79,7 +80,7 @@ export default function PaiementsPage() {
   const [driverId, setDriverId] = useState<string>(() => params.get('driverId') ?? '');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [enFiches, setEnFiches] = useState(false);
+  const [enFiches, setEnFiches] = useFichesSurTelephone();
 
   useEffect(() => {
     const demande = params.get('status');

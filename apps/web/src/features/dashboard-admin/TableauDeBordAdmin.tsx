@@ -56,7 +56,6 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { ErrorBanner } from '@logixpress/ui';
-import { useAuth } from '@/lib/auth';
 import { dashboardApi, type AdminOverviewDto, type DashboardDto, type EtapeAdmin } from '@/lib/api';
 
 const PERIODES = [7, 14, 30, 90] as const;
@@ -161,7 +160,6 @@ const ETAPES: { cle: EtapeAdmin; libelle: string; aide: string; icone: LucideIco
 /* ------------------------------------------------------------------ */
 
 export function TableauDeBordAdmin() {
-  const { user } = useAuth();
   const [jours, setJours] = React.useState<number>(14);
   const [donnees, setDonnees] = React.useState<DashboardDto | null>(null);
   const [chargement, setChargement] = React.useState(true);
@@ -202,7 +200,8 @@ export function TableauDeBordAdmin() {
   }, [charger, jours]);
 
   const v = donnees?.vue ?? null;
-  const prenom = (user?.fullName ?? '').split(/\s+/)[0] || 'à vous';
+  // Salutation au nom de la société (« Bonsoir, Runex »), pas du compte connecté.
+  const prenom = 'Runex';
   const heure = new Date(maintenant).getHours();
   const salut = heure < 12 ? 'Bonjour' : heure < 18 ? 'Bon après-midi' : 'Bonsoir';
   const dateDuJour = new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date(maintenant));

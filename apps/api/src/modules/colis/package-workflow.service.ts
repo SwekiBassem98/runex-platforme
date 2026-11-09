@@ -141,6 +141,18 @@ function label(status: PackageStatus): string {
   return PACKAGE_STATUS_LABELS[status] ?? status;
 }
 
+/** Étapes réservées aux livreurs et transferts Runex (refusées pour un colis chez JAX). */
+const OPERATIONS_RUNEX: PackageStatus[] = [
+  PackageStatus.AFFECTE_RUNSHEET,
+  PackageStatus.EN_COURS_LIVRAISON,
+  PackageStatus.EN_LOT_INTER_DEPOT,
+  PackageStatus.EN_TRANSIT_INTER_DEPOT,
+  PackageStatus.LIVRE,
+  PackageStatus.LIVRAISON_PARTIELLE,
+  PackageStatus.REPORTE,
+  PackageStatus.ECHEC_LIVRAISON,
+];
+
 export class PackageWorkflowService {
   private get prisma() {
     return getPrisma();
@@ -197,10 +209,22 @@ export class PackageWorkflowService {
           pieceCount: true,
           totalPrice: true,
           deletedAt: true,
+          sousTraitance: { select: { etat: true, codeExterne: true } },
         },
       });
       if (!record || record.deletedAt) {
         throw new BusinessRuleError('Colis introuvable.', 404);
+      }
+      // Colis chez JAX : son statut suit JAX ; tournée, inter-dépôt et
+      // livraison par un livreur Runex lui sont fermés.
+      const chezJax =
+        !!record.sousTraitance?.codeExterne &&
+        ['EN_ATTENTE_ENLEVEMENT', 'ENLEVEMENT_DEMANDE', 'PRIS_EN_CHARGE', 'EN_LIVRAISON', 'RETOUR_EN_COURS'].includes(String(record.sousTraitance.etat));
+      if (chezJax && OPERATIONS_RUNEX.includes(to)) {
+        throw new BusinessRuleError(
+          `Le colis #${record.trackingNumber} est Confié au partenaire JAX : il est livré par JAX, pas par une tournée Runex.`,
+          409
+        );
       }
 
       this.assertTransitionAllowed(record.status, record.trackingNumber, to, {

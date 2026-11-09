@@ -651,6 +651,7 @@ export const ar: Dictionnaire = {
   'tdb.etape.collecte': 'تم استلامها',
   'tdb.etape.depot': 'في الوكالة',
   'tdb.etape.livraison': 'قيد التوصيل',
+  'tdb.etape.reporte': 'مؤجلة',
   'tdb.etape.livre': 'مُسلَّمة',
   'tdb.etape.retour': 'مرتجعات',
   'tdb.activite.titre': 'النشاط',

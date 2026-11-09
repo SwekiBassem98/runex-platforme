@@ -19,6 +19,7 @@ import { AlertTriangle, MapPinned, Package, Pencil, RotateCcw, Sparkles, Users }
 import {
   Badge,
   BasculeFiches,
+  useFichesSurTelephone,
   EmptyState,
   ErrorState,
   FicheLigne,
@@ -53,7 +54,7 @@ export default function ZonesPage() {
   const [recherche, setRecherche] = useState('');
   const [gouvernorat, setGouvernorat] = useState('');
   const [statut, setStatut] = useState('');
-  const [enFiches, setEnFiches] = useState(false);
+  const [enFiches, setEnFiches] = useFichesSurTelephone();
   const [edition, setEdition] = useState<ZoneDto | null>(null);
   useFeedbackOn(erreur, 'error');
   useFeedbackOn(message, 'success');

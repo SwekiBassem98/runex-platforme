@@ -37,6 +37,7 @@ import { PickupStatus, type PickupAppointmentDto } from '@logixpress/types';
 import {
   Badge,
   BasculeFiches,
+  useFichesSurTelephone,
   Card,
   ChargementEnCours,
   ConfirmDialog,
@@ -76,7 +77,7 @@ export function VueRamassages() {
   const [rendezVous, setRendezVous] = React.useState<PickupAppointmentDto[]>([]);
   const [chargement, setChargement] = React.useState(true);
   const [erreur, setErreur] = React.useState<string | null>(null);
-  const [enFiches, setEnFiches] = React.useState(false);
+  const [enFiches, setEnFiches] = useFichesSurTelephone();
 
   const [demandeOuverte, setDemandeOuverte] = React.useState(false);
   const [envoi, setEnvoi] = React.useState(false);

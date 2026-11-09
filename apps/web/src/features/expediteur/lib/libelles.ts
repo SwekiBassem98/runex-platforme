@@ -290,7 +290,11 @@ const FAMILLES: Record<
 export function useVocabulaire(): Vocabulaire {
   const { t, traduireValeur } = useI18n();
   return {
-    statutColis: (statut) => ({
+    statutColis: (brut) => {
+      // L'expéditeur ne voit pas le partenaire de livraison : un colis remis
+      // au partenaire depuis l'agence est pour lui « Reçu au dépôt ».
+      const statut = brut === 'SOUS_TRAITE' ? 'RECU_DEPOT' : brut;
+      return {
       ...(PACKAGE_STATUS_MAP[statut] ?? {
         label: packageStatusLabel(statut) || statut,
         bg: 'bg-slate-100',
@@ -300,7 +304,8 @@ export function useVocabulaire(): Vocabulaire {
       // La couleur vient de la table du design system, le mot du dictionnaire :
       // c'est le seul endroit où les deux peuvent être garantis d'accord.
       label: traduireValeur('statut', statut),
-    }),
+      };
+    },
     type: (valeur) => traduireValeur(FAMILLES.type, valeur),
     taille: (valeur) => traduireValeur(FAMILLES.taille, valeur),
     rdv: (valeur) => traduireValeur(FAMILLES.rdv, valeur),

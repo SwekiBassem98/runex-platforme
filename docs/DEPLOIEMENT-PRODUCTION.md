@@ -117,7 +117,7 @@ créent ensuite depuis le web (Administration). Relançable sans effet ;
 | `JAX_API_TOKEN` 🔒 | jeton API fourni par JAX (sous-traitance de la livraison, voir `docs/SOUS-TRAITANCE-JAX.md`) — sans lui, aucun colis ne part chez JAX |
 | `JAX_API_URL` | facultatif — défaut `https://core.jax-delivery.com/api` |
 | `JAX_EXPEDITEUR_NOM` / `JAX_EXPEDITEUR_TEL` | facultatif — l'expéditeur que JAX voit (défaut `RUNEX`, téléphone de l'agence d'enlèvement) |
-| `JAX_SYNC_MINUTES` | facultatif — relecture automatique des statuts JAX (défaut `30`, `0` = manuelle seulement) |
+| `JAX_SYNC_MINUTES` | facultatif — relecture automatique des statuts JAX (défaut `10`, `0` = manuelle seulement) |
 | `DRIVER_RATE_PER_JOB` | facultatif — rémunération du livreur par colis livré ou ramassage effectué, en DT (défaut `3`) ; sert à l'écran Caisse et à la carte « Mes gains » de l'application |
 
    Koyeb fournit `PORT` (8000) ; l'API le lit en priorité. Derrière la passerelle
