@@ -20,23 +20,26 @@ jeton en paramètre `token`.
    Variables facultatives : `JAX_API_URL`, `JAX_EXPEDITEUR_NOM`, `JAX_EXPEDITEUR_TEL`, `JAX_SYNC_MINUTES`.
 2. RUNEX → **Sous-traitance JAX › Paramètres** → « Relire gouvernorats et statuts JAX ».
 3. Vérifier la correspondance **statuts JAX → étapes RUNEX** (proposée d'après le libellé) et la corriger si besoin.
-4. Cocher les **zones confiées automatiquement** (gouvernorats de destination livrés par JAX).
+4. (Facultatif) Cocher les **zones** pour les colis créés avant la mise en service de JAX.
 
 Sans jeton, la page l'indique et rien ne part chez JAX ; le reste de RUNEX fonctionne normalement.
 
 ## Flux d'un colis
 
-1. **Créé dans RUNEX** (portail expéditeur ou exploitation). Si la destination est une **zone JAX**,
-   RUNEX crée aussitôt le colis chez JAX (en arrière-plan) : il est **visible chez JAX dès sa création**
+1. **Créé dans RUNEX** (portail expéditeur ou exploitation) : RUNEX crée **automatiquement** le colis chez
+   JAX, quelle que soit sa destination et **sans confirmation de l'administrateur** (en arrière-plan) :
+   il est **visible chez JAX dès sa création**
    et son code EAN est gardé sur la fiche. Le colis reste « En préparation » dans RUNEX (ramassage, dépôt
    comme d'habitude), mais n'est plus modifiable ni annulable : JAX connaît déjà sa fiche.
    Création chez JAX : expéditeur **RUNEX**, `referenceExterne` = numéro de suivi RUNEX,
    description = contenu, pièces, expéditeur réel, instructions ; enlèvement à l'agence de départ du colis.
-   En cas d'échec (JAX injoignable, référentiel non relu…), l'erreur est inscrite sur le colis, qui reste
-   modifiable ; l'envoi est retenté automatiquement à sa réception en agence.
+   Si le référentiel des gouvernorats JAX n'a pas été relu, il est relu automatiquement au premier envoi.
+   En cas d'échec (JAX injoignable…), l'erreur est inscrite sur le colis, qui reste modifiable ; l'envoi est
+   retenté automatiquement (à chaque relecture périodique, `JAX_SYNC_MINUTES`, et à la réception en agence).
 2. **Reçu dans une agence RUNEX** (Acceptation Magasin ou inter-dépôt) → **« Confié au partenaire JAX »**
    (`SOUS_TRAITE`), sans le recréer chez JAX : plus de tournée, d'inter-dépôt ni de modification RUNEX.
-   Hors zone JAX, le colis peut être confié à la main (onglet « À confier » ou bouton « Confier à JAX »).
+   Les **zones** (Paramètres) ne servent plus qu'aux colis créés avant la mise en service de JAX : à leur
+   réception, ceux d'une zone cochée partent chez JAX ; les autres peuvent être confiés à la main (« À confier »).
    « Reprendre » avant la réception abandonne la fiche JAX (code à annuler chez JAX) ; un colis repris
    n'est pas renvoyé automatiquement.
 3. **Enlèvement** — onglet « Enlèvements » : une demande par agence, avec ses codes EAN (seulement les

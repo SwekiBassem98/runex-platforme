@@ -11,6 +11,7 @@
  *   POST /__control/probleme { ean, texte }         signale un problème
  *   GET  /__control/etat                            colis et enlèvements reçus
  *   POST /__control/reset
+ *   POST /__control/panne    { actif }              JAX en panne (503) ou rétabli
  */
 import http from 'node:http';
 
@@ -36,6 +37,7 @@ const STATUTS = [
 let colis = new Map();
 let enlevements = [];
 let seq = 0;
+let panne = false;
 
 const json = (res, code, corps) => {
   res.writeHead(code, { 'Content-Type': 'application/json' });
@@ -56,7 +58,8 @@ http
     const p = url.pathname.replace(/\/+$/, '') || '/';
     if (p.startsWith('/__control')) {
       const corps = req.method === 'POST' ? await lire(req) : {};
-      if (p === '/__control/reset') { colis = new Map(); enlevements = []; return json(res, 200, { ok: true }); }
+      if (p === '/__control/reset') { colis = new Map(); enlevements = []; panne = false; return json(res, 200, { ok: true }); }
+      if (p === '/__control/panne') { panne = corps?.actif === true; return json(res, 200, { panne }); }
       if (p === '/__control/etat') return json(res, 200, { colis: [...colis.values()], enlevements });
       const c = colis.get(corps?.ean);
       if (!c) return json(res, 404, { message: 'colis inconnu' });
@@ -64,6 +67,7 @@ http
       if (p === '/__control/probleme') { c.problemes.push({ probleme: corps.texte, date: new Date().toISOString() }); return json(res, 200, c); }
       return json(res, 404, {});
     }
+    if (panne) return json(res, 503, { message: 'Service indisponible' });
     if (url.searchParams.get('token') !== TOKEN) return json(res, 401, { message: 'Token invalide' });
 
     if (req.method === 'GET' && p === '/api/gouvernorats') return json(res, 200, { data: GOUVERNORATS });

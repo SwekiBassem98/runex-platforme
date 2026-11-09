@@ -240,7 +240,7 @@ function Confies({ depots, notifier, onChange }: { depots: { id: string; name: s
                     <Link href={`/colis/${l.packageId}`} className="font-mono text-xs font-bold text-red-700 hover:underline">
                       {l.trackingNumber}
                     </Link>
-                    <span className="block text-[11px] text-slate-500">{l.mode === 'AUTO' ? 'auto (zone JAX)' : 'manuel'} · {quand(l.envoyeLe)}</span>
+                    <span className="block text-[11px] text-slate-500">{l.mode === 'AUTO' ? 'automatique' : 'manuel'} · {quand(l.envoyeLe)}</span>
                   </td>
                   <td className="py-2.5 pr-3 font-mono text-xs">{l.codeExterne ?? '—'}</td>
                   <td className="py-2.5 pr-3 text-xs">
@@ -335,7 +335,8 @@ function AConfier({ depots, notifier, onChange, configure }: { depots: { id: str
     <Card>
       <p className="text-xs text-slate-500 mb-3">
         Colis reçus dans une agence Runex, hors tournée et hors inter-dépôt. Une fois confiés, ils sont créés chez JAX (expéditeur RUNEX,
-        référence = numéro Runex) et ne peuvent plus partir en tournée Runex. Les colis des zones JAX partent automatiquement à la réception.
+        référence = numéro Runex) et ne peuvent plus partir en tournée Runex. Les nouveaux colis partent chez JAX automatiquement dès leur
+        création : cette liste sert aux colis créés avant la mise en service de JAX.
       </p>
       <div className="flex flex-wrap items-end gap-2 mb-4">
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="N° de colis" aria-label="N° de colis" className={`${champ} w-44`} />
@@ -679,10 +680,11 @@ function Parametres({ params, recharger, notifier }: { params: ParametresJax | n
         </p>
       </Card>
 
-      <Card title="Zones confiées automatiquement à JAX">
+      <Card title="Colis anciens confiés automatiquement à JAX">
         <p className="text-xs text-slate-500 mb-3">
-          Un colis dont la destination est cochée part chez JAX dès sa réception dans une agence Runex. Les autres restent livrés par Runex,
-          sauf envoi manuel (onglet « À confier »).
+          Tout colis créé (portail expéditeur ou exploitation) part chez JAX automatiquement, sans confirmation. Ces zones ne
+          concernent que les colis créés avant la mise en service de JAX : à leur réception en agence, ceux dont la destination est
+          cochée partent chez JAX ; les autres restent livrés par Runex, sauf envoi manuel (onglet « À confier »).
         </p>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-sm" data-testid="zones-jax">
           {GOUVERNORATS.map((g) => (

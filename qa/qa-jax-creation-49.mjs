@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
- * QA 49 — JAX : un colis créé par l'expéditeur vers une zone JAX apparaît
- * aussitôt chez JAX (retour du client, 09/11 : « l'expéditeur a créé un colis,
- * il n'apparaît pas chez JAX »).
+ * QA 49 — JAX : tout colis créé par l'expéditeur part aussitôt chez JAX, sans
+ * confirmation de l'administrateur ni condition de zone (retours du client,
+ * 09/11 : « il n'apparaît pas chez JAX », puis « l'admin doit cliquer sur
+ * Confier à JAX : cette étape ne doit pas exister »).
  *
  *  1. Création (portail expéditeur, zone JAX) → colis créé chez JAX, code EAN
  *     gardé ; le colis reste « En préparation » dans Runex.
@@ -10,7 +11,8 @@
  *     d'enlèvement demandé ni de relecture avant sa réception en agence.
  *  3. Réception en agence → « Confié au partenaire JAX » sans le recréer chez
  *     JAX ; l'enlèvement peut alors être demandé.
- *  4. Hors zone : rien chez JAX. Échec de création : repris à la réception.
+ *  4. Sans zone cochée et sans référentiel relu : envoyé quand même (référentiel
+ *     relu automatiquement). JAX en panne : échec consigné, repris à la réception.
  *     Reprise avant réception : la fiche JAX est abandonnée.
  *
  * Prérequis : faux serveur JAX (qa/mock-jax-server.mjs, port 4010) et l'API
@@ -59,10 +61,11 @@ const nouveau = async (gov, deleg) => {
 const recevoir = (c) => api(admin, 'POST', '/depot/reception', { code: c.barcode, depositId: hub.id });
 
 console.log('\n0. Paramètres JAX');
-let r = await api(admin, 'POST', '/sous-traitance/jax/referentiels');
-ok(r.status === 200, 'référentiels JAX relus', r.message);
-r = await api(admin, 'PUT', '/sous-traitance/jax/zones', { governorates: ['Sousse', 'Sfax'] });
-ok(r.status === 200, 'zones JAX : Sousse, Sfax');
+let r;
+// Aucune zone cochée, référentiel jamais relu : l'envoi à la création n'en dépend pas.
+r = await api(admin, 'PUT', '/sous-traitance/jax/zones', { governorates: [] });
+ok(r.status === 200, 'aucune zone JAX cochée');
+sql(`DELETE FROM "PartenaireGouvernorat"`);
 
 console.log('\n1. Création par l’expéditeur → visible chez JAX');
 const c = await nouveau('Sousse', 'Hammam Sousse');
@@ -95,20 +98,20 @@ ok((await chezJax()).length === avant, 'pas de second colis créé chez JAX');
 enl = (await api(admin, 'GET', '/sous-traitance/jax/enlevements')).data ?? [];
 ok(enl.some((g) => g.colis.some((x) => x.trackingNumber === c.trackingNumber)), 'enlèvement : le colis est proposé');
 
-console.log('\n4. Hors zone, échec, reprise');
-const horsZone = await nouveau('Nabeul', 'Hammamet');
-await sleep(1500);
-ok(!(await chezJax()).some((x) => x.recu?.referenceExterne === horsZone.trackingNumber) && !(await lire(horsZone.id)).sousTraitance, 'destination hors zone : rien chez JAX');
-// Échec à la création (référentiel JAX absent) → nouvel essai automatique à la réception.
-const refs = sql(`SELECT count(*) FROM "PartenaireGouvernorat"`);
-sql(`DELETE FROM "PartenaireGouvernorat" WHERE nom ILIKE 'Sfax'`);
+console.log('\n4. Toute destination, échec, reprise');
+ok(Number(sql(`SELECT count(*) FROM "PartenaireGouvernorat"`)) >= 24, 'référentiel JAX relu automatiquement au premier envoi');
+const autre = await nouveau('Nabeul', 'Hammamet');
+const recuAutre = await attendre(async () => (await chezJax()).find((x) => x.recu?.referenceExterne === autre.trackingNumber));
+ok(!!recuAutre && (await lire(autre.id)).sousTraitance?.mode === 'AUTO', 'autre destination (Nabeul) : envoyée automatiquement aussi');
+// Échec à la création (JAX en panne) → nouvel essai automatique à la réception.
+await jax('/__control/panne', { actif: true });
 const echoue = await nouveau('Sfax', 'Sakiet Ezzit');
 d = await attendre(async () => { const x = await lire(echoue.id); return x?.sousTraitance?.etat === 'ECHEC_ENVOI' ? x : null; });
-ok(!!d && /Sfax/.test(d.sousTraitance.derniereErreur ?? ''), 'création chez JAX impossible : échec consigné sur le colis', d?.sousTraitance?.derniereErreur);
+ok(!!d && /503|indisponible/i.test(d.sousTraitance.derniereErreur ?? ''), 'JAX en panne : échec consigné sur le colis', d?.sousTraitance?.derniereErreur);
 r = await api(exp, 'PUT', `/colis/${echoue.id}`, { customerPhone: '22222223' });
 ok(r.status === 200, 'échec : le colis reste modifiable par l’expéditeur', `${r.status} ${r.message}`);
-await api(admin, 'POST', '/sous-traitance/jax/referentiels');
-ok(sql(`SELECT count(*) FROM "PartenaireGouvernorat"`) === refs, 'référentiel JAX relu');
+await jax('/__control/panne', { actif: false });
+ok(true, 'JAX rétabli');
 await recevoir(echoue);
 d = await attendre(async () => { const x = await lire(echoue.id); return x?.status === 'SOUS_TRAITE' ? x : null; });
 ok(!!d && /^SFA\d+/.test(d.sousTraitance.codeExterne ?? ''), 'à la réception : nouvel essai réussi, confié à JAX', JSON.stringify(d?.sousTraitance ?? null).slice(0, 120));
@@ -122,7 +125,7 @@ ok(d.status === 'CREE' && d.sousTraitance?.etat === 'ANNULE', 'colis repris : re
 r = await api(exp, 'PUT', `/colis/${repris.id}`, { customerPhone: '22222224' });
 ok(r.status === 200, 'colis repris : de nouveau modifiable', `${r.status} ${r.message}`);
 await recevoir(repris);
-await sleep(1500);
+await sleep(2000);
 ok((await lire(repris.id)).status === 'RECU_DEPOT', 'colis repris : pas renvoyé automatiquement à JAX à sa réception');
 
 console.log('\n5. Écran (fiche du colis, exploitation)');
@@ -138,6 +141,7 @@ await Promise.all([p.waitForNavigation({ waitUntil: 'networkidle2' }), p.keyboar
 await p.goto(`${W}/colis/${c2.id}`, { waitUntil: 'networkidle2' }); await sleep(1500);
 const encart = await p.$eval('[data-testid=jax-avant-reception]', (x) => x.innerText).catch(() => '');
 ok(/Déjà créé chez JAX/.test(encart) && /SOU\d+/.test(encart), 'fiche : « Déjà créé chez JAX (code …) », confié à la réception', encart);
+ok(!(await p.$('[data-testid=confier-jax]')), 'fiche : pas de bouton « Confier à JAX » (aucune confirmation à faire)');
 if (SHOTS) await p.screenshot({ path: `${SHOTS}/49-fiche-jax-avant-reception.png`, fullPage: true });
 await b.close();
 ok(errs.length === 0, 'aucune erreur JavaScript', errs.join(' | '));
