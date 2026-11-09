@@ -56,9 +56,15 @@ const shippers = (await api(admin, 'GET', '/shippers?limit=50')).data;
 const bluestar = shippers.find((s) => s.code === 'EXP-BLUESTAR');
 const lire = async (id) => (await api(admin, 'GET', `/colis/${id}`)).data;
 let n = 0;
+// Depuis le 09/11, tout colis créé part chez JAX à sa création (QA 49). Ce
+// scénario couvre les colis créés AVANT la mise en service de JAX (zones à la
+// réception, envoi manuel) : la fiche JAX de création est donc retirée.
 const nouveau = async (gov, deleg, extra = {}) => {
   n++;
-  return (await api(exp, 'POST', '/colis', { customerName: `Client JAX ${n}`, customerPhone: `9845${String(1000 + n)}`, governorate: gov, delegation: deleg, address: `Rue ${n}`, goodsPrice: 40 + n, ...extra })).data;
+  const c = (await api(exp, 'POST', '/colis', { customerName: `Client JAX ${n}`, customerPhone: `9845${String(1000 + n)}`, governorate: gov, delegation: deleg, address: `Rue ${n}`, goodsPrice: 40 + n, ...extra })).data;
+  await attendre(async () => sql(`SELECT count(*) FROM "SousTraitance" WHERE "packageId" = '${c.id}'`) !== '0' && sql(`SELECT ("codeExterne" IS NOT NULL OR etat = 'ECHEC_ENVOI') FROM "SousTraitance" WHERE "packageId" = '${c.id}'`) === 't');
+  sql(`DELETE FROM "SousTraitance" WHERE "packageId" = '${c.id}'`);
+  return c;
 };
 const recevoir = (c, depositId = hub.id) => api(admin, 'POST', '/depot/reception', { code: c.barcode, depositId });
 
@@ -196,17 +202,17 @@ await api(admin, 'PATCH', '/sous-traitance/jax/statuts/8', { etat: null });
 console.log('\n9. Échec d’envoi');
 const cEchec = await nouveau('Nabeul', 'Kélibia');
 await recevoir(cEchec);
-// Référentiel incomplet : Nabeul n'est plus connu chez JAX.
-sql(`DELETE FROM "PartenaireGouvernorat" WHERE partenaire = 'JAX' AND nom = 'Nabeul'`);
+// JAX en panne (le référentiel incomplet, lui, est relu automatiquement : QA 49).
+await jax('/__control/panne', { actif: true });
 r = await api(admin, 'POST', '/sous-traitance/jax/envoyer', { packageIds: [cEchec.id] });
 const echec = r.data?.[0];
-ok(echec?.ok === false && /Nabeul/.test(echec.message) && /référentiel JAX/.test(echec.message), 'gouvernorat inconnu de JAX : envoi refusé, motif clair', JSON.stringify(echec));
+ok(echec?.ok === false && /503|indisponible/i.test(echec.message), 'JAX indisponible : envoi refusé, motif clair', JSON.stringify(echec));
 d = await lire(cEchec.id);
 ok(d.status === 'RECU_DEPOT' && d.sousTraitance?.etat === 'ECHEC_ENVOI' && d.sousTraitance.derniereErreur, 'échec : colis resté chez Runex, erreur gardée sur la fiche');
 ok(((await api(admin, 'GET', '/sous-traitance/jax/eligibles')).data ?? []).find((x) => x.id === cEchec.id)?.echecPrecedent, 'à confier : échec précédent affiché, nouvel essai possible');
-await api(admin, 'POST', '/sous-traitance/jax/referentiels');
+await jax('/__control/panne', { actif: false });
 r = await api(admin, 'POST', '/sous-traitance/jax/envoyer', { packageIds: [cEchec.id] });
-ok(r.data?.[0]?.ok === true && (await lire(cEchec.id)).status === 'SOUS_TRAITE', 'référentiel relu : nouvel essai réussi');
+ok(r.data?.[0]?.ok === true && (await lire(cEchec.id)).status === 'SOUS_TRAITE', 'JAX rétabli : nouvel essai réussi');
 
 console.log('\n10. Écrans');
 const puppeteer = (await import(process.env.PUPPETEER_CORE)).default;

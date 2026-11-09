@@ -422,7 +422,16 @@ export class SousTraitanceService {
     // 2. Correspondances : gouvernorats JAX de la destination et de l'agence.
     const adresse = colis.customerAddress;
     let agence = colis.currentDeposit!;
-    const [govDest, govPickup] = await Promise.all([this.idGouvernoratJax(adresse.governorate), this.idGouvernoratJax(agence.governorate)]);
+    let [govDest, govPickup] = await Promise.all([this.idGouvernoratJax(adresse.governorate), this.idGouvernoratJax(agence.governorate)]);
+    if (!govDest || !govPickup) {
+      // Référentiel JAX jamais relu ou incomplet : on le relit une fois, sans attendre l'administrateur.
+      try {
+        await this.synchroniserReferentiels({ fullName: 'Envoi automatique à JAX' });
+        [govDest, govPickup] = await Promise.all([this.idGouvernoratJax(adresse.governorate), this.idGouvernoratJax(agence.governorate)]);
+      } catch {
+        /* JAX injoignable : l'échec est consigné ci-dessous */
+      }
+    }
     if (!govDest || !govPickup) {
       const manque = !govDest ? adresse.governorate : agence.governorate;
       return echec(`gouvernorat « ${manque} » introuvable dans le référentiel JAX : relisez les référentiels (Sous-traitance JAX › Paramètres).`);
@@ -516,9 +525,10 @@ export class SousTraitanceService {
   }
 
   /**
-   * Création du colis dans Runex : il est aussitôt créé chez JAX si sa
-   * destination est une zone JAX (l'expéditeur voit le code EAN, JAX le connaît
-   * avant l'enlèvement). Ne lève jamais : un échec est consigné et reprenable.
+   * Création du colis dans Runex : il est aussitôt créé chez JAX, sans
+   * intervention de l'administrateur et quelle que soit sa destination.
+   * Ne lève jamais : un échec est consigné sur le colis et retenté
+   * automatiquement (relecture périodique, puis réception en agence).
    */
   async enregistrerALaCreation(packageId: string): Promise<void> {
     try {
@@ -529,14 +539,26 @@ export class SousTraitanceService {
       });
       if (!c || c.status !== 'CREE') return;
       if (c.sousTraitance?.codeExterne) return; // déjà chez JAX
-      if (c.sousTraitance && c.sousTraitance.etat !== 'ECHEC_ENVOI' && c.sousTraitance.etat !== 'ANNULE') return;
-      const zones = await this.prisma.sousTraitanceZone.findMany({ where: { partenaire: PARTENAIRE } });
-      const cle = cleGouvernorat(c.customerAddress.governorate);
-      if (!zones.some((z) => cleGouvernorat(z.governorate) === cle)) return;
-      await this.envoyerUn(packageId, { fullName: 'Création (zone JAX)' }, 'AUTO');
+      if (c.sousTraitance && c.sousTraitance.etat !== 'ECHEC_ENVOI') return; // repris volontairement (ANNULE) : pas renvoyé
+      await this.envoyerUn(packageId, { fullName: 'Envoi automatique à la création' }, 'AUTO');
     } catch (e) {
       console.warn('[RUNEX API] Création chez JAX impossible :', e instanceof Error ? e.message : String(e));
     }
+  }
+
+  /** Retente les créations chez JAX qui ont échoué (colis pas encore chez JAX). */
+  async retenterEchecs(): Promise<number> {
+    if (!jaxConfig().token) return 0;
+    const rows = await this.prisma.sousTraitance.findMany({
+      where: { partenaire: PARTENAIRE, etat: 'ECHEC_ENVOI', package: { is: { deletedAt: null, status: { in: ['CREE', 'RECU_DEPOT', 'RECU_DEPOT_DESTINATION'] } } } },
+      select: { packageId: true },
+      take: 100,
+    });
+    let reussis = 0;
+    for (const r of rows) {
+      if ((await this.envoyerUn(r.packageId, { fullName: 'Envoi automatique (nouvel essai)' }, 'AUTO')).ok) reussis++;
+    }
+    return reussis;
   }
 
   /**
@@ -553,12 +575,18 @@ export class SousTraitanceService {
       });
       if (!c) return;
       if (c.sousTraitance?.codeExterne && c.sousTraitance.etat === 'EN_ATTENTE_ENLEVEMENT') {
-        await this.confirmerReception(packageId, { fullName: 'Réception en agence (zone JAX)' });
+        await this.confirmerReception(packageId, { fullName: 'Réception en agence' });
         return;
       }
       if (c.status !== 'RECU_DEPOT' && c.status !== 'RECU_DEPOT_DESTINATION') return;
       // Déjà traité, ou repris volontairement (ANNULE) : seul un échec d'envoi est retenté automatiquement.
       if (c.sousTraitance && c.sousTraitance.etat !== 'ECHEC_ENVOI') return;
+      // Création chez JAX échouée : nouvel essai, quelle que soit la destination.
+      if (c.sousTraitance?.etat === 'ECHEC_ENVOI') {
+        await this.envoyerUn(packageId, { fullName: 'Envoi automatique (nouvel essai)' }, 'AUTO');
+        return;
+      }
+      // Colis sans fiche JAX (créé avant la mise en service de JAX) : zones JAX.
       const zones = await this.prisma.sousTraitanceZone.findMany({ where: { partenaire: PARTENAIRE } });
       const cle = cleGouvernorat(c.customerAddress.governorate);
       if (!zones.some((z) => cleGouvernorat(z.governorate) === cle)) return;
@@ -1014,7 +1042,14 @@ export function demarrerSynchronisationJax(): void {
     return;
   }
   const tour = () =>
-    void sousTraitanceService.synchroniser().then(
+    void sousTraitanceService
+      .retenterEchecs()
+      .then(
+        (n) => n && console.log(`[RUNEX API] JAX : ${n} colis créés chez JAX au nouvel essai.`),
+        (e: unknown) => console.warn('[RUNEX API] Nouvel essai JAX impossible :', e instanceof Error ? e.message : String(e))
+      )
+      .then(() => sousTraitanceService.synchroniser())
+      .then(
       (r) => r.changes && console.log(`[RUNEX API] JAX : ${r.relus} colis relus, ${r.changes} mis à jour.`),
       (e: unknown) => console.warn('[RUNEX API] Relecture JAX impossible :', e instanceof Error ? e.message : String(e))
     );

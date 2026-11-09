@@ -35,7 +35,8 @@ export function CarteSousTraitanceColis({
   const enAgence = statut === 'RECU_DEPOT' || statut === 'RECU_DEPOT_DESTINATION';
   // Créé chez JAX dès sa création, le colis passe « Confié à JAX » à sa réception en agence.
   const creeChezJax = !!st && st.etat === 'EN_ATTENTE_ENLEVEMENT' && !!st.codeExterne && (statut === 'CREE' || enAgence);
-  const confiable = ((statut === 'CREE' || enAgence) && !actif) || (enAgence && creeChezJax);
+  // Un colis créé part seul chez JAX : pas de bouton, sauf pour retenter un envoi échoué.
+  const confiable = (enAgence && !actif) || (statut === 'CREE' && st?.etat === 'ECHEC_ENVOI') || (enAgence && creeChezJax);
   if (!st && !confiable) return null;
 
   const agir = async (cle: string, action: () => Promise<{ message?: string }>, titreErreur: string) => {
@@ -93,7 +94,7 @@ export function CarteSousTraitanceColis({
           </div>
           <div>
             <dt className="text-slate-500">Envoi</dt>
-            <dd className="text-slate-800">{st.mode === 'AUTO' ? 'Automatique (zone JAX)' : 'Manuel'}</dd>
+            <dd className="text-slate-800">{st.mode === 'AUTO' ? 'Automatique' : 'Manuel'}</dd>
             <dd className="text-[11px] text-slate-400">{date(st.envoyeLe)} · relu {date(st.derniereSyncLe)}</dd>
           </div>
           {st.etat === 'LIVRE' && (
