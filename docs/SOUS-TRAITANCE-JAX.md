@@ -47,6 +47,16 @@ Sans jeton, la page l'indique et rien ne part chez JAX ; le reste de RUNEX fonct
    attend JAX quelques secondes (`JAX_ATTENTE_CREATION_MS`, défaut 8000) : le bon imprimé juste après porte
    donc le code JAX. Si JAX ne répondait pas, réimprimer le bon une fois le code reçu.
    Le code JAX contient l'identifiant du compte RUNEX chez JAX (ex. `TUN3762…`, compte 3762) : rien à configurer.
+   **Colis restés chez Runex** (onglet « Restés chez Runex ») : colis créés avant la mise en service de JAX,
+   ou dont l'envoi a échoué, ni livrés, ni retournés, ni annulés. « Envoyer les N colis à JAX » les crée tous
+   chez JAX, par lots de 40 :
+   - en agence (reçu, arrivé, reporté hors tournée) → *Confié au partenaire JAX* aussitôt ;
+   - en préparation, en ramassage, en inter-dépôt → créés chez JAX, confiés à leur réception en agence
+     (enlèvement prévu à l'agence d'arrivée pour un inter-dépôt) ;
+   - en tournée (affecté, en cours de livraison, reporté) → retirés de la tournée (le livreur est prévenu et
+     le rapporte au dépôt), puis confiés ; affectés à un livreur hors tournée → remis en stock, puis confiés ;
+   - en échec ou refus de livraison → non concernés (circuit des retours) ; colis repris volontairement → non renvoyés.
+   Un colis refusé (JAX indisponible…) reste dans la liste avec le motif, pour un nouvel essai.
 3. **Enlèvement** — onglet « Enlèvements » : une demande par agence, avec ses codes EAN (seulement les
    colis déjà reçus en agence : JAX ne doit pas venir chercher un colis encore chez l'expéditeur).
 4. **Suivi** — les statuts JAX sont relus automatiquement (`JAX_SYNC_MINUTES`) et à la demande ;

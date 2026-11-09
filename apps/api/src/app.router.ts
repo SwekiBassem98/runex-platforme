@@ -1080,6 +1080,8 @@ export function createApiRouter(): Router {
   st('get', '/sous-traitance/jax/colis', (q, r) => sousTraitanceController.lister(q, r));
   st('get', '/sous-traitance/jax/eligibles', (q, r) => sousTraitanceController.eligibles(q, r));
   st('post', '/sous-traitance/jax/envoyer', (q, r) => sousTraitanceController.envoyer(q, r));
+  st('get', '/sous-traitance/jax/rattrapage', (q, r) => sousTraitanceController.apercuRattrapage(q, r));
+  st('post', '/sous-traitance/jax/rattrapage', (q, r) => sousTraitanceController.rattraper(q, r));
   st('get', '/sous-traitance/jax/enlevements', (q, r) => sousTraitanceController.enlevements(q, r));
   st('post', '/sous-traitance/jax/enlevements', (q, r) => sousTraitanceController.demanderEnlevement(q, r));
   st('post', '/sous-traitance/jax/sync', (q, r) => sousTraitanceController.sync(q, r));

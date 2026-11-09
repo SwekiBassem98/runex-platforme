@@ -46,6 +46,15 @@ export class SousTraitanceController {
     const ok = r.filter((x) => x.ok).length;
     res.json({ success: true, data: r, message: `${ok} colis confié(s) à JAX${r.length - ok ? `, ${r.length - ok} refusé(s)` : ''}.` });
   }
+  /** `GET /sous-traitance/jax/rattrapage` — colis restés chez Runex, à envoyer à JAX. */
+  async apercuRattrapage(_req: AuthenticatedRequest, res: Response) {
+    res.json({ success: true, data: await sousTraitanceService.apercuRattrapage() });
+  }
+  /** `POST /sous-traitance/jax/rattrapage` — `{ exclure?: string[] }` : envoie un lot (40 colis). */
+  async rattraper(req: AuthenticatedRequest, res: Response) {
+    const r = await sousTraitanceService.rattraper(acteur(req), req.body?.exclure);
+    res.json({ success: true, data: r, message: `${r.reussis} colis envoyé(s) à JAX${r.echecs.length ? `, ${r.echecs.length} refusé(s)` : ''}.` });
+  }
   /** `GET /sous-traitance/jax/enlevements` — en attente, par agence. */
   async enlevements(_req: AuthenticatedRequest, res: Response) {
     res.json({ success: true, data: await sousTraitanceService.enlevementsEnAttente() });
