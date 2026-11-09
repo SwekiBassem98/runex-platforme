@@ -15,6 +15,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   BasculeFiches,
+  useFichesSurTelephone,
   Drawer,
   FicheLigne,
   LigneVide,
@@ -189,7 +190,7 @@ export default function InventairePage() {
   const [facets, setFacets] = useState<InventoryFacets | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isExporting, setIsExporting] = useState(false);
-  const [enFiches, setEnFiches] = useState(false);
+  const [enFiches, setEnFiches] = useFichesSurTelephone();
   const [message, setMessage] = useState<{ kind: 'info' | 'erreur'; texte: string } | null>(null);
 
   // ---- Exceptions state ----

@@ -672,6 +672,7 @@ export const fr = {
   'tdb.etape.collecte': 'Collectés',
   'tdb.etape.depot': 'En agence',
   'tdb.etape.livraison': 'En livraison',
+  'tdb.etape.reporte': 'Reportés',
   'tdb.etape.livre': 'Livrés',
   'tdb.etape.retour': 'Retours',
   'tdb.activite.titre': 'Activité',

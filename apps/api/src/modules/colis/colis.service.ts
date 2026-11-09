@@ -373,7 +373,11 @@ export class ColisService {
       // doit ne rien retourner, pas casser la page. Le faux identifiant est
       // un UUID valide : `id` est une colonne UUID, et une chaîne libre y
       // provoquerait à son tour l'erreur qu'on cherche ici à éviter.
-      if (isPackageStatus(params.status)) {
+      // Plusieurs statuts séparés par des virgules (étapes du tableau de bord).
+      const liste = params.status.split(',').map((x) => x.trim()).filter(Boolean);
+      if (liste.length > 1 && liste.every((x) => isPackageStatus(x))) {
+        and.push({ status: { in: liste as unknown as PrismaPackageStatus[] } });
+      } else if (isPackageStatus(params.status)) {
         and.push({ status: params.status as unknown as PrismaPackageStatus });
       } else {
         and.push({ id: '00000000-0000-0000-0000-000000000000' });

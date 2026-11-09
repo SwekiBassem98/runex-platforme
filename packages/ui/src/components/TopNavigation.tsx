@@ -125,7 +125,7 @@ export function TopNavigation({
           onClick={() => setShowDepositMenu(!showDepositMenu)}
           aria-expanded={showDepositMenu}
           aria-haspopup="true"
-          className="flex items-center gap-2 px-2 sm:px-3 py-1.5 rounded-md hover:bg-slate-100 border border-slate-200 text-xs font-semibold text-slate-800 transition cursor-pointer max-w-[45vw] sm:max-w-none"
+          className="flex items-center gap-2 px-2 sm:px-3 py-1.5 rounded-md hover:bg-slate-100 border border-slate-200 text-xs font-semibold text-slate-800 transition cursor-pointer max-w-[26vw] sm:max-w-none"
         >
           <Building2 className="w-3.5 h-3.5 text-red-600 shrink-0" aria-hidden="true" />
           <span className="truncate">{activeDeposit.name}</span>
@@ -249,7 +249,8 @@ export function TopNavigation({
       </div>
 
       {/* Actions à droite */}
-      <div className="flex items-center gap-3">
+      {/* Sur téléphone, tout tient sur une ligne : écarts réduits, rien ne déborde. */}
+      <div className="flex items-center gap-0.5 sm:gap-3 shrink-0">
         {actionsSupplementaires}
         {/* Notifications */}
         <div className="relative">
@@ -350,7 +351,7 @@ export function TopNavigation({
         </div>
 
         {/* Profil / Rôle */}
-        <div className="flex items-center gap-2 ps-2 border-s border-slate-200 text-xs">
+        <div className="flex items-center gap-2 ps-1 sm:ps-2 border-s border-slate-200 text-xs">
           <div className="text-end hidden sm:block min-w-0">
             <span className="font-semibold text-slate-900 block leading-tight">{userName}</span>
             <span className="text-[11px] font-mono text-slate-500 uppercase">{userRole}</span>

@@ -167,7 +167,7 @@ export interface TableauDeBordExpediteur {
   periodDays: number;
   totals: { all: number; active: number; delivered: number; returned: number; cancelled: number };
   byStatus: Record<string, number>;
-  pipeline: Record<'preparation' | 'collecte' | 'depot' | 'livraison' | 'livre' | 'retour', number>;
+  pipeline: Record<'preparation' | 'collecte' | 'depot' | 'livraison' | 'reporte' | 'livre' | 'retour', number>;
   period: {
     created: number;
     delivered: number;

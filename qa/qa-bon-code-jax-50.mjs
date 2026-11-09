@@ -37,7 +37,7 @@ const creer = async (nom, extra = {}) =>
   (await api(exp, 'POST', '/colis', { customerName: `${nom} ${sfx}`, customerPhone: `9850${sfx}`, governorate: 'Tunis', delegation: 'La Marsa', address: 'Rue 50', goodsPrice: 30, ...extra })).data;
 
 console.log('\n1. API');
-const c = await creer('Q50 JAX', { pieceCount: 2 });
+const c = await creer('Q50 Bon', { pieceCount: 2 });
 let bon = (await api(exp, 'GET', `/colis/${c.id}/bon-livraison`)).data;
 const ean = (await jax('/__control/etat')).colis.find((x) => x.recu?.referenceExterne === c.trackingNumber)?.ean;
 ok(!!ean, 'colis créé chez JAX dès la création', String(ean));
@@ -80,7 +80,11 @@ if (pop) {
     const bloc = s.querySelector('[data-champ=code-partenaire]');
     const r = bloc?.getBoundingClientRect();
     const page = s.querySelector('.bon')?.getBoundingClientRect();
+    const runexBarres = s.querySelector('.code svg')?.getBoundingClientRect();
+    const qr = s.querySelector('.qr')?.getBoundingClientRect();
     return {
+      enHaut: !!r && !!runexBarres && !!qr && r.bottom <= qr.top && r.bottom <= runexBarres.top,
+      motJax: /JAX/i.test(s.innerText),
       runex: s.dataset.code,
       jax: bloc?.dataset.code,
       texte: bloc?.innerText.replace(/\s+/g, ' ').trim(),
@@ -89,10 +93,12 @@ if (pop) {
     };
   }));
   ok(info.length === 2, 'une page par pièce (2)');
-  ok(info.every((x) => x.jax === ean && /CODE JAX/.test(x.texte ?? '') && x.texte.includes(ean)), 'chaque page : bloc « CODE JAX » avec le code JAX', JSON.stringify(info[0]));
+  ok(info.every((x) => x.jax === ean && x.texte === ean), 'chaque page : code JAX imprimé (code seul, sans libellé)', JSON.stringify(info[0]));
+  ok(info.every((x) => x.enHaut), 'code JAX en premier, tout en haut, avant le QR et le code-barres Runex');
+  ok(info.every((x) => !x.motJax), 'aucune mention « JAX » sur le bon');
   ok(info.every((x) => x.barres > 20), 'code JAX en code-barres (scannable)');
   ok(info.every((x) => x.runex && x.runex !== ean), 'code Runex de la pièce toujours imprimé, distinct du code JAX');
-  ok(info.every((x) => x.dedans), 'bloc JAX dans le cadre du bon (pas coupé)');
+  ok(info.every((x) => x.dedans), 'code JAX dans le cadre du bon (pas coupé)');
   if (SHOTS) {
     await pop.screenshot({ path: `${SHOTS}/50-bon-code-jax.png` });
     await pop.emulateMediaType('print');

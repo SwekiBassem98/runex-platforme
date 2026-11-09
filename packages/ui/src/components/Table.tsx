@@ -322,6 +322,19 @@ export function FicheLigne({
 }
 
 /**
+ * État « fiches » d'une liste : vrai par défaut sur téléphone (< 640 px), où
+ * un tableau de huit colonnes n'est plus lisible ; l'utilisateur peut toujours
+ * repasser au tableau avec la bascule.
+ */
+export function useFichesSurTelephone(): [boolean, React.Dispatch<React.SetStateAction<boolean>>] {
+  const [enFiches, setEnFiches] = React.useState(false);
+  React.useEffect(() => {
+    if (typeof window !== 'undefined' && window.matchMedia?.('(max-width: 639px)').matches) setEnFiches(true);
+  }, []);
+  return [enFiches, setEnFiches];
+}
+
+/**
  * Bascule tableau / fiches.
  *
  * Réservée aux écrans étroits. Le bouton reste visible quand les fiches sont

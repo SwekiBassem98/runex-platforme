@@ -27,6 +27,7 @@ import {
   EmptyState,
   FicheLigne,
   BasculeFiches,
+  useFichesSurTelephone,
   FormField,
   Modal,
   PageHeader,
@@ -123,7 +124,7 @@ export default function AdminLivreursPage() {
   const [page, setPage] = useState(1);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState<string | null>(null);
-  const [enFiches, setEnFiches] = useState(false);
+  const [enFiches, setEnFiches] = useFichesSurTelephone();
   const [message, setMessage] = useState<string | null>(null);
   const peutSupprimer = usePeutSupprimer();
   const [aSupprimer, setASupprimer] = useState<DriverDto | null>(null);

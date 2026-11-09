@@ -60,6 +60,7 @@ import {
   Td,
   FicheLigne,
   BasculeFiches,
+  useFichesSurTelephone,
   Pagination,
   ErrorState,
   ChargementEnCours,
@@ -221,7 +222,7 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
   // Sous 640 px, le tableau cède la place à des fiches. La bascule reste
   // offered à l'utilisateur au-dessus de cette largeur : la réponse dépend de ce
   // qu'il cherche — une ligne à comparer à une autre, ou dix lignes à parcourir.
-  const [enFiches, setEnFiches] = useState(false);
+  const [enFiches, setEnFiches] = useFichesSurTelephone();
 
   // Modales d'actions opérationnelles
   const [showAssignModal, setShowAssignModal] = useState(false);
@@ -1375,15 +1376,16 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
           </button>
 
           {/* 1. HEADER DU COLIS AVEC QUICK ACTIONS */}
-          <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
+          <div className="bg-white p-4 sm:p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-lg bg-red-600 flex items-center justify-center font-bold text-white shadow-xs">
-                  <Package className="w-6 h-6" />
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg bg-red-600 flex items-center justify-center font-bold text-white shadow-xs shrink-0">
+                  <Package className="w-5 h-5 sm:w-6 sm:h-6" />
                 </div>
-                <div>
-                  <div className="flex items-center gap-2.5">
-                    <h1 className="text-2xl font-bold font-mono text-slate-900 tracking-tight">
+                <div className="min-w-0">
+                  {/* Sur téléphone, numéro, type et statut passent à la ligne au lieu de déborder. */}
+                  <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                    <h1 className="text-xl sm:text-2xl font-bold font-mono text-slate-900 tracking-tight break-all">
                       #{colis.trackingNumber}
                     </h1>
                     <Badge variant={colis.packageType === 'EXCHANGE' ? 'warning' : 'default'}>
@@ -1403,14 +1405,14 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
                       label={packageStatusLabel(colis.status)}
                     />
                   </div>
-                  <p className="text-xs text-slate-500 mt-1 font-mono">
+                  <p className="text-xs text-slate-500 mt-1 font-mono break-words">
                     Code-barres : {colis.barcode} • Créé le {new Date(colis.createdAt).toLocaleString('fr-TN')}
                   </p>
                 </div>
               </div>
 
               {/* Montant CRBT en grand */}
-              <div className="text-right">
+              <div className="text-start sm:text-right">
                 <span className="text-[11px] uppercase tracking-wider text-slate-500 block font-semibold">
                   Montant à Recouvrer (CRBT)
                 </span>

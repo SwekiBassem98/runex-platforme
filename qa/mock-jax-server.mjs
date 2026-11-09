@@ -32,6 +32,10 @@ const STATUTS = [
   { id: 6, libelle: 'Retour expéditeur' },
   { id: 7, libelle: 'Annulé' },
   { id: 8, libelle: 'Reporté' },
+  // Libellés de l'application JAX (liste du client, 10/11).
+  { id: 9, libelle: "reçu à l'entrepôt" },
+  { id: 10, libelle: 'en cours de préparation au transfert à une autre agence' },
+  { id: 11, libelle: "en cours de préparation au retour vers l'expéditeur" },
 ];
 
 let colis = new Map();

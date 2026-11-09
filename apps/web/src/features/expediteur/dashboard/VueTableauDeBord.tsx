@@ -62,11 +62,19 @@ import { useI18n, type Cle } from '@/i18n';
 type CleEtape = keyof TableauDeBordExpediteur['pipeline'];
 
 /** Étapes du parcours : icône, couleur, et liste filtrée qu'ouvre un clic. */
+// Chaque étape mène à la liste filtrée sur TOUS ses statuts (mêmes groupes que l'API).
 const ETAPES: { cle: CleEtape; icone: LucideIcon; couleur: string; trait: string; href: string }[] = [
-  { cle: 'preparation', icone: PackagePlus, couleur: '#64748b', trait: 'bg-slate-500', href: '/expediteur/colis?statut=CREE' },
+  { cle: 'preparation', icone: PackagePlus, couleur: '#64748b', trait: 'bg-slate-500', href: '/expediteur/colis?statut=CREE,RAMASSAGE_PROGRAMME' },
   { cle: 'collecte', icone: Truck, couleur: '#0ea5e9', trait: 'bg-sky-500', href: '/expediteur/colis?statut=RAMASSE' },
-  { cle: 'depot', icone: Warehouse, couleur: '#8b5cf6', trait: 'bg-violet-500', href: '/expediteur/colis?statut=RECU_DEPOT' },
-  { cle: 'livraison', icone: Clock3, couleur: '#f59e0b', trait: 'bg-amber-500', href: '/expediteur/colis?statut=EN_COURS_LIVRAISON' },
+  {
+    cle: 'depot',
+    icone: Warehouse,
+    couleur: '#8b5cf6',
+    trait: 'bg-violet-500',
+    href: '/expediteur/colis?statut=RECU_DEPOT,EN_LOT_INTER_DEPOT,EN_TRANSIT_INTER_DEPOT,RECU_DEPOT_DESTINATION,SOUS_TRAITE',
+  },
+  { cle: 'livraison', icone: Clock3, couleur: '#f59e0b', trait: 'bg-amber-500', href: '/expediteur/colis?statut=AFFECTE_RUNSHEET,EN_COURS_LIVRAISON' },
+  { cle: 'reporte', icone: CalendarClock, couleur: '#f97316', trait: 'bg-orange-500', href: '/expediteur/colis?vue=reportes' },
   { cle: 'livre', icone: CheckCircle2, couleur: '#10b981', trait: 'bg-emerald-500', href: '/expediteur/colis?vue=livres' },
   { cle: 'retour', icone: Undo2, couleur: '#ef4444', trait: 'bg-red-500', href: '/expediteur/retours' },
 ];
@@ -724,7 +732,7 @@ function Parcours({ donnees }: { donnees: TableauDeBordExpediteur | null }) {
         </h2>
         <p className="text-[11px] text-slate-500">{t('tdb.parcours.aide')}</p>
       </div>
-      <ol className="relative grid grid-cols-3 md:grid-cols-6 gap-2 sm:gap-3">
+      <ol className="relative grid grid-cols-4 md:grid-cols-7 gap-2 sm:gap-3">
         {/* Fil qui relie les étapes (écrans larges) */}
         <div aria-hidden="true" className="hidden md:block absolute top-6 inset-x-[8%] h-0.5 bg-gradient-to-r from-slate-200 via-amber-200 to-emerald-200" />
         {ETAPES.map((e, i) => {

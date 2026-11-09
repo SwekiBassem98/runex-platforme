@@ -42,7 +42,7 @@ import {
   ShieldCheck,
   Truck,
   User,
-  XCircle, Handshake } from 'lucide-react';
+  XCircle } from 'lucide-react';
 import {
   PackageStatus,
   canShipperCancelOrDelete,
@@ -82,6 +82,9 @@ interface EntreeAudit {
   userRole?: string | null;
   timestamp: string;
 }
+
+/** Mention du partenaire de livraison (JAX) : masquée à l'expéditeur. */
+const PARTENAIRE = /\bJAX\b|partenaire de livraison/i;
 
 export function VueColisDetail({ identifiant }: { identifiant: string }) {
   const router = useRouter();
@@ -137,7 +140,8 @@ export function VueColisDetail({ identifiant }: { identifiant: string }) {
       // Le journal est secondaire : son absence ne doit pas masquer la fiche.
       try {
         const entrees = (await lireAuditColis(identifiant)) as unknown as EntreeAudit[];
-        setAudit(Array.isArray(entrees) ? entrees : []);
+        // Opérations du partenaire de livraison : internes à Runex, pas pour l'expéditeur.
+        setAudit(Array.isArray(entrees) ? entrees.filter((e) => !String(e.action).startsWith('JAX_') && !PARTENAIRE.test(`${e.reason ?? ''} ${e.actionLabel ?? ''} ${e.userName ?? ''}`)) : []);
       } catch {
         setAudit([]);
       }
@@ -400,38 +404,7 @@ export function VueColisDetail({ identifiant }: { identifiant: string }) {
             )}
           </Card>
 
-          {/* Livraison assurée par le partenaire JAX */}
-          {colis.sousTraitance && !['ECHEC_ENVOI', 'ANNULE'].includes(colis.sousTraitance.etat) && (
-            <section className="rounded-lg border border-violet-200 bg-violet-50/50 p-4 space-y-2" data-testid="expediteur-jax">
-              <h2 className="flex items-center gap-2 text-sm font-bold text-slate-900">
-                <Handshake className="w-4 h-4 text-violet-700" aria-hidden="true" />
-                {t('colis.detail.jax.titre')}
-              </h2>
-              <p className="text-xs text-slate-600">{t('colis.detail.jax.aide')}</p>
-              <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1.5 text-xs">
-                <div>
-                  <dt className="text-slate-500">{t('colis.detail.jax.etape')}</dt>
-                  <dd className="font-semibold text-slate-900">{t(`jax.etat.${colis.sousTraitance.etat}` as Cle)}</dd>
-                </div>
-                <div>
-                  <dt className="text-slate-500">{t('colis.detail.jax.statut')}</dt>
-                  <dd className="font-semibold text-slate-900">{colis.sousTraitance.statutExterne ?? '—'}</dd>
-                  {colis.sousTraitance.statutExterneLe && (
-                    <dd className="text-[11px] text-slate-400">{formatDateTime(colis.sousTraitance.statutExterneLe)}</dd>
-                  )}
-                </div>
-                <div>
-                  <dt className="text-slate-500">{t('colis.detail.jax.code')}</dt>
-                  <dd className="font-mono font-bold text-slate-900" dir="ltr">{colis.sousTraitance.codeExterne ?? '—'}</dd>
-                </div>
-              </dl>
-              {colis.sousTraitance.problemes && (
-                <p className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
-                  {t('colis.detail.jax.probleme')} {colis.sousTraitance.problemes}
-                </p>
-              )}
-            </section>
-          )}
+          {/* Partenaire de livraison : jamais montré à l'expéditeur (demande du client, 10/11). */}
 
           {/* Chronologie */}
           <Card
@@ -456,24 +429,24 @@ export function VueColisDetail({ identifiant }: { identifiant: string }) {
                       aria-hidden="true"
                     />
                     <p className="text-xs font-semibold text-slate-900">
-                      {evenement.label ? traduireServeur(evenement.label) : voc.statutColis(evenement.status ?? '').label}
+                      {evenement.label && !PARTENAIRE.test(evenement.label) ? traduireServeur(evenement.label) : voc.statutColis(evenement.status ?? '').label}
                     </p>
                     <p className="text-[11px] text-slate-500">
                       {formatDateTime(evenement.timestamp)}
                     </p>
-                    {(evenement.location || evenement.actor) && (
+                    {((evenement.location && !PARTENAIRE.test(evenement.location)) || (evenement.actor && !PARTENAIRE.test(evenement.actor))) && (
                       <p className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1">
-                        {evenement.location && (
+                        {evenement.location && !PARTENAIRE.test(evenement.location) && (
                           <>
                             <MapPin className="w-3 h-3" aria-hidden="true" />
                             {evenement.location}
                           </>
                         )}
-                        {evenement.location && evenement.actor && ' · '}
-                        {evenement.actor && t('echanges.par', { nom: evenement.actor })}
+                        {evenement.location && !PARTENAIRE.test(evenement.location) && evenement.actor && !PARTENAIRE.test(evenement.actor) && ' · '}
+                        {evenement.actor && !PARTENAIRE.test(evenement.actor) && t('echanges.par', { nom: evenement.actor })}
                       </p>
                     )}
-                    {evenement.notes && (
+                    {evenement.notes && !PARTENAIRE.test(evenement.notes) && (
                       <p className="text-[11px] text-slate-600 mt-1 italic">{traduireServeur(evenement.notes)}</p>
                     )}
                   </li>

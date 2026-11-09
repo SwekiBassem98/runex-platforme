@@ -22,6 +22,7 @@ import { PackageStatus, PackageType, type PackageDto } from '@logixpress/types';
 import {
   Badge,
   BasculeFiches,
+  useFichesSurTelephone,
   ChargementEnCours,
   EmptyState,
   ErrorBanner,
@@ -45,7 +46,6 @@ import {
 } from '@logixpress/ui';
 import { listerColis, lireBonsLivraison, type FiltresColis } from '@/features/expediteur/lib/client';
 import { imprimerBonsLivraison } from '@/features/colis/bonLivraison';
-import { PastilleJax } from '@/features/sous-traitance/EtatJax';
 import { GOUVERNORATS, VARIANTE_TYPE, useVocabulaire } from '@/features/expediteur/lib/libelles';
 import { useI18n, type Cle } from '@/i18n';
 import {
@@ -133,7 +133,7 @@ export function VueColis() {
   const [page, setPage] = React.useState(1);
   const [taille, setTaille] = React.useState(20);
   const [tri, setTri] = React.useState<'recent' | 'ancien' | 'montant'>('recent');
-  const [enFiches, setEnFiches] = React.useState(false);
+  const [enFiches, setEnFiches] = useFichesSurTelephone();
 
   const [colis, setColis] = React.useState<PackageDto[]>([]);
   const [total, setTotal] = React.useState(0);
@@ -489,6 +489,10 @@ export function VueColis() {
           }}
           options={[
             { value: 'ALL', label: t('filtre.tousStatuts') },
+            // Étape du tableau de bord (plusieurs statuts) : proposée telle quelle.
+            ...(statut.includes(',')
+              ? [{ value: statut, label: [...new Set(statut.split(',').map((x) => voc.statutColis(x).label))].join(' · ') }]
+              : []),
             { value: PackageStatus.CREE, label: voc.statutColis(PackageStatus.CREE).label },
             { value: PackageStatus.RAMASSAGE_PROGRAMME, label: voc.statutColis(PackageStatus.RAMASSAGE_PROGRAMME).label },
             { value: PackageStatus.RAMASSE, label: voc.statutColis(PackageStatus.RAMASSE).label },
@@ -798,9 +802,6 @@ export function VueColis() {
                       <Td figee>
                         <span className="font-mono text-xs font-bold text-red-600 flex items-center gap-1.5" dir="ltr">
                           {c.trackingNumber}
-                          {c.sousTraitance && !['ECHEC_ENVOI', 'ANNULE'].includes(c.sousTraitance.etat) && (
-                            <PastilleJax titre={t('colis.liste.jax')} />
-                          )}
                         </span>
                         <span className="font-mono text-[10px] text-slate-500" dir="ltr">
                           {c.barcode}

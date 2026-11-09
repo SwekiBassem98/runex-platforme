@@ -20,9 +20,11 @@ const TZ = 'Africa/Tunis';
 export const ETAPES_PARCOURS = {
   preparation: ['CREE', 'RAMASSAGE_PROGRAMME'],
   collecte: ['RAMASSE'],
-  depot: ['RECU_DEPOT', 'EN_LOT_INTER_DEPOT', 'EN_TRANSIT_INTER_DEPOT', 'RECU_DEPOT_DESTINATION'],
-  // SOUS_TRAITE : livré par le partenaire JAX.
-  livraison: ['AFFECTE_RUNSHEET', 'EN_COURS_LIVRAISON', 'REPORTE', 'SOUS_TRAITE'],
+  // SOUS_TRAITE : en agence, remis au partenaire de livraison (l'expéditeur le voit « Reçu au dépôt »).
+  depot: ['RECU_DEPOT', 'EN_LOT_INTER_DEPOT', 'EN_TRANSIT_INTER_DEPOT', 'RECU_DEPOT_DESTINATION', 'SOUS_TRAITE'],
+  livraison: ['AFFECTE_RUNSHEET', 'EN_COURS_LIVRAISON'],
+  // Reportés : étape à part (le client veut les voir au tableau de bord).
+  reporte: ['REPORTE'],
   livre: ['LIVRE', 'LIVRAISON_PARTIELLE'],
   retour: ['ECHEC_LIVRAISON', 'RETOUR_DEPOT', 'EN_RUNSHEET_RETOUR', 'RETOURNE_EXPEDITEUR'],
 } as const;

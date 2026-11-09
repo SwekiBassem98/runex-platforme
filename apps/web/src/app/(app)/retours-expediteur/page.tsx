@@ -141,7 +141,7 @@ export default function RetoursExpediteurPage() {
 
   const enAttente = useMemo(() => aRendre.reduce((s, a) => s + a.colis + a.echanges, 0), [aRendre]);
   const filtresActifs = Object.values(filtres).some(Boolean);
-  const champ = 'w-full border border-slate-200 rounded-md px-2.5 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-red-500/30';
+  const champ = 'w-full min-w-0 border border-slate-200 rounded-md px-2.5 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-red-500/30';
 
   return (
     <div className="space-y-6">
@@ -247,7 +247,7 @@ export default function RetoursExpediteurPage() {
                   </option>
                 ))}
               </select>
-              <label className="flex items-center gap-1.5 text-xs text-slate-500">
+              <label className="flex items-center gap-1.5 text-xs text-slate-500 min-w-0 col-span-2 md:col-span-1">
                 Du
                 <input
                   type="date"
@@ -256,7 +256,7 @@ export default function RetoursExpediteurPage() {
                   className={champ}
                 />
               </label>
-              <label className="flex items-center gap-1.5 text-xs text-slate-500">
+              <label className="flex items-center gap-1.5 text-xs text-slate-500 min-w-0 col-span-2 md:col-span-1">
                 Au
                 <input
                   type="date"
