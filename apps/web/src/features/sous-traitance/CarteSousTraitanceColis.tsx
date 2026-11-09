@@ -32,7 +32,10 @@ export function CarteSousTraitanceColis({
   const [occupe, setOccupe] = React.useState<string | null>(null);
   const st = sousTraitance ?? null;
   const actif = st && !['ANNULE', 'ECHEC_ENVOI', 'RETOURNE'].includes(st.etat);
-  const confiable = (statut === 'RECU_DEPOT' || statut === 'RECU_DEPOT_DESTINATION') && !actif;
+  const enAgence = statut === 'RECU_DEPOT' || statut === 'RECU_DEPOT_DESTINATION';
+  // Créé chez JAX dès sa création, le colis passe « Confié à JAX » à sa réception en agence.
+  const creeChezJax = !!st && st.etat === 'EN_ATTENTE_ENLEVEMENT' && !!st.codeExterne && (statut === 'CREE' || enAgence);
+  const confiable = ((statut === 'CREE' || enAgence) && !actif) || (enAgence && creeChezJax);
   if (!st && !confiable) return null;
 
   const agir = async (cle: string, action: () => Promise<{ message?: string }>, titreErreur: string) => {
@@ -105,6 +108,11 @@ export function CarteSousTraitanceColis({
         </dl>
       )}
 
+      {creeChezJax && statut === 'CREE' && (
+        <p className="text-xs text-violet-900 bg-violet-50 border border-violet-200 rounded-md px-3 py-2" data-testid="jax-avant-reception">
+          Déjà créé chez JAX (code {st?.codeExterne}). Il passera « Confié au partenaire JAX » à sa réception dans une agence Runex ; l’enlèvement se demande ensuite.
+        </p>
+      )}
       {st?.problemes && (
         <p className="flex items-start gap-2 text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
           <AlertTriangle className="w-4 h-4 shrink-0" aria-hidden="true" /> Problème signalé par JAX : {st.problemes}
@@ -134,7 +142,7 @@ export function CarteSousTraitanceColis({
             <RefreshCw className={`w-3.5 h-3.5 ${occupe === 'sync' ? 'animate-spin' : ''}`} aria-hidden="true" /> Relire le statut JAX
           </button>
         )}
-        {st && (st.etat === 'EN_ATTENTE_ENLEVEMENT' || st.etat === 'ENLEVEMENT_DEMANDE') && statut === 'SOUS_TRAITE' && (
+        {st && (st.etat === 'EN_ATTENTE_ENLEVEMENT' || st.etat === 'ENLEVEMENT_DEMANDE') && (statut === 'SOUS_TRAITE' || statut === 'CREE') && (
           <button
             type="button"
             disabled={!!occupe}
