@@ -254,6 +254,9 @@ function assertDriverOwnsPackage(pkg: { assignedDriverId: string | null }, user:
 /** Statuts où le tarif d'un colis ne bouge plus. */
 const STATUTS_TARIF_FIGE = ['LIVRE', 'LIVRAISON_PARTIELLE', 'RETOURNE_EXPEDITEUR', 'ANNULE', 'EN_RUNSHEET_RETOUR'];
 
+/** Attente maximale de JAX à la création d'un colis (le code JAX figure alors sur le bon). */
+const ATTENTE_JAX_MS = Number(process.env.JAX_ATTENTE_CREATION_MS ?? 8000);
+
 /** Frais de livraison ajoutés au prix d'un colis quand l'expéditeur n'a pas de tarif propre. */
 export const DEFAULT_DELIVERY_FEE = 8;
 
@@ -514,6 +517,7 @@ export class ColisService {
         items: { orderBy: { createdAt: 'asc' } },
         originDeposit: { include: { company: true } },
         destinationDeposit: true,
+        sousTraitance: { select: { codeExterne: true, etat: true, partenaire: true } },
       },
     });
 
@@ -580,6 +584,11 @@ export class ColisService {
         lines,
         total,
         carrier: { name: company.legalName, taxRegistration: company.taxRegistration ?? undefined },
+        // Code JAX : imprimé pour que le livreur JAX puisse scanner et réceptionner le colis.
+        partnerCode:
+          r.sousTraitance?.codeExterne && !['ANNULE', 'ECHEC_ENVOI'].includes(String(r.sousTraitance.etat))
+            ? { partner: 'JAX' as const, code: r.sousTraitance.codeExterne }
+            : null,
       };
     });
   }
@@ -936,9 +945,11 @@ export class ColisService {
       actorUserId: user?.id ?? null,
     });
 
-    // Destination livrée par JAX : le colis est créé aussitôt chez JAX (en
-    // arrière-plan — la réponse à l'expéditeur n'attend pas le partenaire).
-    void import('../sous-traitance/sous-traitance.service').then((m) => m.sousTraitanceService.enregistrerALaCreation(record.id));
+    // Le colis est créé aussitôt chez JAX. La réponse attend JAX quelques
+    // secondes au plus : le bon de livraison imprimé juste après porte alors
+    // le code JAX. Au-delà, l'envoi se poursuit en arrière-plan.
+    const envoiJax = import('../sous-traitance/sous-traitance.service').then((m) => m.sousTraitanceService.enregistrerALaCreation(record.id));
+    await Promise.race([envoiJax, new Promise((r) => setTimeout(r, ATTENTE_JAX_MS))]);
 
     return toPackageDto(record);
   }

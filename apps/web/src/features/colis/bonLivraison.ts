@@ -15,9 +15,13 @@
  *  │ => gouvernorat/délégation ─────────────────────────────────┘  │
  *  │ Désignation             Qté  PU HT  TVA  MT TVA  MT TTC       │
  *  │                               PRIX TOTAL :        43.000 DT   │
- *  │ Transporteur : … MF : …   ║║║║║║║║║  ☑ FRAGILE                │
- *  │                                     ☑ Autorisation d'ouverture│
+ *  │ Transporteur : … MF : …   ║║║║║║║║║    ┌ CODE JAX ───────┐    │
+ *  │                           ☑ FRAGILE    │ ║║║║║║║║║║║║║║ │    │
+ *  │                           ☑ Ouverture  └ TUN3762…  ──────┘    │
  *  └───────────────────────────────────────────────────────────────┘
+ *
+ * Colis confié à JAX : son code JAX est imprimé en second code-barres, pour que
+ * le livreur JAX le scanne à l'enlèvement (le code Runex reste celui de Runex).
  *
  * Une page par pièce : la pièce i sur N porte « (i/N) » et son propre code
  * (celui scanné à l'acceptation inter-dépôt), en QR et en code-barres.
@@ -127,6 +131,10 @@ function styles(): string {
   .code { text-align: center; }
   .code svg { display: block; margin: 0 auto; }
   .code .txt { font-family: "DejaVu Sans Mono", Menlo, Consolas, monospace; font-size: 8.5pt; letter-spacing: 1px; margin-top: .5mm; }
+  .partenaire { border: 1.2px solid #000; padding: 1.5mm 2mm; text-align: center; justify-self: end; max-width: 100%; }
+  .partenaire .titre { font-weight: 700; font-size: 9pt; letter-spacing: .5px; }
+  .partenaire svg { display: block; margin: 1mm auto 0; max-width: 100%; }
+  .partenaire .txt { font-family: "DejaVu Sans Mono", Menlo, Consolas, monospace; font-size: 10pt; font-weight: 700; letter-spacing: 1px; margin-top: .5mm; }
   .cases { margin-top: 1.5mm; display: flex; flex-direction: column; gap: 1mm; align-items: flex-start; }
   .case { display: flex; align-items: center; gap: 1.5mm; font-size: 9pt; font-weight: 600; }
   [dir="auto"] { unicode-bidi: plaintext; }
@@ -221,7 +229,15 @@ function pageBon(bon: BonLivraisonDto, pieceIndex: number, opts: OptionsBonLivra
           <span class="case" data-champ="ouverture" data-coche="${bon.allowOpen}">${bon.allowOpen ? CASE_COCHEE : CASE_VIDE} Autorisation d’ouverture</span>
         </div>
       </div>
-      <div></div>
+      ${
+        bon.partnerCode
+          ? `<div class="partenaire" data-champ="code-partenaire" data-code="${esc(bon.partnerCode.code)}">
+        <div class="titre">CODE ${esc(bon.partnerCode.partner)}</div>
+        ${code128Svg(bon.partnerCode.code, { height: 44, moduleWidth: 1.1 })}
+        <div class="txt">${esc(bon.partnerCode.code)}</div>
+      </div>`
+          : '<div></div>'
+      }
     </div>
   </div>
 </section>`;

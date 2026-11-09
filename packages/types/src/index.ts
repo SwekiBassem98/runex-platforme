@@ -1087,6 +1087,13 @@ export interface BonLivraisonDto {
     name: string;
     taxRegistration?: string;
   };
+  /**
+   * Code du colis chez le partenaire de livraison (EAN JAX, ex.
+   * TUN3762173698168), imprimé en code-barres à côté du code Runex : le
+   * livreur JAX scanne ce code pour réceptionner le colis. Absent si le colis
+   * n'est pas (ou plus) chez le partenaire.
+   */
+  partnerCode?: { partner: 'JAX'; code: string } | null;
 }
 
 // ---------------------------------------------------------------------------

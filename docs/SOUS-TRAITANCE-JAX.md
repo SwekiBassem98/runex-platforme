@@ -42,6 +42,11 @@ Sans jeton, la page l'indique et rien ne part chez JAX ; le reste de RUNEX fonct
    réception, ceux d'une zone cochée partent chez JAX ; les autres peuvent être confiés à la main (« À confier »).
    « Reprendre » avant la réception abandonne la fiche JAX (code à annuler chez JAX) ; un colis repris
    n'est pas renvoyé automatiquement.
+   **Bon de livraison :** il porte deux codes — le code RUNEX (QR et code-barres de chaque pièce) et le
+   **code JAX** (bloc « CODE JAX », en code-barres) que le livreur JAX scanne à l'enlèvement. La création
+   attend JAX quelques secondes (`JAX_ATTENTE_CREATION_MS`, défaut 8000) : le bon imprimé juste après porte
+   donc le code JAX. Si JAX ne répondait pas, réimprimer le bon une fois le code reçu.
+   Le code JAX contient l'identifiant du compte RUNEX chez JAX (ex. `TUN3762…`, compte 3762) : rien à configurer.
 3. **Enlèvement** — onglet « Enlèvements » : une demande par agence, avec ses codes EAN (seulement les
    colis déjà reçus en agence : JAX ne doit pas venir chercher un colis encore chez l'expéditeur).
 4. **Suivi** — les statuts JAX sont relus automatiquement (`JAX_SYNC_MINUTES`) et à la demande ;
