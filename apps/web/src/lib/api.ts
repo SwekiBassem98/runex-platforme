@@ -2259,7 +2259,33 @@ export interface ResultatEnvoiJax {
   message: string;
 }
 
+/** Colis restés chez Runex (jamais envoyés à JAX), pas encore livrés, retournés ni annulés. */
+export interface RattrapageJax {
+  configure: boolean;
+  total: number;
+  enTournee: number;
+  parStatut: { status: string; n: number }[];
+  colis: {
+    id: string;
+    trackingNumber: string;
+    status: string;
+    createdAt: string;
+    montant: number;
+    expediteur: string;
+    destination: string;
+    enTournee: boolean;
+    livreur: string | null;
+    erreur: string | null;
+  }[];
+}
+
 export const sousTraitanceApi = {
+  rattrapage: () => requestData<RattrapageJax>('/sous-traitance/jax/rattrapage'),
+  rattraper: (exclure: string[]) =>
+    request<{ traites: number; reussis: number; echecs: ResultatEnvoiJax[]; restants: number }>('/sous-traitance/jax/rattrapage', {
+      method: 'POST',
+      body: { exclure },
+    }),
   parametres: () => requestData<ParametresJax>('/sous-traitance/jax/parametres'),
   referentiels: () => request<{ gouvernorats: number; statuts: number }>('/sous-traitance/jax/referentiels', { method: 'POST', body: {} }),
   zones: (governorates: string[]) => request<string[]>('/sous-traitance/jax/zones', { method: 'PUT', body: { governorates } }),

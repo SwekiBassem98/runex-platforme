@@ -5,6 +5,8 @@
  *
  *  - Colis confiés : code JAX, étape, statut lu chez JAX, gestes (relire,
  *    retour reçu) ;
+ *  - Restés chez Runex : colis jamais envoyés à JAX (créés avant sa mise en
+ *    service), à envoyer d'un coup — ceux en tournée en sont retirés ;
  *  - À confier : colis reçus dans une agence Runex, à envoyer à JAX ;
  *  - Enlèvements : colis créés chez JAX, à faire enlever par agence ;
  *  - Encaissements : montants encaissés par JAX, à reverser à Runex — un
@@ -17,7 +19,7 @@ import React from 'react';
 import Link from 'next/link';
 import { AlertTriangle, CheckCircle2, Coins, Handshake, PackageCheck, RefreshCw, Send, Settings2, Truck } from 'lucide-react';
 import { Card, PageHeader, useToast } from '@logixpress/ui';
-import { ETATS_SOUS_TRAITANCE } from '@logixpress/types';
+import { ETATS_SOUS_TRAITANCE, PACKAGE_STATUS_LABELS, type PackageStatus } from '@logixpress/types';
 import {
   interDepotsApi,
   sousTraitanceApi,
@@ -25,13 +27,15 @@ import {
   type EnlevementJax,
   type ListeSousTraitance,
   type ParametresJax,
+  type RattrapageJax,
 } from '@/lib/api';
 import { GOUVERNORATS } from '@/features/expediteur/lib/libelles';
 import { EtatJax } from '@/features/sous-traitance/EtatJax';
 
-type Onglet = 'confies' | 'aconfier' | 'enlevements' | 'encaissements' | 'parametres';
+type Onglet = 'confies' | 'rattrapage' | 'aconfier' | 'enlevements' | 'encaissements' | 'parametres';
 const ONGLETS: { id: Onglet; libelle: string; icone: React.ElementType }[] = [
   { id: 'confies', libelle: 'Colis confiés', icone: Handshake },
+  { id: 'rattrapage', libelle: 'Restés chez Runex', icone: AlertTriangle },
   { id: 'aconfier', libelle: 'À confier', icone: Send },
   { id: 'enlevements', libelle: 'Enlèvements', icone: Truck },
   { id: 'encaissements', libelle: 'Encaissements JAX', icone: Coins },
@@ -127,6 +131,7 @@ export default function SousTraitancePage() {
         </nav>
 
         {onglet === 'confies' && <Confies depots={depots} notifier={notifier} onChange={chargerCompteurs} />}
+        {onglet === 'rattrapage' && <Rattrapage notifier={notifier} onChange={chargerCompteurs} />}
         {onglet === 'aconfier' && <AConfier depots={depots} notifier={notifier} onChange={chargerCompteurs} configure={!!params?.configure} />}
         {onglet === 'enlevements' && <Enlevements notifier={notifier} onChange={chargerCompteurs} />}
         {onglet === 'encaissements' && <Encaissements notifier={notifier} onChange={chargerCompteurs} />}
@@ -283,6 +288,161 @@ function Confies({ depots, notifier, onChange }: { depots: { id: string; name: s
 }
 
 /* ------------------------------------------------------------------ */
+
+const libelleStatut = (s: string) => PACKAGE_STATUS_LABELS[s as PackageStatus] ?? s;
+
+/**
+ * Colis restés chez Runex : créés avant la mise en service de JAX (ou dont
+ * l'envoi a échoué), ni livrés, ni retournés, ni annulés. Un clic les envoie
+ * tous à JAX, par lots ; ceux en tournée sont d'abord retirés de la tournée.
+ */
+function Rattrapage({ notifier, onChange }: { notifier: Notifier; onChange: () => void }) {
+  const [apercu, setApercu] = React.useState<RattrapageJax | null>(null);
+  const [confirmer, setConfirmer] = React.useState(false);
+  const [envoi, setEnvoi] = React.useState<{ envoyes: number; refuses: number } | null>(null);
+  const [refus, setRefus] = React.useState<{ trackingNumber: string; message: string }[]>([]);
+
+  const charger = React.useCallback(async () => {
+    try {
+      setApercu(await sousTraitanceApi.rattrapage());
+    } catch (e) {
+      notifier(false, 'Liste indisponible', erreur(e));
+    }
+  }, [notifier]);
+  React.useEffect(() => void charger(), [charger]);
+
+  const envoyerTout = async () => {
+    setConfirmer(false);
+    setRefus([]);
+    const exclure: string[] = [];
+    const ko: { trackingNumber: string; message: string }[] = [];
+    let envoyes = 0;
+    setEnvoi({ envoyes: 0, refuses: 0 });
+    try {
+      // Par lots : chaque appel envoie au plus 40 colis ; les refusés sont exclus des lots suivants.
+      for (let tour = 0; tour < 500; tour++) {
+        const r = (await sousTraitanceApi.rattraper(exclure)).data;
+        if (!r) break;
+        envoyes += r.reussis;
+        for (const x of r.echecs) {
+          exclure.push(x.packageId);
+          ko.push({ trackingNumber: x.trackingNumber, message: x.message });
+        }
+        setEnvoi({ envoyes, refuses: ko.length });
+        if (r.traites === 0 || r.restants === 0) break;
+      }
+      setRefus(ko);
+      notifier(ko.length === 0, `${envoyes} colis envoyé(s) à JAX${ko.length ? `, ${ko.length} refusé(s)` : ''}.`);
+    } catch (e) {
+      notifier(false, 'Envoi à JAX interrompu', erreur(e));
+    } finally {
+      setEnvoi(null);
+      await charger();
+      onChange();
+    }
+  };
+
+  if (!apercu) return <Card><p className="text-sm text-slate-500">Chargement…</p></Card>;
+  return (
+    <Card>
+      <p className="text-xs text-slate-500 mb-3">
+        Colis créés avant la mise en service de JAX, ou dont l’envoi a échoué, et pas encore livrés, retournés ni annulés. Envoyés à JAX,
+        ils y sont créés (code JAX imprimé sur le bon) : ceux déjà en agence passent aussitôt « Confié au partenaire JAX » ; les autres
+        (en préparation, en ramassage, en inter-dépôt) le seront à leur réception en agence. Un colis en tournée est d’abord retiré de la
+        tournée : le livreur est prévenu et le rapporte au dépôt, où JAX l’enlève. Les colis en échec ou refus de livraison partent en
+        retour et ne sont pas concernés.
+      </p>
+      <div className="flex flex-wrap items-center gap-2 mb-3" data-testid="rattrapage-resume">
+        <span className="px-3 py-1.5 rounded-md bg-slate-900 text-white text-sm font-bold">{apercu.total} colis restés chez Runex</span>
+        {apercu.parStatut.map((g) => (
+          <span key={g.status} className="px-2 py-1 rounded-md bg-slate-100 text-slate-700 text-xs font-semibold">
+            {libelleStatut(g.status)} : {g.n}
+          </span>
+        ))}
+        {apercu.enTournee > 0 && (
+          <span className="px-2 py-1 rounded-md bg-amber-100 text-amber-900 text-xs font-semibold">dont {apercu.enTournee} en tournée</span>
+        )}
+      </div>
+      {!apercu.configure && <p className="text-sm text-amber-800 mb-3">JAX n’est pas configuré sur le serveur (jeton absent) : envoi impossible.</p>}
+      {envoi ? (
+        <p className="text-sm font-semibold text-violet-800 mb-3" data-testid="rattrapage-progression">
+          Envoi en cours… {envoi.envoyes} envoyé(s){envoi.refuses ? `, ${envoi.refuses} refusé(s)` : ''}
+        </p>
+      ) : confirmer ? (
+        <div className="rounded-md border border-violet-300 bg-violet-50 p-3 mb-3 text-sm text-violet-900">
+          <p className="mb-2">
+            Envoyer {apercu.total} colis à JAX{apercu.enTournee ? `, dont ${apercu.enTournee} retirés de leur tournée` : ''} ? JAX n’offre pas
+            d’annulation par API : un colis envoyé par erreur se reprend ici puis s’annule auprès de JAX.
+          </p>
+          <div className="flex gap-2">
+            <button type="button" onClick={() => void envoyerTout()} data-testid="rattrapage-confirmer" className={`${bouton} bg-violet-700 text-white hover:bg-violet-800`}>
+              <Send className="w-4 h-4" aria-hidden="true" /> Confirmer l’envoi
+            </button>
+            <button type="button" onClick={() => setConfirmer(false)} className={`${bouton} bg-white border border-slate-300 text-slate-700`}>
+              Annuler
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          disabled={!apercu.configure || apercu.total === 0}
+          onClick={() => setConfirmer(true)}
+          data-testid="rattrapage-envoyer"
+          className={`${bouton} bg-violet-700 text-white hover:bg-violet-800 mb-3`}
+        >
+          <Send className="w-4 h-4" aria-hidden="true" /> Envoyer les {apercu.total} colis à JAX
+        </button>
+      )}
+      {refus.length > 0 && (
+        <div className="rounded-md border border-red-200 bg-red-50 p-3 mb-3 text-xs text-red-900" data-testid="rattrapage-refus">
+          <p className="font-semibold mb-1">{refus.length} colis non envoyés :</p>
+          <ul className="space-y-0.5">
+            {refus.slice(0, 50).map((x) => (
+              <li key={x.trackingNumber}>
+                <span className="font-mono">{x.trackingNumber}</span> — {x.message}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {apercu.colis.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm" data-testid="rattrapage-liste">
+            <thead>
+              <tr className="text-left text-xs text-slate-500 border-b">
+                <th className="py-2 pr-3">Colis</th>
+                <th className="py-2 pr-3">Statut Runex</th>
+                <th className="py-2 pr-3">Expéditeur</th>
+                <th className="py-2 pr-3">Destination</th>
+                <th className="py-2 pr-3 text-right">Montant</th>
+              </tr>
+            </thead>
+            <tbody>
+              {apercu.colis.map((c) => (
+                <tr key={c.id} className="border-b last:border-0 align-top">
+                  <td className="py-2 pr-3">
+                    <Link href={`/colis/${c.id}`} className="font-mono font-semibold text-violet-800 hover:underline">{c.trackingNumber}</Link>
+                    <span className="block text-[11px] text-slate-500">{quand(c.createdAt)}</span>
+                  </td>
+                  <td className="py-2 pr-3">
+                    {libelleStatut(c.status)}
+                    {c.enTournee && <span className="block text-[11px] text-amber-800">en tournée{c.livreur ? ` · ${c.livreur}` : ''} — sera retiré</span>}
+                    {c.erreur && <span className="block text-[11px] text-red-700">Envoi précédent refusé : {c.erreur}</span>}
+                  </td>
+                  <td className="py-2 pr-3">{c.expediteur}</td>
+                  <td className="py-2 pr-3">{c.destination}</td>
+                  <td className="py-2 pr-3 text-right font-mono">{dt(c.montant)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {apercu.total > apercu.colis.length && <p className="text-xs text-slate-500 mt-2">Liste limitée aux {apercu.colis.length} plus anciens ; l’envoi les traite tous.</p>}
+        </div>
+      )}
+    </Card>
+  );
+}
 
 function AConfier({ depots, notifier, onChange, configure }: { depots: { id: string; name: string }[]; notifier: Notifier; onChange: () => void; configure: boolean }) {
   const [depot, setDepot] = React.useState('');

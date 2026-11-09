@@ -154,6 +154,8 @@ export const PACKAGE_STATUS_TRANSITIONS: Readonly<Record<PackageStatus, readonly
   // --- Reprises et échecs ---
   [PackageStatus.REPORTE]: [
     PackageStatus.AFFECTE_RUNSHEET,
+    // Reporté, revenu au dépôt : il peut être confié au partenaire JAX.
+    PackageStatus.SOUS_TRAITE,
     PackageStatus.EN_COURS_LIVRAISON,
     PackageStatus.LIVRE,
     PackageStatus.LIVRAISON_PARTIELLE,
