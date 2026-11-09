@@ -26,14 +26,21 @@ Sans jeton, la page l'indique et rien ne part chez JAX ; le reste de RUNEX fonct
 
 ## Flux d'un colis
 
-1. **Reçu dans une agence RUNEX** (Acceptation Magasin ou inter-dépôt).
-2. **Confié à JAX** — automatiquement si la destination est une zone JAX, sinon à la main
-   (onglet « À confier » ou bouton « Confier à JAX » sur la fiche du colis).
-   RUNEX crée le colis chez JAX : expéditeur **RUNEX**, `referenceExterne` = numéro de suivi RUNEX,
-   description = contenu, pièces, expéditeur réel, instructions ; enlèvement à l'agence qui détient le colis.
-   Le colis passe **« Confié au partenaire JAX »** (`SOUS_TRAITE`) : plus de tournée, d'inter-dépôt ni de
-   modification RUNEX (JAX n'offre pas de modification par API).
-3. **Enlèvement** — onglet « Enlèvements » : une demande par agence, avec ses codes EAN.
+1. **Créé dans RUNEX** (portail expéditeur ou exploitation). Si la destination est une **zone JAX**,
+   RUNEX crée aussitôt le colis chez JAX (en arrière-plan) : il est **visible chez JAX dès sa création**
+   et son code EAN est gardé sur la fiche. Le colis reste « En préparation » dans RUNEX (ramassage, dépôt
+   comme d'habitude), mais n'est plus modifiable ni annulable : JAX connaît déjà sa fiche.
+   Création chez JAX : expéditeur **RUNEX**, `referenceExterne` = numéro de suivi RUNEX,
+   description = contenu, pièces, expéditeur réel, instructions ; enlèvement à l'agence de départ du colis.
+   En cas d'échec (JAX injoignable, référentiel non relu…), l'erreur est inscrite sur le colis, qui reste
+   modifiable ; l'envoi est retenté automatiquement à sa réception en agence.
+2. **Reçu dans une agence RUNEX** (Acceptation Magasin ou inter-dépôt) → **« Confié au partenaire JAX »**
+   (`SOUS_TRAITE`), sans le recréer chez JAX : plus de tournée, d'inter-dépôt ni de modification RUNEX.
+   Hors zone JAX, le colis peut être confié à la main (onglet « À confier » ou bouton « Confier à JAX »).
+   « Reprendre » avant la réception abandonne la fiche JAX (code à annuler chez JAX) ; un colis repris
+   n'est pas renvoyé automatiquement.
+3. **Enlèvement** — onglet « Enlèvements » : une demande par agence, avec ses codes EAN (seulement les
+   colis déjà reçus en agence : JAX ne doit pas venir chercher un colis encore chez l'expéditeur).
 4. **Suivi** — les statuts JAX sont relus automatiquement (`JAX_SYNC_MINUTES`) et à la demande ;
    chaque changement s'inscrit dans la chronologie du colis, visible par l'exploitation et l'expéditeur.
    - enlevé / en dépôt JAX → *Pris en charge par JAX* (le colis sort du stock de l'agence) ;

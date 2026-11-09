@@ -936,7 +936,27 @@ export class ColisService {
       actorUserId: user?.id ?? null,
     });
 
+    // Destination livrée par JAX : le colis est créé aussitôt chez JAX (en
+    // arrière-plan — la réponse à l'expéditeur n'attend pas le partenaire).
+    void import('../sous-traitance/sous-traitance.service').then((m) => m.sousTraitanceService.enregistrerALaCreation(record.id));
+
     return toPackageDto(record);
+  }
+
+  /**
+   * Colis connu de JAX (créé chez lui et pas repris) : JAX n'offre ni
+   * modification ni annulation par API, une correction ici ne lui
+   * parviendrait pas.
+   */
+  private async chezJax(packageId: string): Promise<boolean> {
+    const n = await this.prisma.sousTraitance.count({
+      where: {
+        packageId,
+        codeExterne: { not: null },
+        etat: { in: ['EN_ATTENTE_ENLEVEMENT', 'ENLEVEMENT_DEMANDE', 'PRIS_EN_CHARGE', 'EN_LIVRAISON', 'RETOUR_EN_COURS'] },
+      },
+    });
+    return n > 0;
   }
 
   /* ---------------------------------------------------------------- */
@@ -990,7 +1010,7 @@ export class ColisService {
 
     // Confié à JAX : la fiche est chez le partenaire, qui n'offre pas de
     // modification par API — une correction ici ne lui parviendrait pas.
-    if (String(record.status) === 'SOUS_TRAITE') {
+    if (String(record.status) === 'SOUS_TRAITE' || (await this.chezJax(record.id))) {
       throw new BusinessRuleError(
         'Modification impossible : ce colis est confié au partenaire de livraison JAX. Contactez RUNEX pour toute correction.',
         409
@@ -1365,6 +1385,13 @@ export class ColisService {
     }
 
     const isShipper = user.role === RoleType.EXPEDITEUR;
+
+    if (await this.chezJax(record.id)) {
+      throw new BusinessRuleError(
+        'Annulation impossible : ce colis est déjà enregistré chez le partenaire JAX. Reprenez-le d’abord (Sous-traitance JAX) et annulez son code chez JAX.',
+        409
+      );
+    }
 
     if (isShipper && !canShipperCancelOrDelete(record.status as PackageStatus)) {
       throw new BusinessRuleError(
