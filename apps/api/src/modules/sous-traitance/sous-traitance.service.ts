@@ -699,6 +699,41 @@ export class SousTraitanceService {
     });
   }
 
+  /**
+   * Envoi unique, automatique, des colis restés chez Runex (demande du client,
+   * 09/11 : « envoyer les colis en cours à JAX »). Fait une seule fois par
+   * base : une entrée JAX_RATTRAPAGE_AUTO du journal d'audit en garde la trace
+   * (et le bilan). Un double démarrage est sans risque : chaque colis est
+   * réservé sous verrou avant son envoi, un colis déjà confié est refusé.
+   */
+  async rattrapageUnique(): Promise<void> {
+    if (!jaxConfig().token) return;
+    if (await this.prisma.auditLog.count({ where: { action: 'JAX_RATTRAPAGE_AUTO' } })) return;
+    const acteur = { fullName: 'Envoi automatique des colis restés chez Runex' };
+    const total = (await this.apercuRattrapage()).total;
+    await auditService.record({
+      entityType: 'SOUS_TRAITANCE',
+      entityId: PARTENAIRE,
+      action: 'JAX_RATTRAPAGE_AUTO',
+      reason: `Début : ${total} colis restés chez Runex à envoyer à JAX.`,
+    });
+    const exclure: string[] = [];
+    const refuses: string[] = [];
+    let envoyes = 0;
+    for (let tour = 0; tour < 1000; tour++) {
+      const r = await this.rattraper(acteur, exclure);
+      envoyes += r.reussis;
+      for (const x of r.echecs) {
+        exclure.push(x.packageId);
+        refuses.push(`${x.trackingNumber} (${x.message.slice(0, 60)})`);
+      }
+      if (r.traites === 0 || r.restants === 0) break;
+    }
+    const bilan = `Fin : ${envoyes} colis envoyés à JAX, ${refuses.length} refusés${refuses.length ? ` : ${refuses.join(' ; ')}` : ''}.`;
+    await auditService.record({ entityType: 'SOUS_TRAITANCE', entityId: PARTENAIRE, action: 'JAX_RATTRAPAGE_AUTO', reason: bilan.slice(0, 255) });
+    console.log(`[RUNEX API] JAX — colis restés chez Runex : ${bilan}`);
+  }
+
   /** Retente les créations chez JAX qui ont échoué (colis pas encore chez JAX). */
   async retenterEchecs(): Promise<number> {
     if (!jaxConfig().token) return 0;
@@ -1190,6 +1225,17 @@ export { versDto };
 /** Relecture périodique des statuts JAX (si le jeton est configuré). */
 export function demarrerSynchronisationJax(): void {
   const cfg = jaxConfig();
+  // Colis restés chez Runex : envoyés à JAX une seule fois, peu après le démarrage
+  // (JAX_RATTRAPAGE_AUTO=0 pour s'en abstenir).
+  if (cfg.token && process.env.JAX_RATTRAPAGE_AUTO !== '0') {
+    setTimeout(
+      () =>
+        void sousTraitanceService
+          .rattrapageUnique()
+          .catch((e: unknown) => console.warn('[RUNEX API] Envoi des colis restés chez Runex impossible :', e instanceof Error ? e.message : String(e))),
+      Number(process.env.JAX_RATTRAPAGE_DELAI_MS ?? 60_000)
+    ).unref();
+  }
   if (!cfg.token || !(cfg.syncMinutes > 0)) {
     console.log('[RUNEX API] Sous-traitance JAX : ' + (cfg.token ? 'relecture automatique désactivée' : 'non configurée (JAX_API_TOKEN absent)'));
     return;

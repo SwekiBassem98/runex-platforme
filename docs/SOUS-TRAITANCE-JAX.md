@@ -57,6 +57,9 @@ Sans jeton, la page l'indique et rien ne part chez JAX ; le reste de RUNEX fonct
      le rapporte au dépôt), puis confiés ; affectés à un livreur hors tournée → remis en stock, puis confiés ;
    - en échec ou refus de livraison → non concernés (circuit des retours) ; colis repris volontairement → non renvoyés.
    Un colis refusé (JAX indisponible…) reste dans la liste avec le motif, pour un nouvel essai.
+   **Envoi unique automatique** : à la première mise en service de cette version, l'API envoie elle-même ces
+   colis à JAX une minute après son démarrage, une seule fois (bilan dans le journal d'audit :
+   « Colis restés chez Runex envoyés à JAX »). `JAX_RATTRAPAGE_AUTO=0` pour s'en abstenir.
 3. **Enlèvement** — onglet « Enlèvements » : une demande par agence, avec ses codes EAN (seulement les
    colis déjà reçus en agence : JAX ne doit pas venir chercher un colis encore chez l'expéditeur).
 4. **Suivi** — les statuts JAX sont relus automatiquement (`JAX_SYNC_MINUTES`) et à la demande ;
