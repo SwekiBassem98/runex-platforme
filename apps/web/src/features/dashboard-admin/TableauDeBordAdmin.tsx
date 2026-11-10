@@ -145,14 +145,32 @@ const CARTE = 'bg-white border border-slate-200 rounded-2xl shadow-xs motion-saf
 /* Parcours des colis                                                  */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Liens vers la liste des colis : chacun montre EXACTEMENT les colis comptés
+ * par la tuile (mêmes statuts que l'API, ETAPES_ADMIN ; même période). Un lien
+ * sur un seul statut ouvrait une liste vide alors que la tuile en comptait.
+ */
+const listeColis = (statuts: readonly string[], extra = '') => `/colis?statut=${statuts.join(',')}${extra}`;
+const STATUTS_EN_COURS = [
+  'CREE', 'RAMASSAGE_PROGRAMME', 'RAMASSE', 'RECU_DEPOT', 'EN_LOT_INTER_DEPOT', 'EN_TRANSIT_INTER_DEPOT', 'RECU_DEPOT_DESTINATION',
+  'SOUS_TRAITE', 'AFFECTE_RUNSHEET', 'EN_COURS_LIVRAISON', 'REPORTE', 'ECHEC_LIVRAISON', 'RETOUR_DEPOT', 'EN_RUNSHEET_RETOUR',
+];
+const STATUTS_LIVRES = ['LIVRE', 'LIVRAISON_PARTIELLE'];
+const A_AFFECTER = listeColis(['RECU_DEPOT', 'RECU_DEPOT_DESTINATION'], '&sansLivreur=1');
+/** Journée de Tunis, `jours` jours avant aujourd'hui (AAAA-MM-JJ). */
+const jourTunis = (joursAvant = 0) =>
+  new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Tunis', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(Date.now() - joursAvant * 86_400_000));
+/** Livrés sur la période affichée (même début que l'API : aujourd'hui − (jours − 1)). */
+const livresDepuis = (jours: number) => listeColis(STATUTS_LIVRES, `&livreDepuis=${jourTunis(jours - 1)}`);
+
 const ETAPES: { cle: EtapeAdmin; libelle: string; aide: string; icone: LucideIcon; couleur: string; href: string }[] = [
-  { cle: 'preparation', libelle: 'En préparation', aide: 'Créés, ramassage prévu', icone: PackagePlus, couleur: '#64748b', href: '/colis?statut=CREE' },
-  { cle: 'collecte', libelle: 'Ramassés', aide: 'Chez le livreur, vers le dépôt', icone: Truck, couleur: '#0ea5e9', href: '/colis?statut=RAMASSE' },
-  { cle: 'depot', libelle: 'Au dépôt', aide: 'Reçus, prêts à partir', icone: Warehouse, couleur: '#8b5cf6', href: '/colis?statut=RECU_DEPOT' },
-  { cle: 'transit', libelle: 'Inter-dépôt', aide: 'Entre deux agences', icone: Shuffle, couleur: '#6366f1', href: '/inter-depots' },
-  { cle: 'livraison', libelle: 'En livraison', aide: 'Dans une tournée', icone: Route, couleur: '#f59e0b', href: '/colis?statut=EN_COURS_LIVRAISON' },
-  { cle: 'reporte', libelle: 'Reportés', aide: 'Nouvelle tentative prévue', icone: Clock3, couleur: '#f97316', href: '/colis?statut=REPORTE' },
-  { cle: 'retour', libelle: 'En retour', aide: 'Échecs à rendre', icone: Undo2, couleur: '#ef4444', href: '/colis?statut=RETOUR_DEPOT' },
+  { cle: 'preparation', libelle: 'En préparation', aide: 'Créés, ramassage prévu', icone: PackagePlus, couleur: '#64748b', href: listeColis(['CREE', 'RAMASSAGE_PROGRAMME']) },
+  { cle: 'collecte', libelle: 'Ramassés', aide: 'Chez le livreur, vers le dépôt', icone: Truck, couleur: '#0ea5e9', href: listeColis(['RAMASSE']) },
+  { cle: 'depot', libelle: 'Au dépôt', aide: 'Reçus, prêts à partir', icone: Warehouse, couleur: '#8b5cf6', href: listeColis(['RECU_DEPOT', 'RECU_DEPOT_DESTINATION']) },
+  { cle: 'transit', libelle: 'Inter-dépôt', aide: 'Entre deux agences', icone: Shuffle, couleur: '#6366f1', href: listeColis(['EN_LOT_INTER_DEPOT', 'EN_TRANSIT_INTER_DEPOT']) },
+  { cle: 'livraison', libelle: 'En livraison', aide: 'Dans une tournée', icone: Route, couleur: '#f59e0b', href: listeColis(['AFFECTE_RUNSHEET', 'EN_COURS_LIVRAISON', 'SOUS_TRAITE']) },
+  { cle: 'reporte', libelle: 'Reportés', aide: 'Nouvelle tentative prévue', icone: Clock3, couleur: '#f97316', href: listeColis(['REPORTE']) },
+  { cle: 'retour', libelle: 'En retour', aide: 'Échecs à rendre', icone: Undo2, couleur: '#ef4444', href: listeColis(['ECHEC_LIVRAISON', 'RETOUR_DEPOT', 'EN_RUNSHEET_RETOUR']) },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -233,7 +251,7 @@ export function TableauDeBordAdmin() {
           libelle="Colis en cours"
           valeur={v?.active}
           aide={v ? `${montantCourt(v.money.codInProgress)} à encaisser chez les clients` : undefined}
-          href="/colis"
+          href={listeColis(STATUTS_EN_COURS)}
           testid="kpi-en-cours"
         />
         <TuileKpi
@@ -250,7 +268,7 @@ export function TableauDeBordAdmin() {
                 : `Délai moyen ${dureeLisible(v.period.avgDeliveryHours)} · ${v.period.created} créés`
               : undefined
           }
-          href="/colis?statut=LIVRE"
+          href={livresDepuis(jours)}
           testid="kpi-livres"
         />
         <TuileTaux index={3} v={v} />
@@ -336,8 +354,8 @@ function Bandeau({
       : `Aujourd’hui : ${v.today.created} colis créé${v.today.created > 1 ? 's' : ''}, ${v.today.delivered} livré${v.today.delivered > 1 ? 's' : ''} et ${v.today.outForDelivery} en route chez les clients.`;
 
   const puces: { libelle: string; valeur: React.ReactNode; icone: LucideIcon; href: string; teinte: string }[] = [
-    { libelle: 'Créés aujourd’hui', valeur: v ? <Compteur valeur={v.today.created} /> : '—', icone: PackagePlus, href: '/colis', teinte: 'text-sky-300' },
-    { libelle: 'Livrés aujourd’hui', valeur: v ? <Compteur valeur={v.today.delivered} /> : '—', icone: CheckCircle2, href: '/colis?statut=LIVRE', teinte: 'text-emerald-300' },
+    { libelle: 'Créés aujourd’hui', valeur: v ? <Compteur valeur={v.today.created} /> : '—', icone: PackagePlus, href: `/colis?date=${jourTunis()}`, teinte: 'text-sky-300' },
+    { libelle: 'Livrés aujourd’hui', valeur: v ? <Compteur valeur={v.today.delivered} /> : '—', icone: CheckCircle2, href: livresDepuis(1), teinte: 'text-emerald-300' },
     { libelle: 'En route', valeur: v ? <Compteur valeur={v.today.outForDelivery} /> : '—', icone: Truck, href: '/runsheets', teinte: 'text-amber-300' },
     {
       libelle: 'Ramassages du jour',
@@ -472,7 +490,7 @@ function Bandeau({
 /* ------------------------------------------------------------------ */
 
 const ACTIONS: Record<string, { href: string; icone: LucideIcon; titre: string; vide: string }> = {
-  COLIS_NON_AFFECTES: { href: '/colis?statut=RECU_DEPOT', icone: Inbox, titre: 'Colis à affecter', vide: 'Tous les colis du dépôt ont un livreur' },
+  COLIS_NON_AFFECTES: { href: A_AFFECTER, icone: Inbox, titre: 'Colis à affecter', vide: 'Tous les colis du dépôt ont un livreur' },
   RUNSHEETS_A_VALIDER: { href: '/runsheets', icone: Route, titre: 'Tournées à clôturer', vide: 'Aucune tournée en attente de caisse' },
   PAIEMENTS_EN_ATTENTE: { href: '/paiements', icone: Banknote, titre: 'Bordereaux à payer', vide: 'Aucun expéditeur à payer' },
   RAMASSAGES_A_CONFIRMER: { href: '/ramassages', icone: CalendarClock, titre: 'Ramassages à confirmer', vide: 'Toutes les demandes sont confirmées' },
@@ -625,7 +643,7 @@ function TuileTaux({ index, v }: { index: number; v: AdminOverviewDto | null }) 
   const ecart = v && taux !== null && v.previous.successRate !== null ? Math.round(taux - v.previous.successRate) : null;
   return (
     <Link
-      href="/colis?statut=LIVRE"
+      href={livresDepuis(v?.periodDays ?? 14)}
       data-testid="kpi-taux"
       className="group bg-white border border-slate-200 rounded-2xl p-4 shadow-xs hover:shadow-md hover:-translate-y-0.5 hover:border-slate-300 transition motion-safe:animate-dash-rise flex items-center gap-3"
       style={retard(index)}
@@ -1326,7 +1344,7 @@ function Agences({ v }: { v: AdminOverviewDto | null }) {
                     </div>
                     {a.toAssign > 0 ? (
                       <Link
-                        href="/colis?statut=RECU_DEPOT"
+                        href={`${A_AFFECTER}&depot=${a.id}`}
                         className="shrink-0 px-2 py-1 rounded-lg bg-red-50 text-red-700 text-[10px] font-bold hover:bg-red-100 transition"
                         title="Colis reçus sans livreur"
                       >
@@ -1418,7 +1436,7 @@ function Argent({ donnees }: { donnees: DashboardDto | null }) {
         montant={v?.money.codInProgress}
         aide={v ? `${v.money.codInProgressCount} colis pas encore livrés` : undefined}
         accent="bg-amber-100 text-amber-700"
-        href="/colis"
+        href={listeColis(STATUTS_EN_COURS)}
       />
       <LigneArgent
         icone={Truck}

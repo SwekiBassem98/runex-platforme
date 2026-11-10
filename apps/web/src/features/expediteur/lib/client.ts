@@ -35,6 +35,8 @@ export interface FiltresColis {
   date?: string;
   /** Avec `date` : aussi les colis encore « Créé » des jours précédents. */
   avecCreesEnAttente?: boolean;
+  /** Livrés depuis ce jour (AAAA-MM-JJ). */
+  deliveredFrom?: string;
   page?: number;
   limit?: number;
 }

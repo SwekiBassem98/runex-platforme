@@ -62,7 +62,16 @@ import { useI18n, type Cle } from '@/i18n';
 type CleEtape = keyof TableauDeBordExpediteur['pipeline'];
 
 /** Étapes du parcours : icône, couleur, et liste filtrée qu'ouvre un clic. */
-// Chaque étape mène à la liste filtrée sur TOUS ses statuts (mêmes groupes que l'API).
+// Chaque tuile mène à la liste filtrée sur EXACTEMENT les colis qu'elle compte
+// (mêmes statuts que l'API, même période).
+const STATUTS_EN_COURS = [
+  'CREE', 'RAMASSAGE_PROGRAMME', 'RAMASSE', 'RECU_DEPOT', 'EN_LOT_INTER_DEPOT', 'EN_TRANSIT_INTER_DEPOT', 'RECU_DEPOT_DESTINATION',
+  'SOUS_TRAITE', 'AFFECTE_RUNSHEET', 'EN_COURS_LIVRAISON', 'REPORTE', 'ECHEC_LIVRAISON', 'RETOUR_DEPOT', 'EN_RUNSHEET_RETOUR',
+].join(',');
+const jourTunis = (joursAvant = 0) =>
+  new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Tunis', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(Date.now() - joursAvant * 86_400_000));
+/** Livrés sur la période affichée (début : aujourd'hui − (jours − 1), comme l'API). */
+const livresDepuis = (jours: number) => `/expediteur/colis?statut=LIVRE,LIVRAISON_PARTIELLE&livreDepuis=${jourTunis(jours - 1)}`;
 const ETAPES: { cle: CleEtape; icone: LucideIcon; couleur: string; trait: string; href: string }[] = [
   { cle: 'preparation', icone: PackagePlus, couleur: '#64748b', trait: 'bg-slate-500', href: '/expediteur/colis?statut=CREE,RAMASSAGE_PROGRAMME' },
   { cle: 'collecte', icone: Truck, couleur: '#0ea5e9', trait: 'bg-sky-500', href: '/expediteur/colis?statut=RAMASSE' },
@@ -75,8 +84,14 @@ const ETAPES: { cle: CleEtape; icone: LucideIcon; couleur: string; trait: string
   },
   { cle: 'livraison', icone: Clock3, couleur: '#f59e0b', trait: 'bg-amber-500', href: '/expediteur/colis?statut=AFFECTE_RUNSHEET,EN_COURS_LIVRAISON' },
   { cle: 'reporte', icone: CalendarClock, couleur: '#f97316', trait: 'bg-orange-500', href: '/expediteur/colis?vue=reportes' },
-  { cle: 'livre', icone: CheckCircle2, couleur: '#10b981', trait: 'bg-emerald-500', href: '/expediteur/colis?vue=livres' },
-  { cle: 'retour', icone: Undo2, couleur: '#ef4444', trait: 'bg-red-500', href: '/expediteur/retours' },
+  { cle: 'livre', icone: CheckCircle2, couleur: '#10b981', trait: 'bg-emerald-500', href: '/expediteur/colis?statut=LIVRE,LIVRAISON_PARTIELLE' },
+  {
+    cle: 'retour',
+    icone: Undo2,
+    couleur: '#ef4444',
+    trait: 'bg-red-500',
+    href: '/expediteur/colis?statut=ECHEC_LIVRAISON,RETOUR_DEPOT,EN_RUNSHEET_RETOUR,RETOURNE_EXPEDITEUR',
+  },
 ];
 
 const PERIODES = [7, 14, 30, 90] as const;
@@ -333,7 +348,7 @@ export function VueTableauDeBord() {
           libelle={t('tdb.kpi.enCours')}
           valeur={d?.totals.active}
           aide={t('tdb.kpi.enCoursAide')}
-          href="/expediteur/colis"
+          href={`/expediteur/colis?statut=${STATUTS_EN_COURS}`}
         />
         <TuileKpi
           index={2}
@@ -343,7 +358,7 @@ export function VueTableauDeBord() {
           valeur={d?.period.delivered}
           tendance={d ? evolution(d.period.delivered, d.previous.delivered) : undefined}
           aide={d ? t('tdb.delaiMoyen', { duree: formatDuree(d.period.avgDeliveryHours) }) : undefined}
-          href="/expediteur/colis?vue=livres"
+          href={livresDepuis(jours)}
         />
         <TuileTaux index={3} donnees={d} />
         <TuileKpi
@@ -681,7 +696,7 @@ function TuileTaux({ index, donnees }: { index: number; donnees: TableauDeBordEx
   const total = (donnees?.period.delivered ?? 0) + (donnees?.period.failed ?? 0);
   return (
     <Link
-      href="/expediteur/colis?vue=livres"
+      href={livresDepuis(donnees?.periodDays ?? 14)}
       className="group bg-white border border-slate-200 rounded-2xl p-4 shadow-xs hover:shadow-md hover:-translate-y-0.5 hover:border-slate-300 transition motion-safe:animate-dash-rise flex items-center gap-3"
       style={retard(index)}
       data-testid="tdb-taux"
