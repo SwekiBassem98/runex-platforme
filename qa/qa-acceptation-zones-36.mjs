@@ -74,8 +74,9 @@ ok(board?.receivedCount >= 1, 'compteur « colis reçus » à jour', String(boar
 
 console.log('\n3. Acceptation inter dépôt retours : toutes les zones');
 // Un retour d'expéditeur de Sousse revenu à l'agence de Sousse…
+// Destination Tunis : livrée par Runex seulement (réunion du 10/11), le livreur Runex peut la reporter.
 const ret = async (shipperId) => {
-  const c = await colis(shipperId);
+  const c = await colis(shipperId, { governorate: 'Tunis', delegation: 'La Marsa' });
   await api(admin, 'POST', `/colis/${c.id}/assign`, { driverId: hamzaId });
   for (let k = 0; k < 3; k++) { await api(hamza, 'POST', `/colis/${c.id}/start`, {}); await api(hamza, 'POST', `/colis/${c.id}/postpone`, { reason: 'Client absent' }); }
   return c;
