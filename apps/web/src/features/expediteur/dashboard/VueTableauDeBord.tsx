@@ -72,6 +72,8 @@ const jourTunis = (joursAvant = 0) =>
   new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Tunis', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(Date.now() - joursAvant * 86_400_000));
 /** Livrés sur la période affichée (début : aujourd'hui − (jours − 1), comme l'API). */
 const livresDepuis = (jours: number) => `/expediteur/colis?statut=LIVRE,LIVRAISON_PARTIELLE&livreDepuis=${jourTunis(jours - 1)}`;
+/** Colis créés sur la période affichée (le parcours suit la période, comme l'API). */
+const creesDepuis = (href: string, jours: number) => `${href}&creeDepuis=${jourTunis(jours - 1)}`;
 const ETAPES: { cle: CleEtape; icone: LucideIcon; couleur: string; trait: string; href: string }[] = [
   { cle: 'preparation', icone: PackagePlus, couleur: '#64748b', trait: 'bg-slate-500', href: '/expediteur/colis?statut=CREE,RAMASSAGE_PROGRAMME' },
   { cle: 'collecte', icone: Truck, couleur: '#0ea5e9', trait: 'bg-sky-500', href: '/expediteur/colis?statut=RAMASSE' },
@@ -94,7 +96,8 @@ const ETAPES: { cle: CleEtape; icone: LucideIcon; couleur: string; trait: string
   },
 ];
 
-const PERIODES = [7, 14, 30, 90] as const;
+/** 1 : aujourd'hui. */
+const PERIODES = [1, 7, 14, 30, 90] as const;
 const RAFRAICHISSEMENT_MS = 60_000;
 
 /* ------------------------------------------------------------------ */
@@ -354,7 +357,7 @@ export function VueTableauDeBord() {
           index={2}
           icone={CheckCircle2}
           teinte="from-emerald-600 to-emerald-400"
-          libelle={t('tdb.kpi.livres', { n: jours })}
+          libelle={jours === 1 ? t('tdb.kpi.livresAujourdhui') : t('tdb.kpi.livres', { n: jours })}
           valeur={d?.period.delivered}
           tendance={d ? evolution(d.period.delivered, d.previous.delivered) : undefined}
           aide={d ? t('tdb.delaiMoyen', { duree: formatDuree(d.period.avgDeliveryHours) }) : undefined}
@@ -365,7 +368,7 @@ export function VueTableauDeBord() {
           index={4}
           icone={Wallet}
           teinte="from-red-600 to-rose-400"
-          libelle={t('tdb.kpi.encaisse', { n: jours })}
+          libelle={jours === 1 ? t('tdb.kpi.encaisseAujourdhui') : t('tdb.kpi.encaisse', { n: jours })}
           valeur={d?.period.collected}
           format={(v) => formatTND(v)}
           aide={d ? t('tdb.kpi.encaisseAide', { frais: formatTND(d.period.fees) }) : undefined}
@@ -376,7 +379,7 @@ export function VueTableauDeBord() {
       {/* ============================================================ */}
       {/* Parcours des colis                                           */}
       {/* ============================================================ */}
-      <Parcours donnees={d} />
+      <Parcours donnees={d} jours={jours} setJours={setJours} />
 
       {/* ============================================================ */}
       {/* Activité + répartition                                       */}
@@ -420,7 +423,7 @@ export function VueTableauDeBord() {
                     jours === p ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
                   }`}
                 >
-                  {t('tdb.periode', { n: p })}
+                  {p === 1 ? t('tdb.periodeAujourdhui') : t('tdb.periode', { n: p })}
                 </button>
               ))}
             </div>
@@ -693,10 +696,10 @@ function TuileTaux({ index, donnees }: { index: number; donnees: TableauDeBordEx
   const r = 26;
   const c = 2 * Math.PI * r;
   const couleur = taux === null ? '#cbd5e1' : taux >= 85 ? '#10b981' : taux >= 65 ? '#f59e0b' : '#ef4444';
-  const total = (donnees?.period.delivered ?? 0) + (donnees?.period.failed ?? 0);
+  const total = donnees?.period.created ?? 0;
   return (
     <Link
-      href={livresDepuis(donnees?.periodDays ?? 14)}
+      href={creesDepuis('/expediteur/colis?statut=LIVRE,LIVRAISON_PARTIELLE', donnees?.periodDays ?? 14)}
       className="group bg-white border border-slate-200 rounded-2xl p-4 shadow-xs hover:shadow-md hover:-translate-y-0.5 hover:border-slate-300 transition motion-safe:animate-dash-rise flex items-center gap-3"
       style={retard(index)}
       data-testid="tdb-taux"
@@ -718,10 +721,16 @@ function TuileTaux({ index, donnees }: { index: number; donnees: TableauDeBordEx
       <div className="min-w-0">
         <p className="text-[11px] sm:text-xs font-semibold text-slate-500 leading-tight">{t('tdb.kpi.tauxReussite')}</p>
         <p className="text-xl sm:text-2xl font-extrabold text-slate-900 tabular-nums" dir="ltr">
-          {donnees === null ? <span className="inline-block w-12 h-7 rounded bg-slate-100 animate-pulse" /> : taux === null ? '—' : `${Math.round(anime)} %`}
+          {donnees === null ? (
+            <span className="inline-block w-12 h-7 rounded bg-slate-100 animate-pulse" />
+          ) : taux === null ? (
+            '—'
+          ) : (
+            `${(anime === taux ? taux : Math.round(anime * 10) / 10).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} %`
+          )}
         </p>
         <p className="text-[11px] text-slate-400 leading-snug">
-          {taux === null ? t('tdb.kpi.tauxVide') : t('tdb.kpi.tauxAide', { livres: donnees?.period.delivered ?? 0, total })}
+          {taux === null ? t('tdb.kpi.tauxVide') : t('tdb.kpi.tauxAide', { livres: donnees?.period.deliveredOfCreated ?? 0, total })}
         </p>
       </div>
     </Link>
@@ -732,7 +741,7 @@ function TuileTaux({ index, donnees }: { index: number; donnees: TableauDeBordEx
 /* Parcours                                                            */
 /* ------------------------------------------------------------------ */
 
-function Parcours({ donnees }: { donnees: TableauDeBordExpediteur | null }) {
+function Parcours({ donnees, jours, setJours }: { donnees: TableauDeBordExpediteur | null; jours: number; setJours: (j: number) => void }) {
   const { t } = useI18n();
   const max = Math.max(1, ...ETAPES.map((e) => donnees?.pipeline[e.cle] ?? 0));
   return (
@@ -742,10 +751,32 @@ function Parcours({ donnees }: { donnees: TableauDeBordExpediteur | null }) {
       aria-labelledby="tdb-parcours"
     >
       <div className="flex flex-wrap items-baseline justify-between gap-2 mb-4">
-        <h2 id="tdb-parcours" className="text-sm font-bold text-slate-900">
-          {t('tdb.parcours.titre')}
-        </h2>
-        <p className="text-[11px] text-slate-500">{t('tdb.parcours.aide')}</p>
+        <div>
+          <h2 id="tdb-parcours" className="text-sm font-bold text-slate-900">
+            {t('tdb.parcours.titre')}
+          </h2>
+          <p className="text-[11px] text-slate-500">
+            {jours === 1 ? t('tdb.parcours.periodeAujourdhui') : t('tdb.parcours.periode', { n: jours })} · {t('tdb.parcours.aide')}
+          </p>
+        </div>
+        {/* Même période que les indicateurs (et que le tableau de bord de l'exploitation). */}
+        <div role="radiogroup" aria-label={t('tdb.periodeChoix')} className="inline-flex p-0.5 rounded-lg bg-slate-100 border border-slate-200" data-testid="tdb-parcours-periodes">
+          {PERIODES.map((p) => (
+            <button
+              key={p}
+              type="button"
+              role="radio"
+              aria-checked={jours === p}
+              onClick={() => setJours(p)}
+              data-testid={`tdb-parcours-periode-${p}`}
+              className={`px-2.5 py-1 rounded-md text-xs font-semibold transition cursor-pointer ${
+                jours === p ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              {p === 1 ? t('tdb.periodeAujourdhui') : t('tdb.periode', { n: p })}
+            </button>
+          ))}
+        </div>
       </div>
       <ol className="relative grid grid-cols-4 md:grid-cols-7 gap-2 sm:gap-3">
         {/* Fil qui relie les étapes (écrans larges) */}
@@ -756,7 +787,7 @@ function Parcours({ donnees }: { donnees: TableauDeBordExpediteur | null }) {
           return (
             <li key={e.cle} className="relative">
               <Link
-                href={e.href}
+                href={creesDepuis(e.href, donnees?.periodDays ?? jours)}
                 className="group flex flex-col items-center text-center gap-1.5 p-2 rounded-xl hover:bg-slate-50 transition"
                 data-testid={`tdb-etape-${e.cle}`}
               >
@@ -773,6 +804,11 @@ function Parcours({ donnees }: { donnees: TableauDeBordExpediteur | null }) {
                   {donnees ? <Compteur valeur={n} /> : '—'}
                 </span>
                 <span className="text-[11px] font-semibold text-slate-600 leading-tight">{t(`tdb.etape.${e.cle}` as Cle)}</span>
+                {e.cle === 'livre' && donnees && donnees.period.successRate !== null && (
+                  <span className="text-[10px] font-bold text-emerald-700 leading-tight" dir="ltr" data-testid="tdb-livre-taux">
+                    {t('tdb.etape.livreTaux', { t: donnees.period.successRate.toLocaleString('fr-FR', { maximumFractionDigits: 1 }) })}
+                  </span>
+                )}
                 <span className="w-full h-1.5 rounded-full bg-slate-100 overflow-hidden" aria-hidden="true">
                   <span
                     className={`block h-full rounded-full ${e.trait} transition-[width] duration-700 ease-out`}

@@ -37,6 +37,8 @@ export interface FiltresColis {
   avecCreesEnAttente?: boolean;
   /** Livrés depuis ce jour (AAAA-MM-JJ). */
   deliveredFrom?: string;
+  /** Créés depuis ce jour (AAAA-MM-JJ) — étapes du parcours du tableau de bord. */
+  createdFrom?: string;
   page?: number;
   limit?: number;
 }
@@ -174,7 +176,9 @@ export interface TableauDeBordExpediteur {
     created: number;
     delivered: number;
     failed: number;
+    /** Taux de livraison (Rapports d'exploitation) : livrés parmi les colis créés sur la période. */
     successRate: number | null;
+    deliveredOfCreated?: number;
     avgDeliveryHours: number | null;
     collected: number;
     fees: number;

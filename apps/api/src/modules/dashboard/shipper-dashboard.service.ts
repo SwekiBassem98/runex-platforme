@@ -44,6 +44,7 @@ export interface ShipperDashboard {
     delivered: number;
     failed: number;
     successRate: number | null;
+    deliveredOfCreated: number;
     avgDeliveryHours: number | null;
     collected: number;
     fees: number;
@@ -59,7 +60,8 @@ export interface ShipperDashboard {
 
 const n = (v: unknown) => Number(v ?? 0) || 0;
 
-export const ALLOWED_PERIODS = [7, 14, 30, 90] as const;
+/** 1 : aujourd'hui. La période porte aussi sur le parcours (colis créés sur la période). */
+export const ALLOWED_PERIODS = [1, 7, 14, 30, 90] as const;
 
 export async function getShipperDashboard(shipperId: string, periodDays = 14): Promise<ShipperDashboard> {
   const prisma = getPrisma();
@@ -70,7 +72,7 @@ export async function getShipperDashboard(shipperId: string, periodDays = 14): P
   const debutPrecedent = Prisma.sql`((date_trunc('day', now() AT TIME ZONE ${TZ}) - make_interval(days => ${2 * days - 1}::int)) AT TIME ZONE ${TZ})`;
   const aujourdhui = Prisma.sql`(date_trunc('day', now() AT TIME ZONE ${TZ}) AT TIME ZONE ${TZ})`;
 
-  const [statusRows, periodRows, dailyRows, zoneRows, govRows, pickup] = await Promise.all([
+  const [statusRows, periodRows, dailyRows, zoneRows, govRows, pickup, parcoursRows] = await Promise.all([
     prisma.$queryRaw<{ status: string; total: bigint; cod: Prisma.Decimal | null }[]>`
       SELECT p."status"::text AS status, count(*) AS total, sum(p."totalPrice") AS cod
       FROM "Package" p
@@ -88,10 +90,12 @@ export async function getShipperDashboard(shipperId: string, periodDays = 14): P
         prev_delivered: bigint;
         today_created: bigint;
         today_delivered: bigint;
+        created_delivered: bigint;
       }[]
     >`
       SELECT
         count(*) FILTER (WHERE p."createdAt" >= ${debut}) AS created,
+        count(*) FILTER (WHERE p."createdAt" >= ${debut} AND p."status"::text IN (${Prisma.join(LIVRES)})) AS created_delivered,
         count(*) FILTER (WHERE p."status"::text IN (${Prisma.join(LIVRES)}) AND p."deliveredAt" >= ${debut}) AS delivered,
         count(*) FILTER (WHERE p."status"::text IN (${Prisma.join(ECHECS)}) AND p."updatedAt" >= ${debut}) AS failed,
         avg(EXTRACT(EPOCH FROM (p."deliveredAt" - p."createdAt")) / 3600.0)
@@ -163,6 +167,12 @@ export async function getShipperDashboard(shipperId: string, periodDays = 14): P
       orderBy: [{ scheduledDate: 'asc' }, { timeSlotStartHour: 'asc' }],
       select: { id: true, scheduledDate: true, timeSlotStartHour: true, timeSlotEndHour: true, status: true },
     }),
+    // Parcours : colis créés sur la période, par statut actuel.
+    prisma.$queryRaw<{ status: string; total: bigint }[]>`
+      SELECT p."status"::text AS status, count(*) AS total
+      FROM "Package" p
+      WHERE p."shipperId" = ${sid} AND p."deletedAt" IS NULL AND p."createdAt" >= ${debut}
+      GROUP BY p."status"`,
   ]);
 
   const byStatus: Record<string, number> = {};
@@ -179,8 +189,10 @@ export async function getShipperDashboard(shipperId: string, periodDays = 14): P
     }
   }
   const somme = (statuts: readonly string[]) => statuts.reduce((s, st) => s + (byStatus[st] ?? 0), 0);
+  const parcours: Record<string, number> = {};
+  for (const row of parcoursRows) parcours[row.status] = n(row.total);
   const pipeline = Object.fromEntries(
-    Object.entries(ETAPES_PARCOURS).map(([cle, statuts]) => [cle, somme(statuts)])
+    Object.entries(ETAPES_PARCOURS).map(([cle, statuts]) => [cle, statuts.reduce((s, st) => s + (parcours[st] ?? 0), 0)])
   ) as ShipperDashboard['pipeline'];
 
   const p = periodRows[0];
@@ -203,7 +215,9 @@ export async function getShipperDashboard(shipperId: string, periodDays = 14): P
       created: n(p?.created),
       delivered,
       failed,
-      successRate: delivered + failed > 0 ? Math.round((delivered / (delivered + failed)) * 1000) / 10 : null,
+      // Même calcul que les Rapports d'exploitation : livrés parmi les colis créés sur la période.
+      successRate: n(p?.created) > 0 ? Math.round((n(p?.created_delivered) / n(p?.created)) * 1000) / 10 : null,
+      deliveredOfCreated: n(p?.created_delivered),
       avgDeliveryHours: p?.avg_hours == null ? null : Math.round(Number(p.avg_hours) * 10) / 10,
       collected: Math.round(n(p?.collected) * 1000) / 1000,
       fees: Math.round(n(p?.fees) * 1000) / 1000,

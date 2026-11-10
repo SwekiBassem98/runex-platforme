@@ -53,7 +53,8 @@ const lire = async (id) => (await api(admin, 'GET', `/colis/${id}`)).data;
 const sfx = Date.now().toString().slice(-4);
 let n = 0;
 // Colis « d'avant JAX » : créé puis privé de sa fiche JAX de création.
-const ancien = async (gov = 'Tunis', deleg = 'La Marsa') => {
+// Sousse : Tunis et Ben Arous sont livrés par Runex seulement (réunion du 10/11).
+const ancien = async (gov = 'Sousse', deleg = 'Akouda') => {
   n++;
   const c = (await api(exp, 'POST', '/colis', { customerName: `Q51 ${sfx}-${n}`, customerPhone: `9851${sfx}`.slice(0, 7) + (n % 10), governorate: gov, delegation: deleg, address: `Rue ${n}`, goodsPrice: 20 + n })).data;
   sql(`DELETE FROM "SousTraitance" WHERE "packageId" = '${c.id}'`);
@@ -89,9 +90,11 @@ ok(
 console.log('\n2. Aperçu');
 const a = (await api(admin, 'GET', '/sous-traitance/jax/rattrapage')).data;
 const ids = new Set(a.colis.map((x) => x.id));
-ok([cCree, cAgence, cAffecte, cRoute, cReporte, cTransit].every((c) => ids.has(c.id)), 'les 6 colis restés chez Runex sont listés');
+ok([cCree, cAgence, cAffecte, cRoute, cTransit].every((c) => ids.has(c.id)), 'les 5 colis restés chez Runex sont listés');
+// Réunion du 10/11 : un colis reporté reste chez Runex (son livreur le livre à nouveau).
+ok(!ids.has(cReporte.id), 'colis reporté : non proposé (il reste chez Runex)');
 ok(!ids.has(cLivre.id) && !ids.has(cRepris.id), 'colis livré et colis repris volontairement : non concernés');
-ok(a.enTournee >= 3 && a.colis.find((x) => x.id === cRoute.id)?.enTournee, 'colis en tournée signalés (seront retirés)', String(a.enTournee));
+ok(a.enTournee >= 2 && a.colis.find((x) => x.id === cRoute.id)?.enTournee, 'colis en tournée signalés (seront retirés)', String(a.enTournee));
 ok(a.parStatut.length >= 5 && a.total === ids.size, 'répartition par statut', JSON.stringify(a.parStatut));
 
 console.log('\n3. Panne JAX : rien n’est perdu');
@@ -122,7 +125,7 @@ await p.click('[data-testid=rattrapage-confirmer]');
 await p.waitForSelector('[data-testid=rattrapage-progression]', { timeout: 5000 }).catch(() => {});
 const fini = await attendre(async () => !(await p.$('[data-testid=rattrapage-progression]')) && !!(await p.$('[data-testid=rattrapage-envoyer]')), 90000);
 const apres = (await api(admin, 'GET', '/sous-traitance/jax/rattrapage')).data;
-ok(!!fini && ![cCree, cAgence, cAffecte, cRoute, cReporte, cTransit].some((c) => apres.colis.some((x) => x.id === c.id)), 'envoi terminé : nos colis ne sont plus « restés chez Runex »', `reste ${apres.total}`);
+ok(!!fini && ![cCree, cAgence, cAffecte, cRoute, cTransit].some((c) => apres.colis.some((x) => x.id === c.id)), 'envoi terminé : nos colis ne sont plus « restés chez Runex »', `reste ${apres.total}`);
 if (SHOTS) await p.screenshot({ path: `${SHOTS}/51-apres-envoi.png`, fullPage: true });
 await b.close();
 ok(errs.length === 0, 'aucune erreur JavaScript', errs.join(' | '));
@@ -130,9 +133,10 @@ ok(errs.length === 0, 'aucune erreur JavaScript', errs.join(' | '));
 console.log('\n5. Résultat');
 const chez = (await jax('/__control/etat')).colis;
 const chezJax = (c) => chez.some((x) => x.recu?.referenceExterne === c.trackingNumber);
-ok([cCree, cAgence, cAffecte, cRoute, cReporte, cTransit].every(chezJax), 'les 6 colis sont créés chez JAX');
+ok([cCree, cAgence, cAffecte, cRoute, cTransit].every(chezJax), 'les 5 colis sont créés chez JAX');
+ok(!(await lire(cReporte.id)).sousTraitance && (await lire(cReporte.id)).status === 'REPORTE', 'le colis reporté reste « Reporté » chez Runex');
 ok(!(await lire(cLivre.id)).sousTraitance && chez.filter((x) => x.recu?.referenceExterne === cLivre.trackingNumber).length <= 1, 'le colis livré n’est pas envoyé');
-for (const [c, lib] of [[cAgence, 'en agence'], [cAffecte, 'affecté à une tournée'], [cRoute, 'en cours de livraison'], [cReporte, 'reporté']]) {
+for (const [c, lib] of [[cAgence, 'en agence'], [cAffecte, 'affecté à une tournée'], [cRoute, 'en cours de livraison']]) {
   const d = await lire(c.id);
   ok(d.status === 'SOUS_TRAITE' && !d.currentRunsheetId && /^[A-Z]{3}\d+/.test(d.sousTraitance?.codeExterne ?? ''), `${lib} → « Confié au partenaire JAX », hors tournée`, `${d.status} ${d.currentRunsheetId}`);
 }
@@ -142,7 +146,7 @@ d = await lire(cTransit.id);
 ok(/INTER_DEPOT/.test(d.status) && d.sousTraitance?.codeExterne && d.sousTraitance.agence === sousse.name, 'en inter-dépôt → créé chez JAX, enlèvement prévu à l’agence d’arrivée', `${d.status} ${d.sousTraitance?.agence}`);
 const tournee = (await api(hamza, 'GET', '/runsheets/driver/active')).data;
 const restants = JSON.stringify(tournee?.packages ?? tournee?.colis ?? tournee ?? '');
-ok(![cAffecte, cRoute, cReporte].some((c) => restants.includes(c.trackingNumber)), 'application du livreur : colis retirés de sa tournée');
+ok(![cAffecte, cRoute].some((c) => restants.includes(c.trackingNumber)), 'application du livreur : colis retirés de sa tournée');
 await recevoir(cCree);
 ok(!!(await attendre(async () => (await lire(cCree.id)).status === 'SOUS_TRAITE')), 'réception du colis en préparation → « Confié au partenaire JAX »');
 const fin = (await api(admin, 'GET', '/sous-traitance/jax/rattrapage')).data;

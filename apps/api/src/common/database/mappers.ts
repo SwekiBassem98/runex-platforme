@@ -147,6 +147,7 @@ export function toPackageDto(record: PackageWithRelations): PackageDto {
     runsheetId: record.currentRunsheetId ?? undefined,
     expectedDeliveryDate: record.scheduledDeliveryDate?.toISOString(),
     driverNote: record.driverNotes ?? undefined,
+    driverSubZone: record.driverSubZone ?? null,
     currentLocation: record.currentDeposit
       ? record.currentDeposit.name
       : record.interDepotTransfer

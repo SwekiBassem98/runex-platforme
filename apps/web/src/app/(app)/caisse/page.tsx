@@ -297,6 +297,15 @@ export default function CaissePage() {
                     montant={r.remunerationLivreurs}
                     couleur="text-violet-700"
                   />
+                  {r.fraisJax > 0 && (
+                    <Ligne
+                      signe="−"
+                      libelle="Part de JAX"
+                      aide={`${r.colisLivresJax} colis livré${r.colisLivresJax > 1 ? 's' : ''} par JAX — Runex garde ${formatTND(r.margeJax)} sur ces colis`}
+                      montant={r.fraisJax}
+                      couleur="text-amber-700"
+                    />
+                  )}
                   <div className="mt-3 flex items-baseline justify-between gap-4 rounded-lg bg-emerald-50 px-4 py-3">
                     <div>
                       <p className="font-semibold text-emerald-900">= Bénéfice net</p>
@@ -316,7 +325,8 @@ export default function CaissePage() {
                     parts={[
                       { libelle: 'Expéditeurs', valeur: r.netExpediteurs, classe: 'bg-sky-500' },
                       { libelle: 'Livreurs', valeur: Math.min(r.remunerationLivreurs, r.fraisLivraison), classe: 'bg-violet-500' },
-                      { libelle: 'Bénéfice', valeur: Math.max(r.fraisLivraison - r.remunerationLivreurs, 0), classe: 'bg-emerald-500' },
+                      ...(r.fraisJax > 0 ? [{ libelle: 'JAX', valeur: Math.min(r.fraisJax, Math.max(r.fraisLivraison - r.remunerationLivreurs, 0)), classe: 'bg-amber-500' }] : []),
+                      { libelle: 'Bénéfice', valeur: Math.max(r.fraisLivraison - r.remunerationLivreurs - r.fraisJax, 0), classe: 'bg-emerald-500' },
                     ]}
                   />
                   <dl className="mt-5 space-y-2 border-t border-slate-200 pt-4 text-sm">
@@ -324,6 +334,18 @@ export default function CaissePage() {
                       <dt className="text-slate-500">Payé aux expéditeurs {phrase}</dt>
                       <dd className="font-medium tabular-nums text-slate-800">{formatTND(r.payeExpediteurs)}</dd>
                     </div>
+                    {(r.aRecevoirJax > 0 || r.recuJax > 0) && (
+                      <div className="flex justify-between gap-3" data-testid="caisse-jax">
+                        <dt className="text-slate-500">
+                          À recevoir de JAX
+                          <span className="block text-xs text-slate-400">contre-remboursements − part de JAX</span>
+                        </dt>
+                        <dd className="font-medium tabular-nums text-amber-800">
+                          {formatTND(r.aRecevoirJax)}
+                          <span className="block text-right text-xs font-normal text-slate-400">reçu {phrase} : {formatTND(r.recuJax)}</span>
+                        </dd>
+                      </div>
+                    )}
                     <div className="flex justify-between gap-3">
                       <dt className="text-slate-500">Payé aux livreurs {phrase}</dt>
                       <dd className="font-medium tabular-nums text-slate-800">{formatTND(r.payeLivreurs)}</dd>

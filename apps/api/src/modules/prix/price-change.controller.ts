@@ -36,7 +36,12 @@ export class PriceChangeController {
       success: true,
       data,
       message: approuver
-        ? `Nouveau prix appliqué au colis ${data.trackingNumber}.`
+        ? `Nouveau prix appliqué au colis ${data.trackingNumber}.` +
+          (data.jax === 'MIS_A_JOUR'
+            ? ' Montant mis à jour chez JAX.'
+            : data.jax === 'A_CORRIGER'
+              ? ' Colis chez JAX : corrigez aussi le montant à encaisser chez JAX (Sous-traitance JAX › À faire chez JAX).'
+              : '')
         : `Demande refusée : le colis ${data.trackingNumber} garde son prix.`,
     });
   }

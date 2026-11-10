@@ -45,7 +45,7 @@ const sfx = Date.now().toString().slice(-4);
 let n = 0;
 const creer = async () => {
   n++;
-  return (await api(exp, 'POST', '/colis', { customerName: `Q52 ${sfx}-${n}`, customerPhone: `9852${sfx}`.slice(0, 7) + n, governorate: 'Tunis', delegation: 'La Marsa', address: `Rue ${n}`, goodsPrice: 40 })).data;
+  return (await api(exp, 'POST', '/colis', { customerName: `Q52 ${sfx}-${n}`, customerPhone: `9852${sfx}`.slice(0, 7) + n, governorate: 'Sousse', delegation: 'Akouda', address: `Rue ${n}`, goodsPrice: 40 })).data;
 };
 const lire = async (id) => (await api(admin, 'GET', `/colis/${id}`)).data;
 const lireExp = async (id) => (await api(exp, 'GET', `/colis/${id}`)).data;

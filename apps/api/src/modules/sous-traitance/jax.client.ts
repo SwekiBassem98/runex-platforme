@@ -275,5 +275,15 @@ export const jaxClient = {
   colis: (ean: string) => appel('GET', `/user/colis/colisByean/${encodeURIComponent(ean)}`),
   problemes: (ref: string) => appel('GET', `/client/colisProbleme/${encodeURIComponent(ref)}`),
   statuts: () => appel('GET', '/statuts/'),
+  /**
+   * Montant à encaisser d'un colis. La collection d'API fournie par JAX n'a pas
+   * de route de modification : elle n'est appelée que si JAX en communique une
+   * (JAX_ROUTE_MODIF_PRIX, ex. « /user/colis/update/{ean} »).
+   */
+  modifierPrix: (ean: string, prix: number) => {
+    const route = process.env.JAX_ROUTE_MODIF_PRIX?.trim();
+    if (!route) return Promise.reject(new JaxError('Pas de route JAX de modification du prix.', null));
+    return appel('POST', route.replace('{ean}', encodeURIComponent(ean)), { ean, prix, cod: prix });
+  },
   gouvernorats: () => appel('GET', '/gouvernorats'),
 };

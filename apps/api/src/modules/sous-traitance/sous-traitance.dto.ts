@@ -23,6 +23,7 @@ export function versDto(r: LigneST | null | undefined): SousTraitanceColisDto | 
     derniereSyncLe: r.derniereSyncLe?.toISOString() ?? null,
     derniereErreur: r.derniereErreur,
     codMontant: n3(r.codMontant),
+    fraisPartenaire: r.fraisPartenaire === null || r.fraisPartenaire === undefined ? null : n3(r.fraisPartenaire),
     codRecuLe: r.codRecuLe?.toISOString() ?? null,
   };
 }

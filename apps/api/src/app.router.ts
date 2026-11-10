@@ -383,6 +383,14 @@ export function createApiRouter(): Router {
     asyncHandler((req, res) => colisController.returnPackage(req, res))
   );
 
+  // Sous-zone du colis, choisie par le livreur pour ranger sa tournée.
+  router.put(
+    withColisSuffix('/sous-zone'),
+    authenticateToken,
+    requireRoles(...FIELD_ROLES),
+    asyncHandler((req, res) => colisController.sousZone(req, res))
+  );
+
   // Démarrage de la livraison par le livreur affecté.
   router.post(
     COLIS_ACTION_START,
@@ -1076,6 +1084,10 @@ export function createApiRouter(): Router {
   st('get', '/sous-traitance/jax/parametres', (q, r) => sousTraitanceController.parametres(q, r));
   st('post', '/sous-traitance/jax/referentiels', (q, r) => sousTraitanceController.referentiels(q, r));
   st('put', '/sous-traitance/jax/zones', (q, r) => sousTraitanceController.zones(q, r));
+  st('put', '/sous-traitance/jax/zones-runex', (q, r) => sousTraitanceController.zonesRunex(q, r));
+  st('get', '/sous-traitance/jax/actions', (q, r) => sousTraitanceController.actions(q, r));
+  st('post', '/sous-traitance/jax/correction', (q, r) => sousTraitanceController.correction(q, r));
+  st('post', '/sous-traitance/jax/colis/:id/action-faite', (q, r) => sousTraitanceController.actionFaite(q, r));
   st('patch', '/sous-traitance/jax/statuts/:code', (q, r) => sousTraitanceController.statut(q, r));
   st('get', '/sous-traitance/jax/colis', (q, r) => sousTraitanceController.lister(q, r));
   st('get', '/sous-traitance/jax/eligibles', (q, r) => sousTraitanceController.eligibles(q, r));

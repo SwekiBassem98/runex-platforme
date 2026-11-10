@@ -123,12 +123,14 @@ export const PACKAGE_STATUS_TRANSITIONS: Readonly<Record<PackageStatus, readonly
 
   // --- Sous-traitance (partenaire JAX) ---
   // Le partenaire livre (LIVRE) ou rend le colis à l'agence (RETOUR_DEPOT) ;
-  // repris avant enlèvement, le colis revient en stock (RECU_DEPOT). Aucune
-  // tournée ni inter-dépôt Runex tant qu'il est chez le partenaire.
+  // repris avant enlèvement, le colis revient en stock (RECU_DEPOT) ou est
+  // annulé (ANNULE). Aucune tournée ni inter-dépôt Runex tant qu'il est chez
+  // le partenaire.
   [PackageStatus.SOUS_TRAITE]: [
     PackageStatus.LIVRE,
     PackageStatus.RETOUR_DEPOT,
     PackageStatus.RECU_DEPOT,
+    PackageStatus.ANNULE,
   ],
 
   // --- Dernier kilomètre ---
@@ -154,8 +156,8 @@ export const PACKAGE_STATUS_TRANSITIONS: Readonly<Record<PackageStatus, readonly
   // --- Reprises et échecs ---
   [PackageStatus.REPORTE]: [
     PackageStatus.AFFECTE_RUNSHEET,
-    // Reporté, revenu au dépôt : il peut être confié au partenaire JAX.
-    PackageStatus.SOUS_TRAITE,
+    // Reporté : il reste chez Runex, le livreur le livre à nouveau (réunion du
+    // 10/11) — il n'est jamais confié au partenaire JAX.
     PackageStatus.EN_COURS_LIVRAISON,
     PackageStatus.LIVRE,
     PackageStatus.LIVRAISON_PARTIELLE,

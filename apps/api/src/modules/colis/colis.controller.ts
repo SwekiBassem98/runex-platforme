@@ -31,6 +31,7 @@ export class ColisController {
       date,
       avecCreesEnAttente,
       deliveredFrom,
+      createdFrom,
       depot,
       unassigned,
       page,
@@ -49,6 +50,7 @@ export class ColisController {
       date: date as string,
       avecCreesEnAttente: avecCreesEnAttente === '1' || avecCreesEnAttente === 'true',
       deliveredFrom: deliveredFrom as string,
+      createdFrom: createdFrom as string,
       depot: depot as string,
       unassigned: unassigned === '1' || unassigned === 'true',
       page: page ? parseInt(page as string, 10) : 1,
@@ -402,6 +404,21 @@ export class ColisController {
    * Démarrage de la livraison par le livreur : le colis passe en
    * « en cours de livraison » juste avant la présentation au client.
    */
+  /** `PUT /colis/:id/sous-zone` — `{ sousZone: string | null }` : le livreur range ses colis. */
+  async sousZone(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const { identifier } = req.params;
+    try {
+      const pkg = await colisService.definirSousZone(identifier, req.body?.sousZone ?? null, {
+        id: req.user?.id,
+        role: req.user?.role!,
+        driverId: req.user?.driverId,
+      });
+      res.json({ success: true, data: pkg, message: pkg.driverSubZone ? `Sous-zone « ${pkg.driverSubZone} ».` : 'Sous-zone retirée.' });
+    } catch (err: unknown) {
+      respondError(res, err, 'Sous-zone impossible à enregistrer.');
+    }
+  }
+
   async startDelivery(req: AuthenticatedRequest, res: Response): Promise<void> {
     const { identifier } = req.params;
     try {

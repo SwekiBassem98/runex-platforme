@@ -113,7 +113,8 @@ r = await api(admin, 'POST', `/runsheets/${rs?.id}/add-package`, { packageIdenti
 ok(r.status === 409 && /Confié au partenaire JAX/.test(r.message ?? '') && (await lire(cAuto.id)).status === 'SOUS_TRAITE', 'ajout à une tournée Runex : refusé', `${r.status} ${r.message}`);
 r = await api(exp, 'PATCH', `/colis/${cAuto.id}`, { customerPhone: '22222222' });
 if (r.status === 404 || r.status === 405) r = await api(exp, 'PUT', `/colis/${cAuto.id}`, { customerPhone: '22222222' });
-ok(r.status === 409 && /JAX/.test(r.message ?? ''), 'modification par l’expéditeur : refusée (confié à JAX)', `${r.status} ${r.message}`);
+// Réunion du 10/11 : seul le prix reste modifiable ; le message ne cite pas le partenaire.
+ok(r.status === 409 && /seul son prix/.test(r.message ?? ''), 'modification par l’expéditeur : refusée sauf le prix (confié à JAX)', `${r.status} ${r.message}`);
 const T = (await api(admin, 'POST', '/inter-depots', { type: 'LIVRAISON', destinationDepositId: sousse.id, transporterDriverId: opts.drivers[0].id })).data;
 r = await api(admin, 'POST', `/inter-depots/${T.transferNumber}/scan`, { code: cAuto.barcode, mode: 'add' });
 ok(r.status >= 400, 'chargement dans un inter-dépôt : refusé', `${r.status}`);
@@ -169,7 +170,7 @@ console.log('\n7. Encaissements : expéditeur réglé après le reversement JAX'
 let cand = (await api(admin, 'GET', '/payments/vouchers/candidats')).data.find((x) => x.shipperId === bluestar.id);
 const livresAvant = cand?.livres ?? 0;
 let liste = (await api(admin, 'GET', '/sous-traitance/jax/colis?cod=a_recevoir')).data;
-ok(liste.lignes.some((l) => l.packageId === cAuto.id) && liste.codARecevoir.total >= Number(d.totalPrice), 'encaissements : montant à recevoir de JAX');
+ok(liste.lignes.some((l) => l.packageId === cAuto.id) && liste.codARecevoir.total >= Number(d.totalPrice) - 6.5, 'encaissements : montant à recevoir de JAX (moins sa part)');
 r = await api(admin, 'POST', '/sous-traitance/jax/encaissements', { packageIds: [cAuto.id] });
 ok(r.status === 200, 'reversement JAX enregistré', r.message);
 cand = (await api(admin, 'GET', '/payments/vouchers/candidats')).data.find((x) => x.shipperId === bluestar.id);

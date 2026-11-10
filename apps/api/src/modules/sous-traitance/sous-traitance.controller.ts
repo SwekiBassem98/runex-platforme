@@ -21,6 +21,33 @@ export class SousTraitanceController {
     const zones = await sousTraitanceService.definirZones(req.body?.governorates, acteur(req));
     res.json({ success: true, data: zones, message: zones.length ? `${zones.length} gouvernorat(s) confié(s) automatiquement à JAX.` : 'Aucun envoi automatique à JAX.' });
   }
+  /** `PUT /sous-traitance/jax/zones-runex` — `{ governorates: string[] }` : jamais créés chez JAX. */
+  async zonesRunex(req: AuthenticatedRequest, res: Response) {
+    const zones = await sousTraitanceService.definirZones(req.body?.governorates, acteur(req), 'RUNEX');
+    res.json({
+      success: true,
+      data: zones,
+      message: zones.length ? `${zones.length} gouvernorat(s) livré(s) par Runex seulement.` : 'Tous les nouveaux colis partent chez JAX.',
+    });
+  }
+  /** `GET /sous-traitance/jax/actions` — gestes à faire à la main chez JAX. */
+  async actions(_req: AuthenticatedRequest, res: Response) {
+    res.json({ success: true, data: await sousTraitanceService.actionsAFaire() });
+  }
+  /** `POST /sous-traitance/jax/correction` — colis reportés et zones Runex, pas encore enlevés : rendus à Runex. */
+  async correction(req: AuthenticatedRequest, res: Response) {
+    const r = await sousTraitanceService.corrigerColisGardesParRunex(acteur(req));
+    res.json({
+      success: true,
+      data: r,
+      message: r.repris ? `${r.repris} colis rendus à Runex (dont ${r.reportes} de nouveau « Reporté »).` : 'Aucun colis à rendre à Runex.',
+    });
+  }
+  /** `POST /sous-traitance/jax/colis/:id/action-faite` */
+  async actionFaite(req: AuthenticatedRequest, res: Response) {
+    const r = await sousTraitanceService.actionFaite(String(req.params.id), acteur(req));
+    res.json({ success: true, data: null, message: r.message });
+  }
   /** `PATCH /sous-traitance/jax/statuts/:code` — `{ etat }` (null : automatique) */
   async statut(req: AuthenticatedRequest, res: Response) {
     // `{ statutRunex }` : statut du colis ; `{ etat }` : étape de sous-traitance.

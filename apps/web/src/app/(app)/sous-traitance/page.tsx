@@ -11,18 +11,21 @@
  *  - Enlèvements : colis créés chez JAX, à faire enlever par agence ;
  *  - Encaissements : montants encaissés par JAX, à reverser à Runex — un
  *    expéditeur n'est réglé qu'une fois le reversement reçu ;
- *  - Paramètres : connexion, référentiels JAX, zones confiées
- *    automatiquement, correspondance des statuts JAX.
+ *  - À faire chez JAX : codes à annuler et montants à corriger à la main
+ *    (l'API JAX n'offre ni annulation ni modification) ;
+ *  - Paramètres : connexion, référentiels JAX, zones livrées par Runex seulement,
+ *    zones confiées automatiquement, correspondance des statuts JAX.
  */
 
 import React from 'react';
 import Link from 'next/link';
-import { AlertTriangle, CheckCircle2, Coins, Handshake, PackageCheck, RefreshCw, Send, Settings2, Truck } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ClipboardList, Coins, Handshake, PackageCheck, RefreshCw, Send, Settings2, Truck } from 'lucide-react';
 import { Card, PageHeader, useToast } from '@logixpress/ui';
 import { ETATS_SOUS_TRAITANCE, PACKAGE_STATUS_LABELS, type PackageStatus } from '@logixpress/types';
 import {
   interDepotsApi,
   sousTraitanceApi,
+  type ActionJax,
   type ColisEligibleJax,
   type EnlevementJax,
   type ListeSousTraitance,
@@ -32,13 +35,14 @@ import {
 import { GOUVERNORATS } from '@/features/expediteur/lib/libelles';
 import { EtatJax } from '@/features/sous-traitance/EtatJax';
 
-type Onglet = 'confies' | 'rattrapage' | 'aconfier' | 'enlevements' | 'encaissements' | 'parametres';
+type Onglet = 'confies' | 'rattrapage' | 'aconfier' | 'enlevements' | 'encaissements' | 'afaire' | 'parametres';
 const ONGLETS: { id: Onglet; libelle: string; icone: React.ElementType }[] = [
   { id: 'confies', libelle: 'Colis confiés', icone: Handshake },
   { id: 'rattrapage', libelle: 'Restés chez Runex', icone: AlertTriangle },
   { id: 'aconfier', libelle: 'À confier', icone: Send },
   { id: 'enlevements', libelle: 'Enlèvements', icone: Truck },
   { id: 'encaissements', libelle: 'Encaissements JAX', icone: Coins },
+  { id: 'afaire', libelle: 'À faire chez JAX', icone: ClipboardList },
   { id: 'parametres', libelle: 'Paramètres', icone: Settings2 },
 ];
 const dt = (n: number) => `${(Number(n) || 0).toLocaleString('fr-FR', { minimumFractionDigits: 3, maximumFractionDigits: 3 })} DT`;
@@ -134,7 +138,8 @@ export default function SousTraitancePage() {
         {onglet === 'rattrapage' && <Rattrapage notifier={notifier} onChange={chargerCompteurs} />}
         {onglet === 'aconfier' && <AConfier depots={depots} notifier={notifier} onChange={chargerCompteurs} configure={!!params?.configure} />}
         {onglet === 'enlevements' && <Enlevements notifier={notifier} onChange={chargerCompteurs} />}
-        {onglet === 'encaissements' && <Encaissements notifier={notifier} onChange={chargerCompteurs} />}
+        {onglet === 'encaissements' && <Encaissements notifier={notifier} onChange={chargerCompteurs} fraisColis={params?.fraisColis ?? null} />}
+        {onglet === 'afaire' && <AFaireChezJax notifier={notifier} />}
         {onglet === 'parametres' && <Parametres params={params} recharger={chargerParams} notifier={notifier} />}
       </div>
     </div>
@@ -143,6 +148,89 @@ export default function SousTraitancePage() {
 
 type Notifier = (ok: boolean, titre: string, message?: string) => void;
 const erreur = (e: unknown) => (e instanceof Error ? e.message : undefined);
+
+/* ------------------------------------------------------------------ */
+
+/** Codes JAX à annuler et montants à corriger à la main chez JAX. */
+function AFaireChezJax({ notifier }: { notifier: Notifier }) {
+  const [liste, setListe] = React.useState<ActionJax[] | null>(null);
+  const [occupe, setOccupe] = React.useState<string | null>(null);
+  const charger = React.useCallback(async () => {
+    try {
+      setListe(await sousTraitanceApi.actions());
+    } catch (e) {
+      notifier(false, 'Liste indisponible', erreur(e));
+    }
+  }, [notifier]);
+  React.useEffect(() => void charger(), [charger]);
+  const corriger = async () => {
+    setOccupe('correction');
+    try {
+      notifier(true, (await sousTraitanceApi.correction()).message ?? 'Fait');
+      await charger();
+    } catch (e) {
+      notifier(false, 'Impossible', erreur(e));
+    } finally {
+      setOccupe(null);
+    }
+  };
+  const fait = async (packageId: string) => {
+    setOccupe(packageId);
+    try {
+      notifier(true, (await sousTraitanceApi.actionFaite(packageId)).message ?? 'Fait');
+      await charger();
+    } catch (e) {
+      notifier(false, 'Impossible', erreur(e));
+    } finally {
+      setOccupe(null);
+    }
+  };
+  return (
+    <Card>
+      <p className="text-xs text-slate-500 mb-3">
+        L’API JAX ne permet ni d’annuler un colis ni de changer son montant. Faites ces gestes dans l’application JAX, puis cochez-les
+        « Fait ». Un colis gardé par Runex (zone Runex, colis reporté, colis annulé) laisse ici son code JAX à annuler ; un prix approuvé
+        sur un colis chez JAX laisse le montant à corriger.
+      </p>
+      <button
+        type="button"
+        disabled={occupe === 'correction'}
+        onClick={() => void corriger()}
+        data-testid="rendre-a-runex"
+        className={`${bouton} mb-3 border border-slate-300 bg-white text-slate-800 hover:bg-slate-50`}
+      >
+        <RefreshCw className={`w-4 h-4 ${occupe === 'correction' ? 'animate-spin' : ''}`} aria-hidden="true" /> Rendre à Runex les colis
+        reportés et des zones Runex pas encore enlevés par JAX
+      </button>
+      {!liste ? (
+        <p className="text-sm text-slate-400">Chargement…</p>
+      ) : liste.length === 0 ? (
+        <p className="text-sm text-slate-500" data-testid="afaire-vide">Rien à faire chez JAX.</p>
+      ) : (
+        <ul className="divide-y divide-slate-100" data-testid="afaire-jax">
+          {liste.map((a) => (
+            <li key={a.packageId} className="py-2.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+              <Link href={`/colis/${a.packageId}`} className="font-mono text-sm text-violet-700 hover:underline">
+                {a.trackingNumber}
+              </Link>
+              <span className="text-xs text-slate-400">{PACKAGE_STATUS_LABELS[a.statutRunex as PackageStatus] ?? a.statutRunex}</span>
+              <span className="text-sm text-slate-800 basis-full sm:basis-auto sm:flex-1 min-w-0 break-words">{a.action}</span>
+              <span className="text-xs text-slate-400">{quand(a.depuis)}</span>
+              <button
+                type="button"
+                disabled={occupe === a.packageId}
+                onClick={() => void fait(a.packageId)}
+                className={`${bouton} border border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100`}
+              >
+                <CheckCircle2 className="w-4 h-4" aria-hidden="true" /> Fait
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
 
 /* ------------------------------------------------------------------ */
 
@@ -671,7 +759,7 @@ function Enlevements({ notifier, onChange }: { notifier: Notifier; onChange: () 
 
 /* ------------------------------------------------------------------ */
 
-function Encaissements({ notifier, onChange }: { notifier: Notifier; onChange: () => void }) {
+function Encaissements({ notifier, onChange, fraisColis }: { notifier: Notifier; onChange: () => void; fraisColis: number | null }) {
   const [liste, setListe] = React.useState<ListeSousTraitance | null>(null);
   const [choix, setChoix] = React.useState<Set<string>>(new Set());
   const [occupe, setOccupe] = React.useState(false);
@@ -684,7 +772,9 @@ function Encaissements({ notifier, onChange }: { notifier: Notifier; onChange: (
   }, [notifier]);
   React.useEffect(() => void charger(), [charger]);
   const lignes = liste?.lignes ?? [];
-  const totalChoisi = lignes.filter((l) => choix.has(l.packageId)).reduce((s, l) => s + l.codMontant, 0);
+  // Reversé par JAX : contre-remboursement moins sa part.
+  const net = (l: { codMontant: number; fraisPartenaire?: number | null }) => l.codMontant - (l.fraisPartenaire ?? 0);
+  const totalChoisi = lignes.filter((l) => choix.has(l.packageId)).reduce((s, l) => s + net(l), 0);
 
   const recu = async () => {
     setOccupe(true);
@@ -704,8 +794,9 @@ function Encaissements({ notifier, onChange }: { notifier: Notifier; onChange: (
   return (
     <Card>
       <p className="text-xs text-slate-500 mb-3">
-        JAX encaisse le montant des colis qu’il livre et le reverse à Runex. Cochez les colis dont vous avez reçu le montant : leurs
-        expéditeurs pourront alors être réglés (bordereaux). Tant qu’un montant n’est pas reçu, le colis reste hors bordereau.
+        JAX encaisse le montant des colis qu’il livre, garde sa part ({fraisColis !== null ? dt(fraisColis) : '—'} par colis livré
+        depuis le 10/11) et reverse le reste à Runex. Cochez les colis dont vous avez reçu le montant : leurs expéditeurs pourront
+        alors être réglés (bordereaux). Tant qu’un montant n’est pas reçu, le colis reste hors bordereau.
       </p>
       <div className="flex flex-wrap items-center gap-3 mb-3">
         <p className="text-sm text-slate-700">
@@ -736,13 +827,15 @@ function Encaissements({ notifier, onChange }: { notifier: Notifier; onChange: (
             <th className="py-2 pr-3">Code JAX</th>
             <th className="py-2 pr-3">Expéditeur</th>
             <th className="py-2 pr-3">Livré</th>
-            <th className="py-2 text-right">Montant encaissé par JAX</th>
+            <th className="py-2 pr-3 text-right">Encaissé par JAX</th>
+            <th className="py-2 pr-3 text-right">Part JAX</th>
+            <th className="py-2 text-right">À reverser</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
           {lignes.length === 0 ? (
             <tr>
-              <td colSpan={6} className="py-8 text-center text-slate-500">Rien à recevoir de JAX.</td>
+              <td colSpan={8} className="py-8 text-center text-slate-500">Rien à recevoir de JAX.</td>
             </tr>
           ) : (
             lignes.map((l) => (
@@ -766,7 +859,9 @@ function Encaissements({ notifier, onChange }: { notifier: Notifier; onChange: (
                 <td className="py-2 pr-3 font-mono text-xs">{l.codeExterne}</td>
                 <td className="py-2 pr-3 text-xs">{l.expediteur}</td>
                 <td className="py-2 pr-3 text-xs">{quand(l.statutExterneLe)}</td>
-                <td className="py-2 text-right font-mono text-xs">{dt(l.codMontant)}</td>
+                <td className="py-2 pr-3 text-right font-mono text-xs">{dt(l.codMontant)}</td>
+                <td className="py-2 pr-3 text-right font-mono text-xs text-amber-800">{l.fraisPartenaire !== null && l.fraisPartenaire !== undefined ? `− ${dt(l.fraisPartenaire)}` : '—'}</td>
+                <td className="py-2 text-right font-mono text-xs font-semibold">{dt(net(l))}</td>
               </tr>
             ))
           )}
@@ -780,8 +875,10 @@ function Encaissements({ notifier, onChange }: { notifier: Notifier; onChange: (
 
 function Parametres({ params, recharger, notifier }: { params: ParametresJax | null; recharger: () => Promise<void>; notifier: Notifier }) {
   const [zones, setZones] = React.useState<Set<string>>(new Set());
+  const [zonesRunex, setZonesRunex] = React.useState<Set<string>>(new Set());
   const [occupe, setOccupe] = React.useState<string | null>(null);
   React.useEffect(() => setZones(new Set(params?.zones ?? [])), [params]);
+  React.useEffect(() => setZonesRunex(new Set(params?.zonesRunex ?? [])), [params]);
   if (!params) return <Card><p className="text-sm text-slate-400">Chargement…</p></Card>;
 
   const action = async (cle: string, f: () => Promise<{ message?: string }>, titreErreur: string) => {
@@ -840,9 +937,46 @@ function Parametres({ params, recharger, notifier }: { params: ParametresJax | n
         </p>
       </Card>
 
+      <Card title="Zones livrées par Runex seulement">
+        <p className="text-xs text-slate-500 mb-3">
+          Les colis à destination de ces gouvernorats ne sont jamais créés chez JAX : ils restent dans Runex et sont livrés par ses
+          livreurs. Tous les autres colis partent chez JAX dès leur création. Un colis reporté reste aussi chez Runex, quelle que
+          soit sa destination.
+        </p>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-sm" data-testid="zones-runex">
+          {GOUVERNORATS.map((g) => (
+            <label key={g} className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={zonesRunex.has(g)}
+                onChange={(e) =>
+                  setZonesRunex((z) => {
+                    const n = new Set(z);
+                    if (e.target.checked) n.add(g);
+                    else n.delete(g);
+                    return n;
+                  })
+                }
+              />
+              {g}
+            </label>
+          ))}
+        </div>
+        <button
+          type="button"
+          disabled={!!occupe}
+          onClick={() => void action('zonesRunex', async () => ({ message: (await sousTraitanceApi.zonesRunex([...zonesRunex])).message }), 'Enregistrement impossible')}
+          data-testid="enregistrer-zones-runex"
+          className={`${bouton} mt-4 bg-slate-900 text-white hover:bg-slate-800`}
+        >
+          Enregistrer les zones Runex ({zonesRunex.size})
+        </button>
+      </Card>
+
       <Card title="Colis anciens confiés automatiquement à JAX">
         <p className="text-xs text-slate-500 mb-3">
-          Tout colis créé (portail expéditeur ou exploitation) part chez JAX automatiquement, sans confirmation. Ces zones ne
+          Tout colis créé (portail expéditeur ou exploitation) part chez JAX automatiquement, sans confirmation — sauf vers les zones
+          livrées par Runex. Ces zones ne
           concernent que les colis créés avant la mise en service de JAX : à leur réception en agence, ceux dont la destination est
           cochée partent chez JAX ; les autres restent livrés par Runex, sauf envoi manuel (onglet « À confier »).
         </p>
