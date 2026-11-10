@@ -42,6 +42,8 @@ export interface PriceChangeDto {
   decisionNote: string | null;
   decidedAt: string | null;
   createdAt: string;
+  /** Colis chez JAX : montant mis à jour chez JAX, ou à y corriger à la main. */
+  jax?: 'MIS_A_JOUR' | 'A_CORRIGER';
 }
 
 const INCLUDE = {
@@ -226,6 +228,7 @@ export class PriceChangeService {
     const uuid = asUuid(id);
     if (!uuid) throw new BusinessRuleError('Demande introuvable.', 404);
     const prisma = getPrisma();
+    let jax: string | null = null;
     const demande = await prisma.$transaction(async (tx) => {
       const verrou = await tx.$queryRaw<{ id: string }[]>`
         SELECT id FROM "PriceChangeRequest" WHERE id = ${uuid}::uuid FOR UPDATE`;
@@ -260,6 +263,9 @@ export class PriceChangeService {
           where: { id: pkg.id },
           data: { declaredValue: new Prisma.Decimal(r3(total - frais)), totalPrice: new Prisma.Decimal(total) },
         });
+        // Colis chez JAX : le nouveau montant à encaisser doit y être reporté.
+        const { sousTraitanceService } = await import('../sous-traitance/sous-traitance.service');
+        jax = await sousTraitanceService.signalerPrixModifie(pkg.id, total, tx);
         if (pkg.currentRunsheetId && delta !== 0 && pkg.status !== 'ANNULE') {
           await tx.runsheet.update({
             where: { id: pkg.currentRunsheetId },
@@ -330,7 +336,12 @@ export class PriceChangeService {
           .catch(() => undefined);
       }
     }
-    return (await versDtos([demande]))[0]!;
+    let jaxMisAJour = false;
+    if (approuver && jax) {
+      const { sousTraitanceService } = await import('../sous-traitance/sous-traitance.service');
+      jaxMisAJour = await sousTraitanceService.reporterPrixChezJax(demande.packageId);
+    }
+    return { ...(await versDtos([demande]))[0]!, ...(approuver && jax ? { jax: jaxMisAJour ? 'MIS_A_JOUR' : 'A_CORRIGER' } : {}) };
   }
 }
 

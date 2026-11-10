@@ -455,6 +455,8 @@ export interface SousTraitanceColisDto {
   derniereSyncLe: string | null;
   derniereErreur: string | null;
   codMontant: number;
+  /** Part du partenaire sur ce colis livré (null : colis livré avant la règle du 10/11). */
+  fraisPartenaire?: number | null;
   codRecuLe: string | null;
 }
 
@@ -501,6 +503,8 @@ export interface PackageDto {
   expectedDeliveryDate?: string;
   supplierContact?: string;
   driverNote?: string;
+  /** Sous-zone choisie par le livreur pour ranger ses colis (application mobile). */
+  driverSubZone?: string | null;
   returnedItemDescription?: string;
   returnedItemBarcode?: string;
   deliveredPieces?: number;

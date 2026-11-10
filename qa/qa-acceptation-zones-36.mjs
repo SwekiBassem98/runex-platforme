@@ -49,7 +49,8 @@ const accepter = (code, type, depositId = hub.id) => api(admin, 'POST', '/inter-
 console.log('\n1. Acceptation Magasin : Tunis et Ben Arous seulement');
 const cBA = await colis(bluestar.id);
 const cTN = await colis(benhcine.id);
-const cSO = await colis(techstore.id, { pieceCount: 2 });
+// Destination Tunis : livrée par Runex (sinon confiée à JAX dès sa réception).
+const cSO = await colis(techstore.id, { pieceCount: 2, governorate: 'Tunis', delegation: 'La Marsa' });
 let r = await magasin(cBA.barcode);
 ok(r.status === 200 && r.data?.outcome === 'RECEIVED', 'expéditeur de Ben Arous : reçu', `${r.status} ${r.message}`);
 r = await magasin(cTN.barcode);
@@ -74,8 +75,9 @@ ok(board?.receivedCount >= 1, 'compteur « colis reçus » à jour', String(boar
 
 console.log('\n3. Acceptation inter dépôt retours : toutes les zones');
 // Un retour d'expéditeur de Sousse revenu à l'agence de Sousse…
+// Destination Tunis : livrée par Runex seulement (réunion du 10/11), le livreur Runex peut la reporter.
 const ret = async (shipperId) => {
-  const c = await colis(shipperId);
+  const c = await colis(shipperId, { governorate: 'Tunis', delegation: 'La Marsa' });
   await api(admin, 'POST', `/colis/${c.id}/assign`, { driverId: hamzaId });
   for (let k = 0; k < 3; k++) { await api(hamza, 'POST', `/colis/${c.id}/start`, {}); await api(hamza, 'POST', `/colis/${c.id}/postpone`, { reason: 'Client absent' }); }
   return c;

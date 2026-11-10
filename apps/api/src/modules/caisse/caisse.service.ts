@@ -7,7 +7,12 @@
  *  - combien est dû aux expéditeurs, combien leur a été réglé ;
  *  - combien coûtent les livreurs (3 DT par colis livré ou ramassage effectué),
  *    combien leur a été payé, combien reste à payer à chacun ;
- *  - la marge nette (frais − rémunération des livreurs).
+ *  - la marge nette (frais − rémunération des livreurs − part de JAX).
+ *
+ * Colis livrés par le partenaire JAX : JAX encaisse le contre-remboursement
+ * et garde sa part (6,500 DT sur un colis standard à 8,000 DT de frais) ; il
+ * reverse le reste à Runex. La part de JAX est figée sur le colis à sa
+ * livraison : les colis livrés avant cette règle ne changent pas.
  *
  * Tous les montants sont calculés en base (SQL), jamais sur une liste
  * tronquée. Les paiements des livreurs sont enregistrés (`DriverPayout`) :
@@ -52,6 +57,14 @@ export interface ResumeCaisse {
   payeLivreurs: number;
   resteLivreurs: number;
   margeNette: number;
+  /** Colis livrés par JAX sur la période, et la part de JAX sur ces colis. */
+  colisLivresJax: number;
+  fraisJax: number;
+  /** Ce que Runex garde sur les colis livrés par JAX (frais − part de JAX). */
+  margeJax: number;
+  /** Depuis toujours : à recevoir de JAX (contre-remboursements − sa part), reçu de JAX sur la période. */
+  aRecevoirJax: number;
+  recuJax: number;
 }
 
 export interface LigneLivreur {
@@ -86,6 +99,23 @@ export class CaisseService {
   async resume(from?: string, to?: string): Promise<ResumeCaisse> {
     const prisma = getPrisma();
     const p = bornes(from, to);
+
+    const [jaxLivres, jaxAttendu, jaxRecu] = await Promise.all([
+      prisma.$queryRaw<{ nb: bigint; frais: Prisma.Decimal | null; fraisColis: Prisma.Decimal | null }[]>`
+        SELECT count(*) AS nb, sum(st."fraisPartenaire") AS frais,
+               sum(p."deliveryFee") FILTER (WHERE st."fraisPartenaire" IS NOT NULL) AS "fraisColis"
+        FROM "SousTraitance" st JOIN "Package" p ON p.id = st."packageId"
+        WHERE st.etat = 'LIVRE' AND p."deletedAt" IS NULL AND p.status::text IN (${Prisma.join(LIVRES)})
+          AND ${sqlPeriode(Prisma.sql`p."deliveredAt"`, p)}`,
+      prisma.$queryRaw<{ total: Prisma.Decimal | null }[]>`
+        SELECT sum(st."codMontant" - COALESCE(st."fraisPartenaire", 0)) AS total
+        FROM "SousTraitance" st WHERE st.etat = 'LIVRE' AND st."codRecuLe" IS NULL`,
+      prisma.$queryRaw<{ total: Prisma.Decimal | null }[]>`
+        SELECT sum(st."codMontant" - COALESCE(st."fraisPartenaire", 0)) AS total
+        FROM "SousTraitance" st WHERE st.etat = 'LIVRE' AND st."codRecuLe" IS NOT NULL
+          AND ${sqlPeriode(Prisma.sql`st."codRecuLe"`, p)}`,
+    ]);
+    const fraisJax = r3(n(jaxLivres[0]?.frais));
 
     const [paiements, livraisons, retours, vouchersPayes, vouchersOuverts, horsBordereau, ramassages, payouts, gagneTotal, payeTotal, aValider] =
       await Promise.all([
@@ -166,7 +196,12 @@ export class CaisseService {
       remunerationLivreurs,
       payeLivreurs: r3(n(payouts[0]?.total)),
       resteLivreurs: r3(Math.max(totalGagne - n(payeTotal[0]?.total), 0)),
-      margeNette: r3(fraisLivraison + fraisRetour - remunerationLivreurs),
+      margeNette: r3(fraisLivraison + fraisRetour - remunerationLivreurs - fraisJax),
+      colisLivresJax: n(jaxLivres[0]?.nb),
+      fraisJax,
+      margeJax: r3(n(jaxLivres[0]?.fraisColis) - fraisJax),
+      aRecevoirJax: r3(n(jaxAttendu[0]?.total)),
+      recuJax: r3(n(jaxRecu[0]?.total)),
     };
   }
 

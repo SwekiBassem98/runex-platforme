@@ -40,7 +40,8 @@ for (const d of [7, 30, 90]) {
 const rx = await ja(admin, '/dashboard?days=5');
 ok(rx.d?.vue?.periodDays === 14, 'période inconnue → 14 jours');
 const somme = Object.values(v.pipeline).reduce((a, b) => a + b, 0);
-ok(somme === v.active, 'parcours = colis en cours', `${somme} vs ${v.active}`);
+// Réunion du 10/11 : le parcours porte sur les colis créés sur la période (jusqu'à « Livrés »).
+ok(somme <= v.period.created && typeof v.pipeline.livre === 'number', 'parcours = colis créés sur la période, étape « Livrés » comprise', `${somme} vs ${v.period.created}`);
 ok(v.daily.reduce((s, j) => s + j.created, 0) === v.period.created, 'courbe : somme des créés = période');
 ok(v.daily.reduce((s, j) => s + j.delivered, 0) === v.period.delivered, 'courbe : somme des livrés = période');
 ok(v.topDrivers.every((d, i, t) => i === 0 || t[i - 1].delivered >= d.delivered), 'livreurs triés par livraisons');

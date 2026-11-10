@@ -791,6 +791,8 @@ model Package {
   scheduledDeliveryDate DateTime? @db.Timestamptz(6)
   lastDeliveryAttemptAt DateTime? @db.Timestamptz(6)
   deliveryAttemptsCount Int       @default(0)
+  /// Sous-zone choisie par le livreur pour ranger ses colis.
+  driverSubZone         String?   @db.VarChar(60)
   deliveredAt           DateTime? @db.Timestamptz(6)
 
   // Réception en dépôt
@@ -1496,6 +1498,11 @@ model SousTraitance {
   /// Contre-remboursement encaissé par le partenaire, à reverser à Runex.
   codMontant        Decimal           @default(0.000) @db.Decimal(10, 3)
   codRecuLe         DateTime?         @db.Timestamptz(6)
+  /// Part du partenaire sur un colis qu'il a livré (figée à la livraison).
+  fraisPartenaire   Decimal?          @db.Decimal(10, 3)
+  /// Geste à faire à la main chez le partenaire (annuler un code, corriger un prix).
+  actionJax         String?           @db.VarChar(300)
+  actionJaxLe       DateTime?         @db.Timestamptz(6)
   createdAt         DateTime          @default(now()) @db.Timestamptz(6)
   updatedAt         DateTime          @updatedAt @db.Timestamptz(6)
 

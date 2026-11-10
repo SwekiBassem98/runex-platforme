@@ -14,9 +14,11 @@
  *   7. « Où est le stock, où est l'argent ? »   → agences, caisse ;
  *   8. « Qu'est-ce qui vient de se passer ? »   → ramassages, journal.
  *
- * Chaque chiffre mène à l'écran qui permet d'agir. La période (7, 14, 30 ou
- * 90 jours) s'applique aux indicateurs, à la courbe et aux classements ; les
- * stocks et le parcours sont toujours « maintenant ». L'écran se rafraîchit
+ * Chaque chiffre mène à l'écran qui permet d'agir. La période (aujourd'hui,
+ * 7, 14, 30 ou 90 jours) s'applique aux indicateurs, à la courbe, aux
+ * classements et au parcours (colis créés sur la période, jusqu'à « Livrés ») ;
+ * le taux de livraison est celui des Rapports d'exploitation. Les stocks
+ * d'agence sont toujours « maintenant ». L'écran se rafraîchit
  * seul toutes les minutes tant qu'il est visible.
  *
  * Les données viennent de `GET /dashboard?days=` (champ `vue`), agrégées en
@@ -58,7 +60,10 @@ import {
 import { ErrorBanner } from '@logixpress/ui';
 import { dashboardApi, type AdminOverviewDto, type DashboardDto, type EtapeAdmin } from '@/lib/api';
 
-const PERIODES = [7, 14, 30, 90] as const;
+/** 1 : aujourd'hui. */
+const PERIODES = [1, 7, 14, 30, 90] as const;
+/** « aujourd'hui » ou « 14 jours ». */
+const surPeriode = (jours: number) => (jours === 1 ? 'aujourd’hui' : `${jours} jours`);
 const RAFRAICHISSEMENT_MS = 60_000;
 
 /* ------------------------------------------------------------------ */
@@ -163,14 +168,19 @@ const jourTunis = (joursAvant = 0) =>
 /** Livrés sur la période affichée (même début que l'API : aujourd'hui − (jours − 1)). */
 const livresDepuis = (jours: number) => listeColis(STATUTS_LIVRES, `&livreDepuis=${jourTunis(jours - 1)}`);
 
-const ETAPES: { cle: EtapeAdmin; libelle: string; aide: string; icone: LucideIcon; couleur: string; href: string }[] = [
-  { cle: 'preparation', libelle: 'En préparation', aide: 'Créés, ramassage prévu', icone: PackagePlus, couleur: '#64748b', href: listeColis(['CREE', 'RAMASSAGE_PROGRAMME']) },
-  { cle: 'collecte', libelle: 'Ramassés', aide: 'Chez le livreur, vers le dépôt', icone: Truck, couleur: '#0ea5e9', href: listeColis(['RAMASSE']) },
-  { cle: 'depot', libelle: 'Au dépôt', aide: 'Reçus, prêts à partir', icone: Warehouse, couleur: '#8b5cf6', href: listeColis(['RECU_DEPOT', 'RECU_DEPOT_DESTINATION']) },
-  { cle: 'transit', libelle: 'Inter-dépôt', aide: 'Entre deux agences', icone: Shuffle, couleur: '#6366f1', href: listeColis(['EN_LOT_INTER_DEPOT', 'EN_TRANSIT_INTER_DEPOT']) },
-  { cle: 'livraison', libelle: 'En livraison', aide: 'Dans une tournée', icone: Route, couleur: '#f59e0b', href: listeColis(['AFFECTE_RUNSHEET', 'EN_COURS_LIVRAISON', 'SOUS_TRAITE']) },
-  { cle: 'reporte', libelle: 'Reportés', aide: 'Nouvelle tentative prévue', icone: Clock3, couleur: '#f97316', href: listeColis(['REPORTE']) },
-  { cle: 'retour', libelle: 'En retour', aide: 'Échecs à rendre', icone: Undo2, couleur: '#ef4444', href: listeColis(['ECHEC_LIVRAISON', 'RETOUR_DEPOT', 'EN_RUNSHEET_RETOUR']) },
+/** Créés sur la période affichée (même début que l'API) : étapes du parcours, taux de livraison. */
+const creesDepuis = (statuts: readonly string[], jours: number) => listeColis(statuts, `&creeDepuis=${jourTunis(jours - 1)}`);
+
+/** Étapes du parcours : mêmes statuts que l'API (ETAPES_ADMIN), colis créés sur la période. */
+const ETAPES: { cle: EtapeAdmin; libelle: string; aide: string; icone: LucideIcon; couleur: string; statuts: string[] }[] = [
+  { cle: 'preparation', libelle: 'En préparation', aide: 'Créés, ramassage prévu', icone: PackagePlus, couleur: '#64748b', statuts: ['CREE', 'RAMASSAGE_PROGRAMME'] },
+  { cle: 'collecte', libelle: 'Ramassés', aide: 'Chez le livreur, vers le dépôt', icone: Truck, couleur: '#0ea5e9', statuts: ['RAMASSE'] },
+  { cle: 'depot', libelle: 'Au dépôt', aide: 'Reçus, prêts à partir', icone: Warehouse, couleur: '#8b5cf6', statuts: ['RECU_DEPOT', 'RECU_DEPOT_DESTINATION'] },
+  { cle: 'transit', libelle: 'Inter-dépôt', aide: 'Entre deux agences', icone: Shuffle, couleur: '#6366f1', statuts: ['EN_LOT_INTER_DEPOT', 'EN_TRANSIT_INTER_DEPOT'] },
+  { cle: 'livraison', libelle: 'En livraison', aide: 'Dans une tournée', icone: Route, couleur: '#f59e0b', statuts: ['AFFECTE_RUNSHEET', 'EN_COURS_LIVRAISON', 'SOUS_TRAITE'] },
+  { cle: 'reporte', libelle: 'Reportés', aide: 'Nouvelle tentative prévue', icone: Clock3, couleur: '#f97316', statuts: ['REPORTE'] },
+  { cle: 'livre', libelle: 'Livrés', aide: 'Remis au client', icone: PackageCheck, couleur: '#10b981', statuts: STATUTS_LIVRES },
+  { cle: 'retour', libelle: 'En retour', aide: 'Échecs, rendus à l’expéditeur', icone: Undo2, couleur: '#ef4444', statuts: ['ECHEC_LIVRAISON', 'RETOUR_DEPOT', 'EN_RUNSHEET_RETOUR', 'RETOURNE_EXPEDITEUR'] },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -258,7 +268,7 @@ export function TableauDeBordAdmin() {
           index={2}
           icone={PackageCheck}
           teinte="from-emerald-600 to-emerald-400"
-          libelle={`Livrés · ${jours} jours`}
+          libelle={`Livrés · ${surPeriode(jours)}`}
           valeur={v?.period.delivered}
           tendance={v ? evolution(v.period.delivered, v.previous.delivered) : undefined}
           aide={
@@ -276,7 +286,7 @@ export function TableauDeBordAdmin() {
           index={4}
           icone={Wallet}
           teinte="from-red-600 to-rose-400"
-          libelle={`Encaissé · ${jours} jours`}
+          libelle={`Encaissé · ${surPeriode(jours)}`}
           valeur={v?.period.collected}
           format={montantCourt}
           tendance={v ? evolution(v.period.collected, v.previous.collected) : undefined}
@@ -286,7 +296,7 @@ export function TableauDeBordAdmin() {
         />
       </section>
 
-      <Parcours v={v} />
+      <Parcours v={v} jours={jours} />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Activite v={v} jours={jours} chargement={chargement && !v} />
@@ -474,7 +484,7 @@ function Bandeau({
                     jours === p ? 'bg-white text-slate-900 shadow-sm' : 'text-white/70 hover:text-white'
                   }`}
                 >
-                  {p} j
+                  {p === 1 ? 'Aujourd’hui' : `${p} j`}
                 </button>
               ))}
             </div>
@@ -643,7 +653,7 @@ function TuileTaux({ index, v }: { index: number; v: AdminOverviewDto | null }) 
   const ecart = v && taux !== null && v.previous.successRate !== null ? Math.round(taux - v.previous.successRate) : null;
   return (
     <Link
-      href={livresDepuis(v?.periodDays ?? 14)}
+      href={creesDepuis(STATUTS_LIVRES, v?.periodDays ?? 14)}
       data-testid="kpi-taux"
       className="group bg-white border border-slate-200 rounded-2xl p-4 shadow-xs hover:shadow-md hover:-translate-y-0.5 hover:border-slate-300 transition motion-safe:animate-dash-rise flex items-center gap-3"
       style={retard(index)}
@@ -663,19 +673,28 @@ function TuileTaux({ index, v }: { index: number; v: AdminOverviewDto | null }) 
         />
       </svg>
       <div className="min-w-0">
-        <p className="text-[11px] sm:text-xs font-semibold text-slate-500 leading-tight">Taux de réussite</p>
-        <p className="text-xl sm:text-2xl font-extrabold text-slate-900 tabular-nums">
-          {v === null ? <span className="inline-block w-12 h-7 rounded bg-slate-100 animate-pulse" /> : taux === null ? '—' : `${Math.round(anime)} %`}
+        <p className="text-[11px] sm:text-xs font-semibold text-slate-500 leading-tight">Taux de livraison</p>
+        <p className="text-xl sm:text-2xl font-extrabold text-slate-900 tabular-nums" data-testid="kpi-taux-valeur">
+          {v === null ? (
+            <span className="inline-block w-12 h-7 rounded bg-slate-100 animate-pulse" />
+          ) : taux === null ? (
+            '—'
+          ) : (
+            `${(anime === taux ? taux : Math.round(anime * 10) / 10).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} %`
+          )}
         </p>
         <p className="text-[11px] font-semibold">
           {v === null ? null : taux === null ? (
-            <span className="text-slate-400">Aucun colis terminé sur la période</span>
-          ) : ecart === null ? (
-            <span className="text-slate-500">
-              {v.period.delivered} livrés sur {v.period.delivered + v.period.failed}
-            </span>
+            <span className="text-slate-400">Aucun colis créé sur la période</span>
           ) : (
-            <Tendance valeur={ecart} unite=" pts" />
+            <span className="text-slate-500">
+              {v.period.deliveredOfCreated} livrés sur {v.period.created} créés
+              {ecart !== null && ecart !== 0 && (
+                <span className="ml-1">
+                  <Tendance valeur={ecart} unite=" pts" />
+                </span>
+              )}
+            </span>
           )}
         </p>
       </div>
@@ -687,7 +706,7 @@ function TuileTaux({ index, v }: { index: number; v: AdminOverviewDto | null }) 
 /* Parcours                                                            */
 /* ------------------------------------------------------------------ */
 
-function Parcours({ v }: { v: AdminOverviewDto | null }) {
+function Parcours({ v, jours }: { v: AdminOverviewDto | null; jours: number }) {
   const valeurs = ETAPES.map((e) => v?.pipeline[e.cle] ?? 0);
   const total = valeurs.reduce((a, b) => a + b, 0);
   const max = Math.max(1, ...valeurs);
@@ -696,14 +715,16 @@ function Parcours({ v }: { v: AdminOverviewDto | null }) {
       <div className="flex flex-wrap items-baseline justify-between gap-2 mb-4">
         <div>
           <h2 id="tdb-parcours" className="text-sm font-bold text-slate-900">
-            Où sont les colis en ce moment
+            Où en sont les colis créés {jours === 1 ? 'aujourd’hui' : `ces ${jours} derniers jours`}
           </h2>
           <p className="text-[11px] text-slate-500 mt-0.5">
-            {v ? `${total} colis en cours, de la création au retour. Cliquez sur une étape pour voir la liste.` : 'Chargement…'}
+            {v
+              ? `${total} colis, de la création à la livraison ou au retour. Cliquez sur une étape pour voir la liste.`
+              : 'Chargement…'}
           </p>
         </div>
       </div>
-      <ol className="relative grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 sm:gap-3">
+      <ol className="relative grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 sm:gap-3">
         <div aria-hidden="true" className="hidden lg:block absolute top-6 inset-x-[6%] h-0.5 bg-gradient-to-r from-slate-200 via-amber-200 to-red-200" />
         {ETAPES.map((e, i) => {
           const nb = valeurs[i];
@@ -711,7 +732,7 @@ function Parcours({ v }: { v: AdminOverviewDto | null }) {
           return (
             <li key={e.cle} className="relative">
               <Link
-                href={e.href}
+                href={creesDepuis(e.statuts, v?.periodDays ?? jours)}
                 title={e.aide}
                 data-testid={`tdb-etape-${e.cle}`}
                 className="group flex flex-col items-center text-center gap-1.5 p-2 rounded-xl hover:bg-slate-50 transition"
@@ -729,6 +750,11 @@ function Parcours({ v }: { v: AdminOverviewDto | null }) {
                 </span>
                 <span className="text-lg font-extrabold text-slate-900 tabular-nums">{v ? <Compteur valeur={nb} /> : '—'}</span>
                 <span className="text-[11px] font-semibold text-slate-700 leading-tight">{e.libelle}</span>
+                {e.cle === 'livre' && v && v.period.successRate !== null && (
+                  <span className="text-[10px] font-bold text-emerald-700 leading-tight" data-testid="tdb-livre-taux">
+                    {v.period.successRate.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} % des créés
+                  </span>
+                )}
                 <span className="text-[10px] text-slate-400 leading-tight hidden sm:block">{e.aide}</span>
                 <span className="w-full h-1.5 rounded-full bg-slate-100 overflow-hidden" aria-hidden="true">
                   <span
@@ -764,7 +790,7 @@ function Activite({ v, jours, chargement }: { v: AdminOverviewDto | null; jours:
       <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
         <div>
           <h2 id="tdb-activite" className="text-sm font-bold text-slate-900">
-            Activité des {jours} derniers jours
+            {jours === 1 ? 'Activité d’aujourd’hui' : `Activité des ${jours} derniers jours`}
           </h2>
           {v && (
             <p className="text-xs text-slate-500 mt-0.5">
@@ -1146,7 +1172,7 @@ function ClassementLivreurs({ v, jours }: { v: AdminOverviewDto | null; jours: n
         id="tdb-livreurs"
         icone={Truck}
         titre="Meilleurs livreurs"
-        aide={`Classés par livraisons réussies sur ${jours} jours`}
+        aide={`Classés par livraisons réussies ${jours === 1 ? 'aujourd’hui' : `sur ${jours} jours`}`}
         href="/admin/livreurs"
         lien="Tous"
       />
@@ -1209,7 +1235,7 @@ function ClassementExpediteurs({ v, jours }: { v: AdminOverviewDto | null; jours
         id="tdb-expediteurs"
         icone={Store}
         titre="Expéditeurs les plus actifs"
-        aide={`Classés par colis confiés sur ${jours} jours`}
+        aide={`Classés par colis confiés ${jours === 1 ? 'aujourd’hui' : `sur ${jours} jours`}`}
         href="/admin/expediteurs"
         lien="Tous"
       />

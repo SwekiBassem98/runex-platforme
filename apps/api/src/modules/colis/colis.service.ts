@@ -94,6 +94,8 @@ export interface ColisFilterParams {
   avecCreesEnAttente?: boolean;
   /** Livrés depuis ce jour (AAAA-MM-JJ, journée de Tunis) — « Livrés aujourd'hui / sur N jours ». */
   deliveredFrom?: string;
+  /** Créés depuis ce jour (AAAA-MM-JJ, journée de Tunis) — étapes du parcours d'un tableau de bord. */
+  createdFrom?: string;
   /** Colis présents dans cette agence (identifiant) — « à affecter » d'une agence. */
   depot?: string;
   /** Seulement les colis sans livreur — « Colis à affecter ». */
@@ -439,6 +441,10 @@ export class ColisService {
     if (params.deliveredFrom) {
       const depuis = periode(params.deliveredFrom, null);
       and.push(depuis?.gte ? { deliveredAt: { gte: depuis.gte } } : aucun);
+    }
+    if (params.createdFrom) {
+      const depuis = periode(params.createdFrom, null);
+      and.push(depuis?.gte ? { createdAt: { gte: depuis.gte } } : aucun);
     }
     if (params.depot && params.depot !== 'ALL') {
       and.push(/^[0-9a-f-]{36}$/i.test(params.depot) ? { currentDepositId: params.depot } : aucun);
@@ -978,14 +984,42 @@ export class ColisService {
    * parviendrait pas.
    */
   private async chezJax(packageId: string): Promise<boolean> {
-    const n = await this.prisma.sousTraitance.count({
-      where: {
-        packageId,
-        codeExterne: { not: null },
-        etat: { in: ['EN_ATTENTE_ENLEVEMENT', 'ENLEVEMENT_DEMANDE', 'PRIS_EN_CHARGE', 'EN_LIVRAISON', 'RETOUR_EN_COURS'] },
-      },
+    return (await this.etatChezJax(packageId)) !== null;
+  }
+
+  /** « avant » : créé chez JAX, pas encore enlevé ; « enleve » : JAX l'a ; null : pas chez JAX. */
+  private async etatChezJax(packageId: string): Promise<'avant' | 'enleve' | null> {
+    const r = await this.prisma.sousTraitance.findUnique({ where: { packageId }, select: { etat: true, codeExterne: true } });
+    if (!r?.codeExterne) return null;
+    if (r.etat === 'EN_ATTENTE_ENLEVEMENT' || r.etat === 'ENLEVEMENT_DEMANDE') return 'avant';
+    if (r.etat === 'PRIS_EN_CHARGE' || r.etat === 'EN_LIVRAISON' || r.etat === 'RETOUR_EN_COURS') return 'enleve';
+    return null;
+  }
+
+  /**
+   * Champs de la fiche qu'une modification change réellement. Le formulaire
+   * de l'expéditeur renvoie toute la fiche : seuls les écarts comptent.
+   */
+  private champsModifies(record: PackageWithRelations, payload: Record<string, unknown>): string[] {
+    const txt = (v: unknown) => String(v ?? '').trim();
+    const actuel: Record<string, unknown> = {
+      customerName: record.customer?.fullName,
+      customerPhone: record.customer?.primaryPhone,
+      governorate: record.customerAddress?.governorate,
+      delegation: record.customerAddress?.delegation,
+      address: record.customerAddress?.streetAddress,
+      pieceCount: record.pieceCount,
+      shipperNotes: record.shipperNotes,
+      isFragile: record.isFragile,
+    };
+    const ignores = new Set(['goodsPrice', 'totalPrice', 'priceChangeReason', 'notes']);
+    return Object.keys(payload).filter((k) => {
+      if (ignores.has(k) || payload[k] === undefined) return false;
+      if (!(k in actuel)) return true;
+      if (k === 'isFragile') return Boolean(payload[k]) !== Boolean(actuel[k]);
+      if (k === 'pieceCount') return Number(payload[k]) !== Number(actuel[k]);
+      return txt(payload[k]) !== txt(actuel[k]);
     });
-    return n > 0;
   }
 
   /* ---------------------------------------------------------------- */
@@ -1039,11 +1073,23 @@ export class ColisService {
 
     // Confié à JAX : la fiche est chez le partenaire, qui n'offre pas de
     // modification par API — une correction ici ne lui parviendrait pas.
+    // Le prix reste modifiable par l'expéditeur (réunion du 10/11) : sa demande
+    // suit le circuit habituel et, approuvée, est reportée chez JAX.
     if (String(record.status) === 'SOUS_TRAITE' || (await this.chezJax(record.id))) {
-      throw new BusinessRuleError(
-        'Modification impossible : ce colis est confié au partenaire de livraison JAX. Contactez RUNEX pour toute correction.',
-        409
-      );
+      const autres = this.champsModifies(record, payload);
+      if (autres.length) {
+        throw new BusinessRuleError(
+          isShipper
+            ? 'Ce colis est déjà en cours d’acheminement : seul son prix peut encore être modifié. Contactez RUNEX pour toute autre correction.'
+            : 'Modification impossible : ce colis est confié au partenaire de livraison JAX (seul le prix peut changer, par une demande de modification de prix).',
+          409
+        );
+      }
+      if (!isShipper || payload.goodsPrice === undefined || payload.goodsPrice === null || payload.goodsPrice === '') {
+        return { package: toPackageDto(record), driverNotified: false };
+      }
+      // Seul le prix change : on ne garde que lui.
+      payload = { goodsPrice: payload.goodsPrice, priceChangeReason: payload.priceChangeReason };
     }
 
     // Prix du colis : l'expéditeur demande, l'administration approuve. Le prix
@@ -1402,6 +1448,28 @@ export class ColisService {
    * au dépôt ni affecté à un livreur. Au-delà, l'annulation relève de
    * l'administration, qui peut le faire depuis le back-office.
    */
+  /**
+   * Colis créé chez JAX qu'on annule ou supprime : tant que JAX ne l'a pas
+   * enlevé, sa fiche JAX est abandonnée et son code signalé « à annuler chez
+   * JAX » (pas d'annulation par l'API JAX). Enlevé par JAX : refus (le colis
+   * est dans son réseau, il faut en demander le retour).
+   */
+  private async libererDeJax(record: PackageWithRelations, isShipper: boolean, geste: 'annulé' | 'supprimé'): Promise<void> {
+    const etat = await this.etatChezJax(record.id);
+    if (etat === 'enleve') {
+      throw new BusinessRuleError(
+        isShipper
+          ? 'Ce colis est déjà en cours de livraison : il ne peut plus être annulé. Contactez RUNEX.'
+          : 'Ce colis a déjà été enlevé par JAX : demandez son retour à JAX avant de l’annuler.',
+        409
+      );
+    }
+    if (etat === 'avant') {
+      const { sousTraitanceService } = await import('../sous-traitance/sous-traitance.service');
+      await sousTraitanceService.abandonnerChezJax(record.id, `colis ${geste}`, { fullName: 'Exploitation' });
+    }
+  }
+
   async cancel(
     idOrTracking: string,
     reason: string,
@@ -1415,13 +1483,6 @@ export class ColisService {
 
     const isShipper = user.role === RoleType.EXPEDITEUR;
 
-    if (await this.chezJax(record.id)) {
-      throw new BusinessRuleError(
-        'Annulation impossible : ce colis est déjà enregistré chez le partenaire JAX. Reprenez-le d’abord (Sous-traitance JAX) et annulez son code chez JAX.',
-        409
-      );
-    }
-
     if (isShipper && !canShipperCancelOrDelete(record.status as PackageStatus)) {
       throw new BusinessRuleError(
         "Annulation impossible depuis le portail expéditeur : ce colis a déjà été reçu au dépôt ou affecté à un livreur. Contactez l'administration.",
@@ -1432,6 +1493,8 @@ export class ColisService {
     if (record.status === PackageStatus.LIVRE) {
       throw new BusinessRuleError("Impossible d'annuler un colis déjà livré au destinataire.", 409);
     }
+
+    await this.libererDeJax(record, isShipper, 'annulé');
 
     const updated = await this.applyStatusChange(record.id, PackageStatus.ANNULE, {
       actorName: user.fullName,
@@ -1476,6 +1539,7 @@ export class ColisService {
         409
       );
     }
+    await this.libererDeJax(record, isShipper, 'supprimé');
 
     await this.prisma.package.update({
       where: { id: record.id },
@@ -1490,6 +1554,25 @@ export class ColisService {
       previousValues: { status: record.status, trackingNumber: record.trackingNumber },
       userId: user.id,
     });
+  }
+
+  /**
+   * Sous-zone choisie par le livreur (application mobile) : il range ses colis
+   * comme il l'entend (« Centre-ville », « Rue de Marseille »…). Seul le livreur
+   * affecté (ou l'exploitation) la change ; vide, elle est retirée.
+   */
+  async definirSousZone(
+    idOrTracking: string,
+    brut: unknown,
+    user: { id?: string; role: RoleType; driverId?: string }
+  ): Promise<PackageDto> {
+    const record = await this.findRecord(idOrTracking);
+    if (user.role === RoleType.LIVREUR && (!user.driverId || record.assignedDriverId !== user.driverId)) {
+      throw new BusinessRuleError('Ce colis ne vous est pas affecté.', 403);
+    }
+    const valeur = typeof brut === 'string' ? brut.replace(/\s+/g, ' ').trim().slice(0, 60) : '';
+    await this.prisma.package.update({ where: { id: record.id }, data: { driverSubZone: valeur || null } });
+    return toPackageDto(await this.findRecord(record.id));
   }
 
   /* ---------------------------------------------------------------- */
@@ -1564,7 +1647,7 @@ export class ColisService {
       : null;
     await this.prisma.$transaction(async (tx) => {
       if (record.assignedDriverId !== driver.id) {
-        await tx.package.update({ where: { id: record.id }, data: { assignedDriverId: driver.id } });
+        await tx.package.update({ where: { id: record.id }, data: { assignedDriverId: driver.id, ...(record.assignedDriverId !== driver.id ? { driverSubZone: null } : {}) } });
       }
       if (runsheet) {
         await runsheetsService.attachPackage(tx, runsheet, record.id, { id: user.id, fullName: user.fullName });
@@ -1594,7 +1677,7 @@ export class ColisService {
           description: 'Affecté sans tournée',
           locationName: location,
           auditAction: 'ASSIGN_DRIVER',
-          data: { assignedDriverId: driver.id },
+          data: { assignedDriverId: driver.id, ...(record.assignedDriverId !== driver.id ? { driverSubZone: null } : {}) },
           client: tx,
         });
         return;

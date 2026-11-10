@@ -220,6 +220,8 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
   // Filtres posés par un lien du tableau de bord (sans menu propre) : ils
   // apparaissent dans le résumé des filtres et « Réinitialiser » les retire.
   const [livreDepuis, setLivreDepuis] = useState('');
+  // `creeDepuis` (étapes du parcours du tableau de bord) : colis créés depuis ce jour.
+  const [creeDepuis, setCreeDepuis] = useState('');
   const [depotFilter, setDepotFilter] = useState('');
   const [sansLivreur, setSansLivreur] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
@@ -262,6 +264,7 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
     paymentStatusFilter !== 'ALL' ||
     Boolean(dateFilter) ||
     Boolean(livreDepuis) ||
+    Boolean(creeDepuis) ||
     Boolean(depotFilter) ||
     sansLivreur;
 
@@ -276,6 +279,7 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
     setPaymentStatusFilter('ALL');
     setDateFilter('');
     setLivreDepuis('');
+    setCreeDepuis('');
     setDepotFilter('');
     setSansLivreur(false);
     setCurrentPage(1);
@@ -299,6 +303,7 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
     paymentStatusFilter !== 'ALL' ? `règlement ${LIBELLE_REGLEMENT[paymentStatusFilter] ?? paymentStatusFilter}` : null,
     dateFilter ? `créés le ${dateFilter}` : null,
     livreDepuis ? `livrés depuis le ${livreDepuis}` : null,
+    creeDepuis ? `créés depuis le ${creeDepuis}` : null,
     depotFilter ? 'dans l’agence choisie' : null,
     sansLivreur ? 'sans livreur' : null,
   ]
@@ -416,6 +421,8 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
     if (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) setDateFilter(date);
     const livre = query.get('livreDepuis');
     if (livre && /^\d{4}-\d{2}-\d{2}$/.test(livre)) setLivreDepuis(livre);
+    const cree = query.get('creeDepuis');
+    if (cree && /^\d{4}-\d{2}-\d{2}$/.test(cree)) setCreeDepuis(cree);
     const depot = query.get('depot');
     if (depot) setDepotFilter(depot);
     if (query.get('sansLivreur') === '1') setSansLivreur(true);
@@ -522,6 +529,7 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
       if (paymentStatusFilter !== 'ALL') params.append('paymentStatus', paymentStatusFilter);
       if (dateFilter) params.append('date', dateFilter);
       if (livreDepuis) params.append('deliveredFrom', livreDepuis);
+      if (creeDepuis) params.append('createdFrom', creeDepuis);
       if (depotFilter) params.append('depot', depotFilter);
       if (sansLivreur) params.append('unassigned', '1');
 
@@ -600,6 +608,7 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
     paymentStatusFilter,
     dateFilter,
     livreDepuis,
+    creeDepuis,
     depotFilter,
     sansLivreur,
     // `searchTerm` manque ici : la recherche lit la valeur au moment du fetch,

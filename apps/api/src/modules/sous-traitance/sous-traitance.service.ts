@@ -22,6 +22,14 @@
  *
  * La correspondance statut JAX → étape Runex est proposée d'après le libellé
  * (référentiel /statuts) et peut être fixée par l'administrateur.
+ *
+ * Règles de la réunion client du 10/11 :
+ *  - les colis à destination d'une « zone Runex » (Tunis et Ben Arous par
+ *    défaut, réglable dans Paramètres) ne sont jamais créés chez JAX ;
+ *  - un colis reporté, ou déjà présenté par un livreur Runex, reste chez Runex :
+ *    son livreur le livre à nouveau ;
+ *  - JAX garde sa part (6,500 DT par défaut, JAX_FRAIS_COLIS) sur chaque colis
+ *    qu'il livre : il reverse le contre-remboursement moins cette part.
  */
 
 import { Prisma, type EtatSousTraitance as EtatPrisma } from '@prisma/client';
@@ -49,9 +57,19 @@ const EN_COURS: EtatSousTraitance[] = [...ACTIFS, 'LIVRE'];
 const AVANT_ENLEVEMENT: EtatSousTraitance[] = ['EN_ATTENTE_ENLEVEMENT', 'ENLEVEMENT_DEMANDE'];
 /**
  * Colis physiquement en agence Runex : créé chez JAX, il passe aussitôt
- * « Confié au partenaire JAX » (un colis reporté hors tournée est revenu au dépôt).
+ * « Confié au partenaire JAX ». Un colis reporté n'en fait pas partie : il
+ * reste chez Runex, son livreur le livre à nouveau (réunion du 10/11).
  */
-const STATUTS_EN_AGENCE = ['RECU_DEPOT', 'RECU_DEPOT_DESTINATION', 'REPORTE'];
+const STATUTS_EN_AGENCE = ['RECU_DEPOT', 'RECU_DEPOT_DESTINATION'];
+/** Colis entre les mains d'un livreur Runex : JAX ne peut pas l'avoir. */
+const STATUTS_CHEZ_LIVREUR_RUNEX = ['AFFECTE_RUNSHEET', 'EN_COURS_LIVRAISON', 'REPORTE', 'ECHEC_LIVRAISON'];
+/** Partenaire fictif des « zones Runex » : gouvernorats jamais confiés à JAX. */
+const ZONES_RUNEX = 'RUNEX';
+/** Part de JAX sur un colis qu'il livre (DT). Réunion du 10/11 : 6,500 sur 8,000. */
+export function fraisJaxParColis(): number {
+  const v = Number(process.env.JAX_FRAIS_COLIS ?? 6.5);
+  return Number.isFinite(v) && v >= 0 ? v : 6.5;
+}
 /**
  * Colis pas encore en agence (chez l'expéditeur, en ramassage, en inter-dépôt) :
  * créé chez JAX tout de suite, confié à JAX à sa réception en agence.
@@ -211,6 +229,8 @@ export class SousTraitanceService {
       expediteur: { nom: cfg.expediteurNom, tel: cfg.expediteurTel || null },
       syncMinutes: cfg.syncMinutes,
       zones: zones.map((z) => z.governorate),
+      zonesRunex: (await this.prisma.sousTraitanceZone.findMany({ where: { partenaire: ZONES_RUNEX }, orderBy: { governorate: 'asc' } })).map((z) => z.governorate),
+      fraisColis: fraisJaxParColis(),
       gouvernorats: gouvernorats.map((g) => ({ id: g.externeId, nom: g.nom })),
       statuts: statuts.map((s) => ({
         code: s.code,
@@ -265,17 +285,17 @@ export class SousTraitanceService {
     return { gouvernorats: gouvernorats.length, statuts: statuts.length };
   }
 
-  async definirZones(governorates: unknown, acteur: ActeurST) {
+  async definirZones(governorates: unknown, acteur: ActeurST, partenaire: string = PARTENAIRE) {
     const liste = Array.isArray(governorates)
       ? [...new Set(governorates.filter((g): g is string => typeof g === 'string' && !!g.trim()).map((g) => g.trim()))]
       : null;
     if (!liste) throw new BusinessRuleError('Liste de gouvernorats invalide.', 400);
     await this.prisma.$transaction([
-      this.prisma.sousTraitanceZone.deleteMany({ where: { partenaire: PARTENAIRE, governorate: { notIn: liste } } }),
+      this.prisma.sousTraitanceZone.deleteMany({ where: { partenaire, governorate: { notIn: liste } } }),
       ...liste.map((g) =>
         this.prisma.sousTraitanceZone.upsert({
-          where: { partenaire_governorate: { partenaire: PARTENAIRE, governorate: g } },
-          create: { partenaire: PARTENAIRE, governorate: g },
+          where: { partenaire_governorate: { partenaire, governorate: g } },
+          create: { partenaire, governorate: g },
           update: {},
         })
       ),
@@ -285,9 +305,62 @@ export class SousTraitanceService {
       entityId: PARTENAIRE,
       action: 'JAX_ZONES',
       userId: acteur.id ?? null,
-      reason: liste.length ? `Zones confiées à JAX : ${liste.join(', ')}.` : 'Plus aucune zone confiée automatiquement à JAX.',
+      reason:
+        partenaire === ZONES_RUNEX
+          ? liste.length
+            ? `Zones livrées par Runex seulement (jamais créées chez JAX) : ${liste.join(', ')}.`
+            : 'Plus aucune zone réservée à Runex : tout colis part chez JAX.'
+          : liste.length
+            ? `Zones confiées à JAX : ${liste.join(', ')}.`
+            : 'Plus aucune zone confiée automatiquement à JAX.',
     });
     return liste;
+  }
+
+  /** Gouvernorats livrés par Runex seulement (clés normalisées). */
+  private async clesZonesRunex(): Promise<Set<string>> {
+    const zones = await this.prisma.sousTraitanceZone.findMany({ where: { partenaire: ZONES_RUNEX }, select: { governorate: true } });
+    return new Set(zones.map((z) => cleGouvernorat(z.governorate)));
+  }
+
+  /** Vrai si la destination est une zone livrée par Runex seulement. */
+  async estZoneRunex(governorate: string | null | undefined): Promise<boolean> {
+    if (!governorate) return false;
+    return (await this.clesZonesRunex()).has(cleGouvernorat(governorate));
+  }
+
+  /**
+   * Le colis reste chez Runex : sa fiche JAX est abandonnée (état ANNULE) et le
+   * code JAX est signalé « à annuler chez JAX » (l'API JAX n'a pas de route
+   * d'annulation). Sans effet sur un colis déjà enlevé par JAX.
+   */
+  async abandonnerChezJax(packageId: string, motif: string, acteur: ActeurST, client?: Prisma.TransactionClient): Promise<boolean> {
+    const db = client ?? this.prisma;
+    const r = await db.sousTraitance.findUnique({ where: { packageId }, select: { id: true, etat: true, codeExterne: true, package: { select: { trackingNumber: true } } } });
+    if (!r) return false;
+    if (r.etat === 'ECHEC_ENVOI') {
+      await db.sousTraitance.update({ where: { id: r.id }, data: { etat: 'ANNULE', derniereErreur: null } });
+      return true;
+    }
+    if (!AVANT_ENLEVEMENT.includes(r.etat as EtatSousTraitance)) return false;
+    await db.sousTraitance.update({
+      where: { id: r.id },
+      data: {
+        etat: 'ANNULE',
+        ...(r.codeExterne ? { actionJax: `Annuler le code ${r.codeExterne} chez JAX — ${motif}`.slice(0, 300), actionJaxLe: new Date() } : {}),
+      },
+    });
+    await auditService.record(
+      {
+        entityType: 'PACKAGE',
+        entityId: packageId,
+        action: 'JAX_REPRIS',
+        userId: acteur.id ?? null,
+        reason: `Colis ${r.package.trackingNumber} gardé par Runex (${motif})${r.codeExterne ? ` : code JAX ${r.codeExterne} à annuler chez JAX` : ''}.`.slice(0, 255),
+      },
+      client
+    );
+    return true;
   }
 
   /** Statut Runex du colis pour un statut JAX (null : déduit du libellé). */
@@ -627,6 +700,8 @@ export class SousTraitanceService {
         select: { status: true, customerAddress: { select: { governorate: true } }, sousTraitance: { select: { etat: true, codeExterne: true } } },
       });
       if (!c || c.status !== 'CREE') return;
+      // Zones livrées par Runex seulement (Tunis, Ben Arous…) : jamais chez JAX.
+      if (await this.estZoneRunex(c.customerAddress.governorate)) return;
       if (c.sousTraitance?.codeExterne) return; // déjà chez JAX
       if (c.sousTraitance && c.sousTraitance.etat !== 'ECHEC_ENVOI') return; // repris volontairement (ANNULE) : pas renvoyé
       await this.envoyerUn(packageId, { fullName: 'Envoi automatique à la création' }, 'AUTO');
@@ -639,10 +714,16 @@ export class SousTraitanceService {
   /* Rattrapage : colis restés chez Runex                               */
   /* ---------------------------------------------------------------- */
 
-  private whereRattrapage(exclure: string[] = []): Prisma.PackageWhereInput {
+  private async whereRattrapage(exclure: string[] = []): Promise<Prisma.PackageWhereInput> {
+    const zonesRunex = (await this.prisma.sousTraitanceZone.findMany({ where: { partenaire: ZONES_RUNEX }, select: { governorate: true } })).map((z) => z.governorate);
     return {
       deletedAt: null,
       status: { in: STATUTS_RATTRAPAGE as never },
+      // Déjà présenté par un livreur Runex (reporté, échec…) : il reste chez Runex.
+      deliveryAttemptsCount: 0,
+      ...(zonesRunex.length
+        ? { NOT: { customerAddress: { OR: zonesRunex.map((g) => ({ governorate: { equals: g, mode: 'insensitive' as const } })) } } }
+        : {}),
       // Jamais envoyés, ou dont l'envoi a échoué. Un colis repris (ANNULE) l'a été volontairement.
       OR: [{ sousTraitance: { is: null } }, { sousTraitance: { is: { etat: 'ECHEC_ENVOI' } } }],
       ...(exclure.length ? { id: { notIn: exclure } } : {}),
@@ -651,7 +732,7 @@ export class SousTraitanceService {
 
   /** Colis restés chez Runex (pas livrés, retournés ni annulés) : à envoyer à JAX. */
   async apercuRattrapage() {
-    const where = this.whereRattrapage();
+    const where = await this.whereRattrapage();
     const [groupes, total, enTournee, colis] = await Promise.all([
       this.prisma.package.groupBy({ by: ['status'], where, _count: { _all: true } }),
       this.prisma.package.count({ where }),
@@ -703,7 +784,7 @@ export class SousTraitanceService {
     if (!jaxConfig().token) throw new BusinessRuleError('Sous-traitance JAX non configurée : le jeton JAX (JAX_API_TOKEN) est absent sur le serveur.', 409);
     const exclure = Array.isArray(exclureBrut) ? exclureBrut.map((x) => asUuid(String(x))).filter((x): x is string => !!x).slice(0, 5000) : [];
     const rows = await this.prisma.package.findMany({
-      where: this.whereRattrapage(exclure),
+      where: await this.whereRattrapage(exclure),
       select: { id: true, trackingNumber: true, status: true, currentRunsheetId: true },
       orderBy: { createdAt: 'asc' },
       take: taille,
@@ -723,7 +804,7 @@ export class SousTraitanceService {
       }
     }
     const echecs = resultats.filter((x) => !x.ok);
-    const restants = await this.prisma.package.count({ where: this.whereRattrapage([...exclure, ...echecs.map((x) => x.packageId)]) });
+    const restants = await this.prisma.package.count({ where: await this.whereRattrapage([...exclure, ...echecs.map((x) => x.packageId)]) });
     if (resultats.length) {
       await auditService.record({
         entityType: 'SOUS_TRAITANCE',
@@ -801,16 +882,164 @@ export class SousTraitanceService {
     console.log(`[RUNEX API] JAX — colis restés chez Runex : ${bilan}`);
   }
 
+  /**
+   * Correction unique (réunion du 10/11), faite une fois par base au démarrage
+   * (trace JAX_CORRECTION_10_11 dans le journal d'audit) : les colis confiés à
+   * JAX mais pas encore enlevés par lui reviennent chez Runex quand
+   *  - leur destination est une zone livrée par Runex (Tunis, Ben Arous…) ;
+   *  - ils avaient été reportés ou présentés par un livreur Runex.
+   * Un colis reporté redevient « Reporté » (son livreur le livre à nouveau) ;
+   * un autre colis confié revient « Reçu au dépôt ». Les colis déjà enlevés,
+   * livrés, retournés ou annulés ne changent pas. Chaque code JAX abandonné
+   * apparaît dans « À faire chez JAX ».
+   */
+  async correctionReunion(): Promise<{ repris: number; reportes: number }> {
+    if (await this.prisma.auditLog.count({ where: { action: 'JAX_CORRECTION_10_11' } })) return { repris: 0, reportes: 0 };
+    await auditService.record({ entityType: 'SOUS_TRAITANCE', entityId: PARTENAIRE, action: 'JAX_CORRECTION_10_11', reason: 'Début : colis reportés et zones Runex rendus à Runex.' });
+    const r = await this.corrigerColisGardesParRunex({ fullName: 'Correction automatique (réunion du 10/11)' });
+    await auditService.record({
+      entityType: 'SOUS_TRAITANCE',
+      entityId: PARTENAIRE,
+      action: 'JAX_CORRECTION_10_11',
+      reason: `Fin : ${r.repris} colis rendus à Runex, dont ${r.reportes} de nouveau « Reporté ».`,
+    });
+    if (r.repris) console.log(`[RUNEX API] JAX — ${r.repris} colis rendus à Runex (dont ${r.reportes} reportés).`);
+    return r;
+  }
+
+  /** Colis confiés à JAX, pas encore enlevés, qui doivent rester chez Runex. */
+  async corrigerColisGardesParRunex(acteur: ActeurST): Promise<{ repris: number; reportes: number }> {
+    const zonesRunex = await this.clesZonesRunex();
+    const rows = await this.prisma.sousTraitance.findMany({
+      where: {
+        partenaire: PARTENAIRE,
+        etat: { in: [...AVANT_ENLEVEMENT, 'ECHEC_ENVOI'] },
+        package: { is: { deletedAt: null, status: { notIn: STATUTS_RUNEX_FINAUX as never } } },
+      },
+      select: {
+        packageId: true,
+        envoyeLe: true,
+        depositId: true,
+        deposit: { select: { name: true } },
+        package: { select: { status: true, deliveryAttemptsCount: true, customerAddress: { select: { governorate: true } } } },
+      },
+    });
+    let repris = 0;
+    let reportes = 0;
+    for (const x of rows) {
+      const zone = zonesRunex.has(cleGouvernorat(x.package.customerAddress.governorate));
+      // Reporté avant son envoi à JAX : une entrée « Reporté » écrite par Runex
+      // (pas une relecture JAX) dans sa chronologie, ou une tentative de livraison.
+      const reporte =
+        x.package.deliveryAttemptsCount > 0 ||
+        x.package.status === 'REPORTE' ||
+        (await this.prisma.packageTimeline.count({
+          where: { packageId: x.packageId, status: 'REPORTE', NOT: { operatorName: ACTEUR_JAX.fullName } },
+        })) > 0;
+      if (!zone && !reporte) continue;
+      const motif = reporte ? 'colis reporté, livré par Runex' : 'zone livrée par Runex';
+      await this.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Package" WHERE id = ${x.packageId}::uuid FOR UPDATE`;
+        if (!(await this.abandonnerChezJax(x.packageId, motif, acteur, tx))) return;
+        // « Confié au partenaire JAX » mais pas enlevé : le colis est à l'agence Runex.
+        // Les autres (créé, en ramassage, reporté…) gardent leur statut.
+        if (String(x.package.status) === 'SOUS_TRAITE') {
+          const cible = reporte ? 'REPORTE' : 'RECU_DEPOT';
+          await tx.package.update({ where: { id: x.packageId }, data: { status: cible, currentDepositId: x.depositId, currentRunsheetId: null } });
+          await tx.packageTimeline.create({
+            data: {
+              packageId: x.packageId,
+              status: cible,
+              title: reporte ? 'Reporté — livré par Runex' : 'Reçu au dépôt — livré par Runex',
+              description: reporte ? 'Colis reporté : il reste chez Runex, son livreur le livre à nouveau.' : 'Destination livrée par Runex.',
+              locationName: x.deposit?.name ?? 'Dépôt',
+              operatorName: acteur.fullName,
+            },
+          });
+          if (reporte) reportes++;
+        }
+        repris++;
+      });
+    }
+    return { repris, reportes };
+  }
+
+  /** Gestes à faire à la main chez JAX (annuler un code, corriger un prix). */
+  async actionsAFaire() {
+    const rows = await this.prisma.sousTraitance.findMany({
+      where: { partenaire: PARTENAIRE, actionJax: { not: null } },
+      select: { packageId: true, codeExterne: true, actionJax: true, actionJaxLe: true, package: { select: { trackingNumber: true, status: true } } },
+      orderBy: { actionJaxLe: 'asc' },
+      take: 500,
+    });
+    return rows.map((r) => ({
+      packageId: r.packageId,
+      trackingNumber: r.package.trackingNumber,
+      statutRunex: String(r.package.status),
+      codeExterne: r.codeExterne,
+      action: r.actionJax!,
+      depuis: r.actionJaxLe?.toISOString() ?? null,
+    }));
+  }
+
+  /** Geste fait chez JAX : il disparaît de la liste. */
+  async actionFaite(packageIdBrut: string, acteur: ActeurST) {
+    const packageId = asUuid(packageIdBrut);
+    const r = packageId ? await this.prisma.sousTraitance.findUnique({ where: { packageId }, select: { id: true, actionJax: true, package: { select: { trackingNumber: true } } } }) : null;
+    if (!r?.actionJax) throw new BusinessRuleError('Aucun geste en attente chez JAX pour ce colis.', 404);
+    await this.prisma.sousTraitance.update({ where: { id: r.id }, data: { actionJax: null, actionJaxLe: null } });
+    await auditService.record({
+      entityType: 'PACKAGE',
+      entityId: packageId!,
+      action: 'JAX_ACTION_FAITE',
+      userId: acteur.id ?? null,
+      reason: `Fait chez JAX pour ${r.package.trackingNumber} : ${r.actionJax}`.slice(0, 255),
+    });
+    return { message: `Colis ${r.package.trackingNumber} : fait chez JAX.` };
+  }
+
+  /** Prix d'un colis modifié chez Runex alors qu'il est chez JAX : à reporter chez JAX. */
+  async signalerPrixModifie(packageId: string, nouveauTotal: number, client?: Prisma.TransactionClient): Promise<string | null> {
+    const db = client ?? this.prisma;
+    const r = await db.sousTraitance.findUnique({ where: { packageId }, select: { id: true, etat: true, codeExterne: true } });
+    if (!r?.codeExterne || !ACTIFS.includes(r.etat as EtatSousTraitance)) return null;
+    const action = `Corriger le montant à encaisser chez JAX (code ${r.codeExterne}) : ${nouveauTotal.toFixed(3)} DT`;
+    await db.sousTraitance.update({ where: { id: r.id }, data: { actionJax: action, actionJaxLe: new Date() } });
+    return action;
+  }
+
+  /** Essaie de reporter le nouveau prix chez JAX ; vrai si JAX l'a accepté. */
+  async reporterPrixChezJax(packageId: string): Promise<boolean> {
+    const r = await this.prisma.sousTraitance.findUnique({ where: { packageId }, select: { id: true, codeExterne: true, package: { select: { totalPrice: true } } } });
+    if (!r?.codeExterne || !jaxConfig().token) return false;
+    try {
+      await jaxClient.modifierPrix(r.codeExterne, n3(r.package.totalPrice));
+    } catch {
+      return false; // reste dans « À faire chez JAX »
+    }
+    await this.prisma.sousTraitance.update({ where: { id: r.id }, data: { actionJax: null, actionJaxLe: null } });
+    return true;
+  }
+
   /** Retente les créations chez JAX qui ont échoué (colis pas encore chez JAX). */
   async retenterEchecs(): Promise<number> {
     if (!jaxConfig().token) return 0;
     const rows = await this.prisma.sousTraitance.findMany({
-      where: { partenaire: PARTENAIRE, etat: 'ECHEC_ENVOI', package: { is: { deletedAt: null, status: { in: STATUTS_ENVOYABLES as never }, currentRunsheetId: null } } },
-      select: { packageId: true },
+      where: {
+        partenaire: PARTENAIRE,
+        etat: 'ECHEC_ENVOI',
+        package: { is: { deletedAt: null, status: { in: STATUTS_ENVOYABLES as never }, currentRunsheetId: null, deliveryAttemptsCount: 0 } },
+      },
+      select: { packageId: true, package: { select: { customerAddress: { select: { governorate: true } } } } },
       take: 100,
     });
+    const zonesRunex = await this.clesZonesRunex();
     let reussis = 0;
     for (const r of rows) {
+      if (zonesRunex.has(cleGouvernorat(r.package.customerAddress.governorate))) {
+        await this.abandonnerChezJax(r.packageId, 'zone livrée par Runex', { fullName: 'Envoi automatique' });
+        continue;
+      }
       if ((await this.envoyerUn(r.packageId, { fullName: 'Envoi automatique (nouvel essai)' }, 'AUTO')).ok) reussis++;
     }
     return reussis;
@@ -826,9 +1055,18 @@ export class SousTraitanceService {
       if (!jaxConfig().token) return;
       const c = await this.prisma.package.findUnique({
         where: { id: packageId },
-        select: { status: true, customerAddress: { select: { governorate: true } }, sousTraitance: { select: { etat: true, codeExterne: true } } },
+        select: { status: true, deliveryAttemptsCount: true, customerAddress: { select: { governorate: true } }, sousTraitance: { select: { etat: true, codeExterne: true } } },
       });
       if (!c) return;
+      // Reste chez Runex : zone livrée par Runex, ou colis déjà présenté par un
+      // livreur Runex (reporté). Sa fiche JAX éventuelle est abandonnée.
+      const zoneRunex = await this.estZoneRunex(c.customerAddress.governorate);
+      if (zoneRunex || c.deliveryAttemptsCount > 0 || c.status === 'REPORTE') {
+        if (c.sousTraitance && (c.sousTraitance.etat === 'ECHEC_ENVOI' || AVANT_ENLEVEMENT.includes(c.sousTraitance.etat as EtatSousTraitance))) {
+          await this.abandonnerChezJax(packageId, zoneRunex ? 'zone livrée par Runex' : 'colis reporté, livré par Runex', { fullName: 'Réception en agence' });
+        }
+        return;
+      }
       if (c.sousTraitance?.codeExterne && c.sousTraitance.etat === 'EN_ATTENTE_ENLEVEMENT') {
         await this.confirmerReception(packageId, { fullName: 'Réception en agence' });
         return;
@@ -991,7 +1229,7 @@ export class SousTraitanceService {
   async synchroniserUn(packageId: string): Promise<boolean> {
     const r = await this.prisma.sousTraitance.findUnique({
       where: { packageId },
-      include: { deposit: { select: { name: true } }, package: { select: { trackingNumber: true, status: true, totalPrice: true, shipperId: true } } },
+      include: { deposit: { select: { name: true } }, package: { select: { trackingNumber: true, status: true, totalPrice: true, shipperId: true, currentRunsheetId: true } } },
     });
     if (!r?.codeExterne) return false;
     let statut: StatutJax | null = null;
@@ -1018,7 +1256,7 @@ export class SousTraitanceService {
 
   /** Reporte un statut JAX dans le flux Runex. */
   private async appliquer(
-    r: Prisma.SousTraitanceGetPayload<{ include: { deposit: { select: { name: true } }; package: { select: { trackingNumber: true; status: true; totalPrice: true; shipperId: true } } } }>,
+    r: Prisma.SousTraitanceGetPayload<{ include: { deposit: { select: { name: true } }; package: { select: { trackingNumber: true; status: true; totalPrice: true; shipperId: true; currentRunsheetId: true } } } }>,
     statut: StatutJax | null,
     problemes: string | null
   ): Promise<boolean> {
@@ -1052,6 +1290,10 @@ export class SousTraitanceService {
     // Statut Runex du colis : celui qui correspond au statut JAX lu.
     const pkgStatus = r.package.status as string;
     let statutCible = enRetard ? null : await this.statutRunexPour(statut);
+    // Colis entre les mains d'un livreur Runex (reporté, en tournée) alors que
+    // JAX ne l'a pas enlevé : son statut reste celui de Runex.
+    const chezRunex = STATUTS_CHEZ_LIVREUR_RUNEX.includes(pkgStatus) || !!r.package.currentRunsheetId;
+    if (chezRunex && AVANT_ENLEVEMENT.includes(cible)) statutCible = null;
     // « Reportés » : JAX remet le colis à l'entrepôt après une sortie en livraison.
     if (statutCible === 'RECU_DEPOT' && (pkgStatus === 'EN_COURS_LIVRAISON' || pkgStatus === 'REPORTE' || (!!problemes && actuel === 'EN_LIVRAISON'))) statutCible = 'REPORTE';
     // « En attente » chez JAX : le colis garde son statut Runex (créé, ou confié en agence).
@@ -1070,7 +1312,8 @@ export class SousTraitanceService {
                 statutExterneLe: statut.le ?? (libelleChange ? maintenant : r.statutExterneLe),
               }),
           etat: cible as EtatPrisma,
-          ...(cible === 'LIVRE' ? { codMontant: r.package.totalPrice } : {}),
+          // Livré par JAX : il encaisse le contre-remboursement et garde sa part.
+          ...(cible === 'LIVRE' && actuel !== 'LIVRE' ? { codMontant: r.package.totalPrice, fraisPartenaire: fraisJaxParColis() } : {}),
         },
       });
       if (!etatChange && !libelleChange && !statutChange) return;
@@ -1143,7 +1386,7 @@ export class SousTraitanceService {
     const r = packageId
       ? await this.prisma.sousTraitance.findUnique({
           where: { packageId },
-          include: { deposit: { select: { id: true, name: true } }, package: { select: { trackingNumber: true, status: true, totalPrice: true, shipperId: true } } },
+          include: { deposit: { select: { id: true, name: true } }, package: { select: { trackingNumber: true, status: true, totalPrice: true, shipperId: true, currentRunsheetId: true } } },
         })
       : null;
     if (!r) throw new BusinessRuleError('Ce colis n’est pas confié à JAX.', 404);
@@ -1232,10 +1475,11 @@ export class SousTraitanceService {
     if (!ids.length) throw new BusinessRuleError('Choisissez les colis dont JAX a reversé le montant.', 400);
     const rows = await this.prisma.sousTraitance.findMany({
       where: { packageId: { in: ids }, etat: 'LIVRE', codRecuLe: null },
-      select: { id: true, codMontant: true, package: { select: { trackingNumber: true } } },
+      select: { id: true, codMontant: true, fraisPartenaire: true, package: { select: { trackingNumber: true } } },
     });
     if (!rows.length) throw new BusinessRuleError('Aucun de ces colis n’attend un reversement JAX.', 409);
-    const total = n3(rows.reduce((s, r) => s + Number(r.codMontant), 0));
+    // JAX reverse le contre-remboursement moins sa part.
+    const total = n3(rows.reduce((s, r) => s + Number(r.codMontant) - Number(r.fraisPartenaire ?? 0), 0));
     await this.prisma.sousTraitance.updateMany({ where: { id: { in: rows.map((r) => r.id) } }, data: { codRecuLe: new Date() } });
     await auditService.record({
       entityType: 'SOUS_TRAITANCE',
@@ -1282,7 +1526,7 @@ export class SousTraitanceService {
         take: 500,
       }),
       this.prisma.sousTraitance.groupBy({ by: ['etat'], where: { partenaire: PARTENAIRE }, _count: { _all: true } }),
-      this.prisma.sousTraitance.aggregate({ where: { partenaire: PARTENAIRE, etat: 'LIVRE', codRecuLe: null }, _sum: { codMontant: true }, _count: { _all: true } }),
+      this.prisma.sousTraitance.aggregate({ where: { partenaire: PARTENAIRE, etat: 'LIVRE', codRecuLe: null }, _sum: { codMontant: true, fraisPartenaire: true }, _count: { _all: true } }),
     ]);
     const compteurs = Object.fromEntries(Object.keys(ETATS_SOUS_TRAITANCE).map((e) => [e, 0])) as Record<EtatSousTraitance, number>;
     for (const c of compte) compteurs[c.etat as EtatSousTraitance] = c._count._all;
@@ -1298,7 +1542,8 @@ export class SousTraitanceService {
         montant: n3(r.package.totalPrice),
       })),
       compteurs,
-      codARecevoir: { colis: codAttendu._count._all, total: n3(codAttendu._sum.codMontant) },
+      // Reversement attendu de JAX : contre-remboursement moins sa part.
+      codARecevoir: { colis: codAttendu._count._all, total: n3(Number(codAttendu._sum.codMontant ?? 0) - Number(codAttendu._sum.fraisPartenaire ?? 0)), fraisJax: n3(codAttendu._sum.fraisPartenaire) },
     };
   }
 
@@ -1325,6 +1570,16 @@ export function demarrerSynchronisationJax(): void {
           .rattrapageUnique()
           .catch((e: unknown) => console.warn('[RUNEX API] Envoi des colis restés chez Runex impossible :', e instanceof Error ? e.message : String(e))),
       Number(process.env.JAX_RATTRAPAGE_DELAI_MS ?? 60_000)
+    ).unref();
+  }
+  // Réunion du 10/11 : colis reportés et zones Runex rendus à Runex, une fois.
+  if (cfg.token && process.env.JAX_CORRECTION_AUTO !== '0') {
+    setTimeout(
+      () =>
+        void sousTraitanceService
+          .correctionReunion()
+          .catch((e: unknown) => console.warn('[RUNEX API] Correction des colis gardés par Runex impossible :', e instanceof Error ? e.message : String(e))),
+      Number(process.env.JAX_CORRECTION_DELAI_MS ?? 15_000)
     ).unref();
   }
   if (!cfg.token || !(cfg.syncMinutes > 0)) {

@@ -34,7 +34,7 @@ const admin = await login('admin@logixpress.tn', 'Admin123!');
 const exp = await login('expediteur@bluestar.tn', 'Exp123!');
 const sfx = Date.now().toString().slice(-4);
 const creer = async (nom, extra = {}) =>
-  (await api(exp, 'POST', '/colis', { customerName: `${nom} ${sfx}`, customerPhone: `9850${sfx}`, governorate: 'Tunis', delegation: 'La Marsa', address: 'Rue 50', goodsPrice: 30, ...extra })).data;
+  (await api(exp, 'POST', '/colis', { customerName: `${nom} ${sfx}`, customerPhone: `9850${sfx}`, governorate: 'Sousse', delegation: 'Akouda', address: 'Rue 50', goodsPrice: 30, ...extra })).data;
 
 console.log('\n1. API');
 const c = await creer('Q50 Bon', { pieceCount: 2 });

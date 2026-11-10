@@ -73,10 +73,11 @@ console.log('\n1. Exploitation');
   await Promise.all([p.waitForNavigation({ waitUntil: 'networkidle2' }), p.keyboard.press('Enter')]);
   const v = (await api(admin, 'GET', '/dashboard?days=14')).data;
   const tuiles = [
-    ...['preparation', 'collecte', 'depot', 'transit', 'livraison', 'reporte', 'retour'].map((cle) => ({ sel: `[data-testid=tdb-etape-${cle}]`, attendu: v.vue.pipeline[cle], libelle: `étape « ${cle} »` })),
+    ...['preparation', 'collecte', 'depot', 'transit', 'livraison', 'reporte', 'livre', 'retour'].map((cle) => ({ sel: `[data-testid=tdb-etape-${cle}]`, attendu: v.vue.pipeline[cle], libelle: `étape « ${cle} »` })),
     { sel: '[data-testid=kpi-en-cours]', attendu: v.vue.active, libelle: 'Colis en cours' },
     { sel: '[data-testid=kpi-livres]', attendu: v.vue.period.delivered, libelle: 'Livrés · 14 jours' },
-    { sel: '[data-testid=kpi-taux]', attendu: v.vue.period.delivered, libelle: 'Taux de réussite (livrés de la période)' },
+    // Taux de livraison (Rapports d'exploitation) : livrés parmi les colis créés sur la période.
+    { sel: '[data-testid=kpi-taux]', attendu: v.vue.period.deliveredOfCreated, libelle: 'Taux de livraison (créés et livrés sur la période)' },
   ];
   const aAffecter = v.alerts.find((a) => a.category === 'COLIS_NON_AFFECTES')?.count ?? 0;
   for (const tu of tuiles) {
@@ -121,7 +122,7 @@ console.log('\n2. Portail expéditeur');
   const d = (await api(exp, 'GET', '/shipper/dashboard?days=14')).data;
   const tuiles = [
     ...['preparation', 'collecte', 'depot', 'livraison', 'reporte', 'livre', 'retour'].map((cle) => ({ sel: `[data-testid=tdb-etape-${cle}]`, attendu: d.pipeline[cle], libelle: `étape « ${cle} »` })),
-    { sel: '[data-testid=tdb-taux]', attendu: d.period.delivered, libelle: 'Taux (livrés de la période)' },
+    { sel: '[data-testid=tdb-taux]', attendu: d.period.deliveredOfCreated, libelle: 'Taux (créés et livrés sur la période)' },
   ];
   for (const tu of tuiles) {
     await p.goto(W + '/expediteur/tableau-de-bord', { waitUntil: 'networkidle2' });

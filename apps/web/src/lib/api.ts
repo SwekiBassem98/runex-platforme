@@ -550,7 +550,7 @@ export interface DashboardDto {
   vue?: AdminOverviewDto;
 }
 
-export type EtapeAdmin = 'preparation' | 'collecte' | 'depot' | 'transit' | 'livraison' | 'reporte' | 'retour';
+export type EtapeAdmin = 'preparation' | 'collecte' | 'depot' | 'transit' | 'livraison' | 'reporte' | 'livre' | 'retour';
 
 export interface AdminOverviewDto {
   generatedAt: string;
@@ -560,7 +560,9 @@ export interface AdminOverviewDto {
     created: number;
     delivered: number;
     failed: number;
+    /** Taux de livraison (Rapports d'exploitation) : livrés parmi les colis créés sur la période. */
     successRate: number | null;
+    deliveredOfCreated: number;
     avgDeliveryHours: number | null;
     collected: number;
     fees: number;
@@ -1020,6 +1022,11 @@ export interface ResumeCaisse {
   payeLivreurs: number;
   resteLivreurs: number;
   margeNette: number;
+  colisLivresJax: number;
+  fraisJax: number;
+  margeJax: number;
+  aRecevoirJax: number;
+  recuJax: number;
 }
 
 export interface LigneCaisseLivreur {
@@ -2205,6 +2212,10 @@ export interface ParametresJax {
   expediteur: { nom: string; tel: string | null };
   syncMinutes: number;
   zones: string[];
+  /** Gouvernorats livrés par Runex seulement : leurs colis ne vont jamais chez JAX. */
+  zonesRunex: string[];
+  /** Part de JAX sur un colis qu'il livre (DT). */
+  fraisColis: number;
   gouvernorats: { id: string; nom: string }[];
   statuts: {
     code: string;
@@ -2232,7 +2243,7 @@ export interface LigneSousTraitance extends DtoSousTraitance {
 export interface ListeSousTraitance {
   lignes: LigneSousTraitance[];
   compteurs: Record<string, number>;
-  codARecevoir: { colis: number; total: number };
+  codARecevoir: { colis: number; total: number; fraisJax?: number };
 }
 
 export interface ColisEligibleJax {
@@ -2288,7 +2299,22 @@ export interface RattrapageJax {
   }[];
 }
 
+/** Geste à faire à la main chez JAX (son API n'offre ni annulation ni modification). */
+export interface ActionJax {
+  packageId: string;
+  trackingNumber: string;
+  statutRunex: string;
+  codeExterne: string | null;
+  action: string;
+  depuis: string | null;
+}
+
 export const sousTraitanceApi = {
+  zonesRunex: (governorates: string[]) => request<string[]>('/sous-traitance/jax/zones-runex', { method: 'PUT', body: { governorates } }),
+  actions: () => requestData<ActionJax[]>('/sous-traitance/jax/actions'),
+  correction: () => request<{ repris: number; reportes: number }>('/sous-traitance/jax/correction', { method: 'POST', body: {} }),
+  actionFaite: (packageId: string) =>
+    request<null>(`/sous-traitance/jax/colis/${encodeURIComponent(packageId)}/action-faite`, { method: 'POST', body: {} }),
   rattrapage: () => requestData<RattrapageJax>('/sous-traitance/jax/rattrapage'),
   rattraper: (exclure: string[]) =>
     request<{ traites: number; reussis: number; echecs: ResultatEnvoiJax[]; restants: number }>('/sous-traitance/jax/rattrapage', {

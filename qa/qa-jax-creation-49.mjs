@@ -79,9 +79,13 @@ ok(d?.status === 'CREE', 'Runex : toujours « En préparation » (ramassage et d
 
 console.log('\n2. Verrouillé tant qu’il est chez JAX');
 r = await api(exp, 'PUT', `/colis/${c.id}`, { customerPhone: '22222222' });
-ok(r.status === 409 && /JAX/.test(r.message ?? ''), 'modification par l’expéditeur : refusée (JAX connaît déjà la fiche)', `${r.status} ${r.message}`);
-r = await api(exp, 'POST', `/colis/${c.id}/cancel`, { reason: 'test' });
-ok(r.status === 409 && /JAX/.test(r.message ?? ''), 'annulation : refusée avec un motif clair', `${r.status} ${r.message}`);
+// Réunion du 10/11 : seul le prix reste modifiable (par une demande) ; le message ne cite pas le partenaire.
+ok(r.status === 409 && /seul son prix/.test(r.message ?? '') && !/JAX/.test(r.message ?? ''), 'modification par l’expéditeur : refusée sauf le prix (JAX connaît déjà la fiche)', `${r.status} ${r.message}`);
+// Réunion du 10/11 : l'annulation marche, la fiche JAX est abandonnée (code à annuler chez JAX).
+const aAnnuler = await nouveau('Sousse', 'Hammam Sousse');
+await attendre(async () => (await lire(aAnnuler.id))?.sousTraitance?.codeExterne);
+r = await api(exp, 'POST', `/colis/${aAnnuler.id}/cancel`, { reason: 'test' });
+ok(r.status === 200 && (await lire(aAnnuler.id)).sousTraitance?.etat === 'ANNULE', 'annulation par l’expéditeur : acceptée, fiche JAX abandonnée', `${r.status} ${r.message}`);
 let enl = (await api(admin, 'GET', '/sous-traitance/jax/enlevements')).data ?? [];
 ok(!enl.some((g) => g.colis.some((x) => x.trackingNumber === c.trackingNumber)), 'pas encore d’enlèvement proposé (colis pas en agence)');
 r = await api(admin, 'POST', '/sous-traitance/jax/sync', {});

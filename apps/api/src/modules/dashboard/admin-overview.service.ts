@@ -6,8 +6,12 @@
  * raconter la journée et la période :
  *
  *   - aujourd'hui (créés, livrés, en route, ramassages du jour) ;
- *   - la période choisie (7, 14, 30 ou 90 jours) et la précédente, pour les
- *     tendances ;
+ *   - la période choisie (aujourd'hui, 7, 14, 30 ou 90 jours) et la
+ *     précédente, pour les tendances ;
+ *   - le parcours des colis créés sur la période, étape par étape, jusqu'à
+ *     « Livrés » ; le taux de livraison est celui des Rapports d'exploitation :
+ *     colis créés sur la période et livrés (y compris partiellement) ÷ colis
+ *     créés sur la période ;
  *   - la courbe jour par jour (créés, livrés, échecs, encaissé) ;
  *   - le parcours des colis en cours, étape par étape ;
  *   - le classement réel des livreurs et des expéditeurs sur la période
@@ -25,7 +29,8 @@ import { isDriverOnline } from '../presence/presence.service';
 
 const TZ = 'Africa/Tunis';
 
-export const PERIODES_ADMIN = [7, 14, 30, 90] as const;
+/** 1 : aujourd'hui. */
+export const PERIODES_ADMIN = [1, 7, 14, 30, 90] as const;
 
 /** Étapes du parcours, dans l'ordre, et les statuts qu'elles regroupent. */
 export const ETAPES_ADMIN = {
@@ -36,7 +41,8 @@ export const ETAPES_ADMIN = {
   // SOUS_TRAITE : en livraison chez le partenaire JAX.
   livraison: ['AFFECTE_RUNSHEET', 'EN_COURS_LIVRAISON', 'SOUS_TRAITE'],
   reporte: ['REPORTE'],
-  retour: ['ECHEC_LIVRAISON', 'RETOUR_DEPOT', 'EN_RUNSHEET_RETOUR'],
+  livre: ['LIVRE', 'LIVRAISON_PARTIELLE'],
+  retour: ['ECHEC_LIVRAISON', 'RETOUR_DEPOT', 'EN_RUNSHEET_RETOUR', 'RETOURNE_EXPEDITEUR'],
 } as const;
 
 const LIVRES = ['LIVRE', 'LIVRAISON_PARTIELLE'];
@@ -52,7 +58,10 @@ export interface AdminOverview {
     created: number;
     delivered: number;
     failed: number;
+    /** Taux de livraison (Rapports d'exploitation) : livrés parmi les colis créés sur la période. */
     successRate: number | null;
+    /** Colis créés sur la période et livrés (numérateur du taux). */
+    deliveredOfCreated: number;
     avgDeliveryHours: number | null;
     collected: number;
     fees: number;
@@ -98,6 +107,8 @@ export interface AdminOverview {
 const n = (v: unknown) => Number(v ?? 0) || 0;
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
 const taux = (ok: number, ko: number) => (ok + ko > 0 ? Math.round((ok / (ok + ko)) * 1000) / 10 : null);
+/** Même calcul que les Rapports d'exploitation (une décimale). */
+const tauxLivraison = (livres: number, crees: number) => (crees > 0 ? Math.round((livres / crees) * 1000) / 10 : null);
 
 export async function getAdminOverview(periodDays = 14, depositId?: string): Promise<AdminOverview> {
   const prisma = getPrisma();
@@ -115,7 +126,7 @@ export async function getAdminOverview(periodDays = 14, depositId?: string): Pro
   const porteeAgence = dep ? Prisma.sql`AND d."id" = ${dep}` : Prisma.empty;
   const liste = (valeurs: readonly string[]) => Prisma.join(valeurs as string[]);
 
-  const [statusRows, periodRows, dailyRows, attemptRows, driverRows, shipperRows, agencyRows, pickupRows, busy] =
+  const [statusRows, periodRows, dailyRows, attemptRows, driverRows, shipperRows, agencyRows, pickupRows, busy, parcoursRows] =
     await Promise.all([
       prisma.$queryRaw<{ status: string; total: bigint; cod: Prisma.Decimal | null }[]>`
         SELECT p."status"::text AS status, count(*) AS total, sum(p."totalPrice") AS cod
@@ -136,10 +147,14 @@ export async function getAdminOverview(periodDays = 14, depositId?: string): Pro
           prev_collected: Prisma.Decimal | null;
           today_created: bigint;
           today_delivered: bigint;
+          created_delivered: bigint;
+          prev_created_delivered: bigint;
         }[]
       >`
         SELECT
           count(*) FILTER (WHERE p."createdAt" >= ${debut}) AS created,
+          count(*) FILTER (WHERE p."createdAt" >= ${debut} AND p."status"::text IN (${liste(LIVRES)})) AS created_delivered,
+          count(*) FILTER (WHERE p."createdAt" >= ${debutPrecedent} AND p."createdAt" < ${debut} AND p."status"::text IN (${liste(LIVRES)})) AS prev_created_delivered,
           count(*) FILTER (WHERE p."status"::text IN (${liste(LIVRES)}) AND p."deliveredAt" >= ${debut}) AS delivered,
           count(*) FILTER (WHERE p."status"::text IN (${liste(ECHECS)}) AND p."updatedAt" >= ${debut}) AS failed,
           avg(EXTRACT(EPOCH FROM (p."deliveredAt" - p."createdAt")) / 3600.0)
@@ -267,6 +282,12 @@ export async function getAdminOverview(periodDays = 14, depositId?: string): Pro
         select: { driverId: true },
         distinct: ['driverId'],
       }),
+      // Parcours : colis créés sur la période, par statut actuel.
+      prisma.$queryRaw<{ status: string; total: bigint }[]>`
+        SELECT p."status"::text AS status, count(*) AS total
+        FROM "Package" p
+        WHERE p."deletedAt" IS NULL AND p."createdAt" >= ${debut} ${portee}
+        GROUP BY p."status"`,
     ]);
 
   const byStatus: Record<string, number> = {};
@@ -283,8 +304,10 @@ export async function getAdminOverview(periodDays = 14, depositId?: string): Pro
     }
   }
   const somme = (statuts: readonly string[]) => statuts.reduce((s, st) => s + (byStatus[st] ?? 0), 0);
+  const parcours: Record<string, number> = {};
+  for (const row of parcoursRows) parcours[row.status] = n(row.total);
   const pipeline = Object.fromEntries(
-    Object.entries(ETAPES_ADMIN).map(([cle, statuts]) => [cle, somme(statuts)])
+    Object.entries(ETAPES_ADMIN).map(([cle, statuts]) => [cle, statuts.reduce((s, st) => s + (parcours[st] ?? 0), 0)])
   ) as AdminOverview['pipeline'];
 
   const p = periodRows[0];
@@ -323,7 +346,8 @@ export async function getAdminOverview(periodDays = 14, depositId?: string): Pro
       created: n(p?.created),
       delivered,
       failed,
-      successRate: taux(delivered, failed),
+      successRate: tauxLivraison(n(p?.created_delivered), n(p?.created)),
+      deliveredOfCreated: n(p?.created_delivered),
       avgDeliveryHours: p?.avg_hours == null ? null : Math.round(Number(p.avg_hours) * 10) / 10,
       collected: r3(n(p?.collected)),
       fees: r3(n(p?.fees)),
@@ -333,7 +357,7 @@ export async function getAdminOverview(periodDays = 14, depositId?: string): Pro
       delivered: prevDelivered,
       failed: prevFailed,
       collected: r3(n(p?.prev_collected)),
-      successRate: taux(prevDelivered, prevFailed),
+      successRate: tauxLivraison(n(p?.prev_created_delivered), n(p?.prev_created)),
     },
     active: all - somme(TERMINES),
     pipeline,
