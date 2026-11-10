@@ -89,6 +89,8 @@ ok(await fill('Nom et prénom', NAME), 'nom saisi');
 ok(await fill('Ex: 27660505', '27660506'), 'téléphone saisi');
 ok(await fill('N° rue', 'Rue du formulaire 7'), 'adresse saisie');
 await fill('Ex: 2 Chemises', 'Deux livres');
+// Prix du colis : champ obligatoire depuis le 07/11 (colis à 0 DT permis).
+await page.type('[data-testid=prix-colis]', '25');
 ok(await clickText(/Créer le Colis/), 'soumission du formulaire');
 await pause(2000);
 const found = (await api(admin, 'GET', `/colis?search=${encodeURIComponent(NAME)}`)).data ?? [];

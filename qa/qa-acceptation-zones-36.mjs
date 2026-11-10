@@ -49,7 +49,8 @@ const accepter = (code, type, depositId = hub.id) => api(admin, 'POST', '/inter-
 console.log('\n1. Acceptation Magasin : Tunis et Ben Arous seulement');
 const cBA = await colis(bluestar.id);
 const cTN = await colis(benhcine.id);
-const cSO = await colis(techstore.id, { pieceCount: 2 });
+// Destination Tunis : livrée par Runex (sinon confiée à JAX dès sa réception).
+const cSO = await colis(techstore.id, { pieceCount: 2, governorate: 'Tunis', delegation: 'La Marsa' });
 let r = await magasin(cBA.barcode);
 ok(r.status === 200 && r.data?.outcome === 'RECEIVED', 'expéditeur de Ben Arous : reçu', `${r.status} ${r.message}`);
 r = await magasin(cTN.barcode);
