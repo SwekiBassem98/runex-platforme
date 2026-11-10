@@ -217,6 +217,11 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
   const [typeFilter, setTypeFilter] = useState('ALL');
   const [paymentStatusFilter, setPaymentStatusFilter] = useState('ALL');
   const [dateFilter, setDateFilter] = useState('');
+  // Filtres posés par un lien du tableau de bord (sans menu propre) : ils
+  // apparaissent dans le résumé des filtres et « Réinitialiser » les retire.
+  const [livreDepuis, setLivreDepuis] = useState('');
+  const [depotFilter, setDepotFilter] = useState('');
+  const [sansLivreur, setSansLivreur] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   // Sous 640 px, le tableau cède la place à des fiches. La bascule reste
@@ -255,7 +260,10 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
     shipperFilter !== 'ALL' ||
     typeFilter !== 'ALL' ||
     paymentStatusFilter !== 'ALL' ||
-    Boolean(dateFilter);
+    Boolean(dateFilter) ||
+    Boolean(livreDepuis) ||
+    Boolean(depotFilter) ||
+    sansLivreur;
 
   const reinitialiserFiltres = () => {
     setSearchTerm('');
@@ -267,6 +275,9 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
     setTypeFilter('ALL');
     setPaymentStatusFilter('ALL');
     setDateFilter('');
+    setLivreDepuis('');
+    setDepotFilter('');
+    setSansLivreur(false);
     setCurrentPage(1);
   };
 
@@ -279,14 +290,17 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
    */
   const resumeFiltres = [
     searchTerm ? `recherche « ${searchTerm} »` : null,
-    statusFilter !== 'ALL' ? `statut ${LIBELLE_STATUT[statusFilter] ?? statusFilter}` : null,
+    statusFilter !== 'ALL' ? `statut ${statusFilter.split(',').map((x) => LIBELLE_STATUT[x] ?? x).join(' / ')}` : null,
     cityFilter !== 'ALL' ? `gouvernorat ${cityFilter}` : null,
     zoneFilter !== 'ALL' ? `zone ${zonesOptions.find((z) => z.id === zoneFilter)?.name ?? ''}` : null,
     driverFilter !== 'ALL' ? `livreur ${livreursFiltre.find((l) => l.value === driverFilter)?.label ?? driverFilter}` : null,
     shipperFilter !== 'ALL' ? `expéditeur ${expediteursFiltre.find((l) => l.value === shipperFilter)?.label ?? ''}` : null,
     typeFilter !== 'ALL' ? `type ${LIBELLE_TYPE[typeFilter] ?? typeFilter}` : null,
     paymentStatusFilter !== 'ALL' ? `règlement ${LIBELLE_REGLEMENT[paymentStatusFilter] ?? paymentStatusFilter}` : null,
-    dateFilter ? `le ${dateFilter}` : null,
+    dateFilter ? `créés le ${dateFilter}` : null,
+    livreDepuis ? `livrés depuis le ${livreDepuis}` : null,
+    depotFilter ? 'dans l’agence choisie' : null,
+    sansLivreur ? 'sans livreur' : null,
   ]
     .filter(Boolean)
     .join(' · ');
@@ -394,8 +408,17 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
     const expediteur = query.get('expediteur');
     if (expediteur) setShipperFilter(expediteur);
     // `/colis?statut=<code>` et `/colis?livreur=<matricule>` : ouverts depuis le tableau de bord.
+    // `statut` peut regrouper plusieurs statuts (« A,B ») : une étape du tableau
+    // de bord compte toujours plusieurs statuts, le lien doit montrer les mêmes colis.
     const statut = query.get('statut');
-    if (statut && statut in PACKAGE_STATUS_LABELS) setStatusFilter(statut);
+    if (statut && statut.split(',').every((x) => x in PACKAGE_STATUS_LABELS)) setStatusFilter(statut);
+    const date = query.get('date');
+    if (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) setDateFilter(date);
+    const livre = query.get('livreDepuis');
+    if (livre && /^\d{4}-\d{2}-\d{2}$/.test(livre)) setLivreDepuis(livre);
+    const depot = query.get('depot');
+    if (depot) setDepotFilter(depot);
+    if (query.get('sansLivreur') === '1') setSansLivreur(true);
     const livreur = query.get('livreur');
     if (livreur) setDriverFilter(livreur);
     void driversApi
@@ -498,6 +521,9 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
       if (typeFilter !== 'ALL') params.append('type', typeFilter);
       if (paymentStatusFilter !== 'ALL') params.append('paymentStatus', paymentStatusFilter);
       if (dateFilter) params.append('date', dateFilter);
+      if (livreDepuis) params.append('deliveredFrom', livreDepuis);
+      if (depotFilter) params.append('depot', depotFilter);
+      if (sansLivreur) params.append('unassigned', '1');
 
       const res = await fetch(`/api/v1/packages?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -573,6 +599,9 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
     typeFilter,
     paymentStatusFilter,
     dateFilter,
+    livreDepuis,
+    depotFilter,
+    sansLivreur,
     // `searchTerm` manque ici : la recherche lit la valeur au moment du fetch,
     // mais ne déclenchait aucun fetch. Déjà en page 1 — donc après une
     // recherche — `setCurrentPage(1)` ne changeait rien, et l'utilisateur
@@ -779,6 +808,10 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
                 }}
                 options={[
                   { label: 'Tous les statuts', value: 'ALL' },
+                  // Étape du tableau de bord (plusieurs statuts) : proposée telle quelle.
+                  ...(statusFilter.includes(',')
+                    ? [{ value: statusFilter, label: statusFilter.split(',').map((x) => PACKAGE_STATUS_LABELS[x as PackageStatus] ?? x).join(' · ') }]
+                    : []),
                   ...Object.entries(PACKAGE_STATUS_LABELS).map(([value, label]) => ({ value, label: String(label) })),
                 ]}
               />

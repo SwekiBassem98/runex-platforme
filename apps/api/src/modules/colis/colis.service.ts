@@ -92,6 +92,12 @@ export interface ColisFilterParams {
    * expéditeur ne doit pas les perdre à minuit.
    */
   avecCreesEnAttente?: boolean;
+  /** Livrés depuis ce jour (AAAA-MM-JJ, journée de Tunis) — « Livrés aujourd'hui / sur N jours ». */
+  deliveredFrom?: string;
+  /** Colis présents dans cette agence (identifiant) — « à affecter » d'une agence. */
+  depot?: string;
+  /** Seulement les colis sans livreur — « Colis à affecter ». */
+  unassigned?: boolean;
   page?: number;
   limit?: number;
   scope?: ScopeFilter;
@@ -430,6 +436,14 @@ export class ColisService {
         and.push({ id: '00000000-0000-0000-0000-000000000000' });
       }
     }
+    if (params.deliveredFrom) {
+      const depuis = periode(params.deliveredFrom, null);
+      and.push(depuis?.gte ? { deliveredAt: { gte: depuis.gte } } : aucun);
+    }
+    if (params.depot && params.depot !== 'ALL') {
+      and.push(/^[0-9a-f-]{36}$/i.test(params.depot) ? { currentDepositId: params.depot } : aucun);
+    }
+    if (params.unassigned) and.push({ assignedDriverId: null });
     if (params.date) {
       // Journée de Tunis, indépendante du fuseau du serveur (UTC en conteneur).
       const range = periode(params.date, params.date);

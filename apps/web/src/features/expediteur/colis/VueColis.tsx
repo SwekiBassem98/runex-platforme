@@ -116,11 +116,13 @@ export function VueColis() {
   });
   const [recherche, setRecherche] = React.useState(params.get('q') ?? '');
   const [statut, setStatut] = React.useState(params.get('statut') ?? 'ALL');
+  // `livreDepuis` (lien du tableau de bord « Livrés · N jours ») : sans menu propre, effacé par « Réinitialiser ».
+  const [livreDepuis, setLivreDepuis] = React.useState(() => (/^\d{4}-\d{2}-\d{2}$/.test(params.get('livreDepuis') ?? '') ? params.get('livreDepuis')! : ''));
   const [type, setType] = React.useState(params.get('type') ?? 'ALL');
   const [gouvernorat, setGouvernorat] = React.useState(params.get('ville') ?? 'ALL');
   const aujourdhui = jourTunis();
   // Entrée simple sur la page : les colis du jour. Lien filtré ou `date=tous` : tout l'historique.
-  const arriveeFiltree = ['vue', 'statut', 'type', 'ville', 'q'].some((k) => params.get(k));
+  const arriveeFiltree = ['vue', 'statut', 'type', 'ville', 'q', 'livreDepuis'].some((k) => params.get(k));
   const [date, setDate] = React.useState(() => {
     const demandee = params.get('date');
     if (demandee === 'tous') return '';
@@ -166,6 +168,7 @@ export function VueColis() {
         ...(type !== 'ALL' ? { type } : {}),
         ...(gouvernorat !== 'ALL' ? { city: gouvernorat } : {}),
         ...(dateEffective ? { date: dateEffective } : {}),
+        ...(livreDepuis ? { deliveredFrom: livreDepuis } : {}),
         // Colis du jour : aussi les colis encore « Créé » des jours précédents.
         ...(duJour ? { avecCreesEnAttente: true } : {}),
       };
@@ -208,7 +211,7 @@ export function VueColis() {
     return () => {
       annule = true;
     };
-  }, [vue, rechercheAppliquee, statut, type, gouvernorat, dateEffective, duJour, page, taille]);
+  }, [vue, rechercheAppliquee, statut, type, gouvernorat, dateEffective, duJour, livreDepuis, page, taille]);
 
   /*
    * Tri de la page affichée.
@@ -242,6 +245,7 @@ export function VueColis() {
     setStatut('ALL');
     setType('ALL');
     setGouvernorat('ALL');
+    setLivreDepuis('');
     setDate(aujourdhui);
     setDateChoisie(false);
     setPage(1);
@@ -263,6 +267,7 @@ export function VueColis() {
         ...(type !== 'ALL' ? { type } : {}),
         ...(gouvernorat !== 'ALL' ? { city: gouvernorat } : {}),
         ...(dateEffective ? { date: dateEffective } : {}),
+        ...(livreDepuis ? { deliveredFrom: livreDepuis } : {}),
         // Colis du jour : aussi les colis encore « Créé » des jours précédents.
         ...(duJour ? { avecCreesEnAttente: true } : {}),
       };
@@ -385,6 +390,7 @@ export function VueColis() {
     type !== 'ALL' ||
     gouvernorat !== 'ALL' ||
     (date !== '' && date !== aujourdhui) ||
+    livreDepuis !== '' ||
     vue !== 'tous';
 
   const choisirJour = (jour: string) => {
