@@ -144,12 +144,20 @@ export class CaisseService {
           WHERE status = 'PAYE' AND ${sqlPeriode(Prisma.sql`"paidAt"`, p)}`,
         prisma.$queryRaw<{ total: Prisma.Decimal | null }[]>`
           SELECT sum("netPayable") AS total FROM "PaymentVoucher" WHERE status IN ('EN_ATTENTE', 'CONFIRME')`,
-        // Livré et encaissé, pas encore dans un bordereau : dû à l'expéditeur.
+        // Livré et encaissé, pas encore dans un bordereau : dû à l'expéditeur
+        // (encaissé par un livreur Runex, ou reversé par JAX).
         prisma.$queryRaw<{ total: Prisma.Decimal | null }[]>`
-          SELECT sum(pay."amountCollected" - pay."amountRefunded" - p."deliveryFee") AS total
-          FROM "Package" p JOIN "Payment" pay ON pay."packageId" = p.id
-          WHERE p."deletedAt" IS NULL AND p."paymentVoucherId" IS NULL
-            AND p.status::text IN (${Prisma.join(LIVRES)}) AND pay.status IN ('VALIDE', 'EN_ATTENTE')`,
+          SELECT COALESCE((
+            SELECT sum(pay."amountCollected" - pay."amountRefunded" - p."deliveryFee")
+            FROM "Package" p JOIN "Payment" pay ON pay."packageId" = p.id
+            WHERE p."deletedAt" IS NULL AND p."paymentVoucherId" IS NULL
+              AND p.status::text IN (${Prisma.join(LIVRES)}) AND pay.status IN ('VALIDE', 'EN_ATTENTE')), 0)
+          + COALESCE((
+            SELECT sum(COALESCE(p."collectedAmount", p."totalPrice") - p."deliveryFee")
+            FROM "Package" p JOIN "SousTraitance" st ON st."packageId" = p.id
+            WHERE p."deletedAt" IS NULL AND p."paymentVoucherId" IS NULL
+              AND p.status::text IN (${Prisma.join(LIVRES)}) AND st.etat = 'LIVRE' AND st."codRecuLe" IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM "Payment" pay WHERE pay."packageId" = p.id AND pay.status <> 'ANNULE')), 0) AS total`,
         prisma.$queryRaw<{ nb: bigint }[]>`
           SELECT count(*) AS nb FROM "PickupAppointment"
           WHERE status = 'EFFECTUE' AND "assignedDriverId" IS NOT NULL AND ${sqlPeriode(Prisma.sql`"completedAt"`, p)}`,

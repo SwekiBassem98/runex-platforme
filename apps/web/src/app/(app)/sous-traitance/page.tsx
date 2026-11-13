@@ -41,7 +41,7 @@ const ONGLETS: { id: Onglet; libelle: string; icone: React.ElementType }[] = [
   { id: 'rattrapage', libelle: 'Restés chez Runex', icone: AlertTriangle },
   { id: 'aconfier', libelle: 'À confier', icone: Send },
   { id: 'enlevements', libelle: 'Enlèvements', icone: Truck },
-  { id: 'encaissements', libelle: 'Encaissements JAX', icone: Coins },
+  { id: 'encaissements', libelle: 'Reversements JAX', icone: Coins },
   { id: 'afaire', libelle: 'À faire chez JAX', icone: ClipboardList },
   { id: 'parametres', libelle: 'Paramètres', icone: Settings2 },
 ];
@@ -108,7 +108,7 @@ export default function SousTraitancePage() {
             ['À faire enlever', c.EN_ATTENTE_ENLEVEMENT ?? 0, 'bg-slate-50 border-slate-200 text-slate-900'],
             ['Livrés par JAX', c.LIVRE ?? 0, 'bg-emerald-50 border-emerald-200 text-emerald-900'],
             ['Retours en cours', c.RETOUR_EN_COURS ?? 0, 'bg-rose-50 border-rose-200 text-rose-900'],
-            ['À recevoir de JAX', compteurs ? dt(compteurs.codARecevoir.total) : '—', 'bg-amber-50 border-amber-200 text-amber-900'],
+            ['Reversé par JAX', compteurs ? dt(compteurs.codRecu?.total ?? 0) : '—', 'bg-amber-50 border-amber-200 text-amber-900'],
           ].map(([libelle, valeur, ton]) => (
             <div key={String(libelle)} className={`rounded-lg border px-4 py-3 ${ton}`}>
               <p className="text-xs font-semibold opacity-80">{libelle}</p>
@@ -759,13 +759,11 @@ function Enlevements({ notifier, onChange }: { notifier: Notifier; onChange: () 
 
 /* ------------------------------------------------------------------ */
 
-function Encaissements({ notifier, onChange, fraisColis }: { notifier: Notifier; onChange: () => void; fraisColis: number | null }) {
+function Encaissements({ notifier, fraisColis }: { notifier: Notifier; onChange: () => void; fraisColis: number | null }) {
   const [liste, setListe] = React.useState<ListeSousTraitance | null>(null);
-  const [choix, setChoix] = React.useState<Set<string>>(new Set());
-  const [occupe, setOccupe] = React.useState(false);
   const charger = React.useCallback(async () => {
     try {
-      setListe(await sousTraitanceApi.lister({ cod: 'a_recevoir' }));
+      setListe(await sousTraitanceApi.lister({ cod: 'recu' }));
     } catch (e) {
       notifier(false, 'Liste indisponible', erreur(e));
     }
@@ -774,99 +772,66 @@ function Encaissements({ notifier, onChange, fraisColis }: { notifier: Notifier;
   const lignes = liste?.lignes ?? [];
   // Reversé par JAX : contre-remboursement moins sa part.
   const net = (l: { codMontant: number; fraisPartenaire?: number | null }) => l.codMontant - (l.fraisPartenaire ?? 0);
-  const totalChoisi = lignes.filter((l) => choix.has(l.packageId)).reduce((s, l) => s + net(l), 0);
-
-  const recu = async () => {
-    setOccupe(true);
-    try {
-      const r = await sousTraitanceApi.codRecu([...choix]);
-      notifier(true, r.message ?? 'Reversement enregistré');
-      setChoix(new Set());
-      await charger();
-      onChange();
-    } catch (e) {
-      notifier(false, 'Enregistrement impossible', erreur(e));
-    } finally {
-      setOccupe(false);
-    }
-  };
+  // Totaux depuis toujours (la liste montre les 500 derniers).
+  const total = liste?.codRecu?.total ?? lignes.reduce((s, l) => s + net(l), 0);
+  const partJax = liste?.codRecu?.fraisJax ?? lignes.reduce((s, l) => s + (l.fraisPartenaire ?? 0), 0);
 
   return (
     <Card>
       <p className="text-xs text-slate-500 mb-3">
-        JAX encaisse le montant des colis qu’il livre, garde sa part ({fraisColis !== null ? dt(fraisColis) : '—'} par colis livré
-        depuis le 10/11) et reverse le reste à Runex. Cochez les colis dont vous avez reçu le montant : leurs expéditeurs pourront
-        alors être réglés (bordereaux). Tant qu’un montant n’est pas reçu, le colis reste hors bordereau.
+        Automatique : dès qu’un colis passe « Livré » chez JAX, JAX garde sa part ({fraisColis !== null ? dt(fraisColis) : '—'} par
+        colis) et le reste est enregistré comme reversé à Runex. Le colis entre aussitôt en caisse, en finance et dans le prochain
+        bordereau de son expéditeur — aucune confirmation à faire.
       </p>
-      <div className="flex flex-wrap items-center gap-3 mb-3">
-        <p className="text-sm text-slate-700">
-          À recevoir : <strong className="font-mono">{dt(liste?.codARecevoir.total ?? 0)}</strong> ({liste?.codARecevoir.colis ?? 0} colis)
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-1 mb-3 text-sm text-slate-700" data-testid="reversements-totaux">
+        <p>
+          Reversé par JAX : <strong className="font-mono">{dt(total)}</strong> ({liste?.codRecu?.colis ?? lignes.length} colis)
         </p>
-        <button
-          type="button"
-          disabled={!choix.size || occupe}
-          onClick={() => void recu()}
-          data-testid="marquer-cod-recu"
-          className={`${bouton} ms-auto bg-emerald-600 text-white hover:bg-emerald-700`}
-        >
-          <CheckCircle2 className="w-4 h-4" aria-hidden="true" /> Reçu de JAX : {dt(totalChoisi)} ({choix.size})
-        </button>
+        <p>
+          Part de JAX : <strong className="font-mono text-amber-800">{dt(partJax)}</strong>
+        </p>
+        {(liste?.codARecevoir.colis ?? 0) > 0 && (
+          <p className="text-amber-700">
+            En attente : {dt(liste?.codARecevoir.total ?? 0)} ({liste?.codARecevoir.colis} colis)
+          </p>
+        )}
       </div>
-      <table className="w-full text-sm" data-testid="table-encaissements">
-        <thead>
-          <tr className="text-left text-[11px] uppercase tracking-wide text-slate-400 border-b border-slate-200">
-            <th className="py-2 pr-2 w-8">
-              <input
-                type="checkbox"
-                aria-label="Tout sélectionner"
-                checked={lignes.length > 0 && choix.size === lignes.length}
-                onChange={(e) => setChoix(e.target.checked ? new Set(lignes.map((l) => l.packageId)) : new Set())}
-              />
-            </th>
-            <th className="py-2 pr-3">Colis</th>
-            <th className="py-2 pr-3">Code JAX</th>
-            <th className="py-2 pr-3">Expéditeur</th>
-            <th className="py-2 pr-3">Livré</th>
-            <th className="py-2 pr-3 text-right">Encaissé par JAX</th>
-            <th className="py-2 pr-3 text-right">Part JAX</th>
-            <th className="py-2 text-right">À reverser</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100">
-          {lignes.length === 0 ? (
-            <tr>
-              <td colSpan={8} className="py-8 text-center text-slate-500">Rien à recevoir de JAX.</td>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm" data-testid="table-encaissements">
+          <thead>
+            <tr className="text-left text-[11px] uppercase tracking-wide text-slate-400 border-b border-slate-200">
+              <th className="py-2 pr-3">Colis</th>
+              <th className="py-2 pr-3">Code JAX</th>
+              <th className="py-2 pr-3">Expéditeur</th>
+              <th className="py-2 pr-3">Livré / reversé</th>
+              <th className="py-2 pr-3 text-right">Encaissé par JAX</th>
+              <th className="py-2 pr-3 text-right">Part JAX</th>
+              <th className="py-2 text-right">Reversé à Runex</th>
             </tr>
-          ) : (
-            lignes.map((l) => (
-              <tr key={l.packageId}>
-                <td className="py-2 pr-2">
-                  <input
-                    type="checkbox"
-                    aria-label={`Choisir ${l.trackingNumber}`}
-                    checked={choix.has(l.packageId)}
-                    onChange={() =>
-                      setChoix((p) => {
-                        const n = new Set(p);
-                        if (n.has(l.packageId)) n.delete(l.packageId);
-                        else n.add(l.packageId);
-                        return n;
-                      })
-                    }
-                  />
-                </td>
-                <td className="py-2 pr-3 font-mono text-xs font-bold text-red-700">{l.trackingNumber}</td>
-                <td className="py-2 pr-3 font-mono text-xs">{l.codeExterne}</td>
-                <td className="py-2 pr-3 text-xs">{l.expediteur}</td>
-                <td className="py-2 pr-3 text-xs">{quand(l.statutExterneLe)}</td>
-                <td className="py-2 pr-3 text-right font-mono text-xs">{dt(l.codMontant)}</td>
-                <td className="py-2 pr-3 text-right font-mono text-xs text-amber-800">{l.fraisPartenaire !== null && l.fraisPartenaire !== undefined ? `− ${dt(l.fraisPartenaire)}` : '—'}</td>
-                <td className="py-2 text-right font-mono text-xs font-semibold">{dt(net(l))}</td>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {lignes.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="py-8 text-center text-slate-500">Aucun colis livré par JAX pour l’instant.</td>
               </tr>
-            ))
-          )}
-        </tbody>
-      </table>
+            ) : (
+              lignes.map((l) => (
+                <tr key={l.packageId}>
+                  <td className="py-2 pr-3 font-mono text-xs font-bold text-red-700">{l.trackingNumber}</td>
+                  <td className="py-2 pr-3 font-mono text-xs">{l.codeExterne}</td>
+                  <td className="py-2 pr-3 text-xs">{l.expediteur}</td>
+                  <td className="py-2 pr-3 text-xs">{quand(l.codRecuLe ?? l.statutExterneLe)}</td>
+                  <td className="py-2 pr-3 text-right font-mono text-xs">{dt(l.codMontant)}</td>
+                  <td className="py-2 pr-3 text-right font-mono text-xs text-amber-800">
+                    {l.fraisPartenaire !== null && l.fraisPartenaire !== undefined ? `− ${dt(l.fraisPartenaire)}` : '—'}
+                  </td>
+                  <td className="py-2 text-right font-mono text-xs font-semibold text-emerald-800">{dt(net(l))}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
     </Card>
   );
 }

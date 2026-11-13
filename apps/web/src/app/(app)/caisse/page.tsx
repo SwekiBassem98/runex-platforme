@@ -337,12 +337,14 @@ export default function CaissePage() {
                     {(r.aRecevoirJax > 0 || r.recuJax > 0) && (
                       <div className="flex justify-between gap-3" data-testid="caisse-jax">
                         <dt className="text-slate-500">
-                          À recevoir de JAX
-                          <span className="block text-xs text-slate-400">contre-remboursements − part de JAX</span>
+                          Reversé par JAX {phrase}
+                          <span className="block text-xs text-slate-400">automatique à la livraison : contre-remboursement − part de JAX</span>
                         </dt>
-                        <dd className="font-medium tabular-nums text-amber-800">
-                          {formatTND(r.aRecevoirJax)}
-                          <span className="block text-right text-xs font-normal text-slate-400">reçu {phrase} : {formatTND(r.recuJax)}</span>
+                        <dd className="font-medium tabular-nums text-emerald-800">
+                          {formatTND(r.recuJax)}
+                          {r.aRecevoirJax > 0 && (
+                            <span className="block text-right text-xs font-normal text-amber-700">en attente : {formatTND(r.aRecevoirJax)}</span>
+                          )}
                         </dd>
                       </div>
                     )}

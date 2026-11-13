@@ -160,21 +160,18 @@ await jax('/__control/statut', { ean: eanA, statutId: 5 });
 await api(admin, 'POST', '/sous-traitance/jax/sync', { packageIds: [cAuto.id] });
 d = await lire(cAuto.id);
 ok(d.status === 'LIVRE' && d.sousTraitance.etat === 'LIVRE', 'livré chez JAX → colis Livré dans Runex');
-ok(Number(d.collectedAmount) === Number(d.totalPrice) && d.sousTraitance.codMontant === Number(d.totalPrice) && !d.sousTraitance.codRecuLe, 'montant encaissé par JAX, à reverser à Runex');
+// 13/11 : reversement JAX enregistré d'office à la livraison.
+ok(Number(d.collectedAmount) === Number(d.totalPrice) && d.sousTraitance.codMontant === Number(d.totalPrice) && !!d.sousTraitance.codRecuLe, 'montant encaissé par JAX, reversement enregistré automatiquement');
 await jax('/__control/statut', { ean: eanA, statutId: 2 });
 await api(admin, 'POST', '/sous-traitance/jax/sync', { packageIds: [cAuto.id] });
 d = await lire(cAuto.id);
 ok(d.status === 'LIVRE' && d.sousTraitance.statutExterne === 'Livré', 'relecture tardive d’un ancien statut : ni retour en arrière, ni libellé contradictoire', d.sousTraitance.statutExterne);
 
-console.log('\n7. Encaissements : expéditeur réglé après le reversement JAX');
-let cand = (await api(admin, 'GET', '/payments/vouchers/candidats')).data.find((x) => x.shipperId === bluestar.id);
-const livresAvant = cand?.livres ?? 0;
-let liste = (await api(admin, 'GET', '/sous-traitance/jax/colis?cod=a_recevoir')).data;
-ok(liste.lignes.some((l) => l.packageId === cAuto.id) && liste.codARecevoir.total >= Number(d.totalPrice) - 6.5, 'encaissements : montant à recevoir de JAX (moins sa part)');
-r = await api(admin, 'POST', '/sous-traitance/jax/encaissements', { packageIds: [cAuto.id] });
-ok(r.status === 200, 'reversement JAX enregistré', r.message);
-cand = (await api(admin, 'GET', '/payments/vouchers/candidats')).data.find((x) => x.shipperId === bluestar.id);
-ok((cand?.livres ?? 0) === livresAvant + 1, 'bordereau expéditeur : colis JAX réglable une fois le montant reçu', `${livresAvant} → ${cand?.livres}`);
+console.log('\n7. Reversements : automatiques, expéditeur réglable aussitôt');
+let liste = (await api(admin, 'GET', '/sous-traitance/jax/colis?cod=recu')).data;
+ok(liste.lignes.some((l) => l.packageId === cAuto.id) && !(await api(admin, 'GET', '/sous-traitance/jax/colis?cod=a_recevoir')).data.lignes.some((l) => l.packageId === cAuto.id), 'reversement JAX : listé comme reçu, rien à confirmer');
+const cand = (await api(admin, 'GET', '/payments/vouchers/candidats')).data.find((x) => x.shipperId === bluestar.id);
+ok((cand?.livres ?? 0) >= 1, 'bordereau expéditeur : colis JAX réglable dès sa livraison', `${cand?.livres}`);
 
 console.log('\n8. Retour, reprise, correspondance manuelle');
 await jax('/__control/statut', { ean: eanB, statutId: 6 });

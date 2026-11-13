@@ -185,13 +185,11 @@ const apres = (await api(admin, 'GET', '/caisse/resume')).data;
 const fee = Number(livreJax.deliveryFee);
 ok(Math.abs(apres.fraisJax - avant.fraisJax - 6.5) < 0.001, 'caisse : part de JAX + 6,500', `${avant.fraisJax} → ${apres.fraisJax}`);
 ok(Math.abs(apres.margeJax - avant.margeJax - (fee - 6.5)) < 0.001, `caisse : Runex garde ${(fee - 6.5).toFixed(3)} DT sur ce colis (frais ${fee.toFixed(3)})`, `${avant.margeJax} → ${apres.margeJax}`);
-ok(Math.abs(apres.aRecevoirJax - avant.aRecevoirJax - (Number(livreJax.totalPrice) - 6.5)) < 0.001, 'à recevoir de JAX : contre-remboursement − 6,500');
+ok(Math.abs(apres.recuJax - avant.recuJax - (Number(livreJax.totalPrice) - 6.5)) < 0.001 && apres.aRecevoirJax === avant.aRecevoirJax, 'reversé par JAX (automatique) : contre-remboursement − 6,500');
 ok(Math.abs((apres.margeNette - avant.margeNette) - (fee - 6.5)) < 0.001, 'bénéfice net : frais − part de JAX', `${avant.margeNette} → ${apres.margeNette}`);
-const liste = (await api(admin, 'GET', '/sous-traitance/jax/colis?cod=a_recevoir')).data;
+const liste = (await api(admin, 'GET', '/sous-traitance/jax/colis?cod=recu')).data;
 const ligne = liste.lignes.find((l) => l.packageId === livreJax.id);
-ok(ligne?.fraisPartenaire === 6.5, 'encaissements JAX : part de JAX par colis affichée');
-r = await api(admin, 'POST', '/sous-traitance/jax/encaissements', { packageIds: [livreJax.id] });
-ok(Math.abs(r.data.total - (Number(livreJax.totalPrice) - 6.5)) < 0.001, 'reversement reçu = contre-remboursement − part de JAX', JSON.stringify(r.data));
+ok(ligne?.fraisPartenaire === 6.5 && !!ligne?.codRecuLe, 'reversements JAX : part de JAX par colis, reversement enregistré');
 const ancienLivre = sql(`SELECT count(*) FROM "SousTraitance" WHERE etat='LIVRE' AND "fraisPartenaire" IS NULL`);
 void ancienLivre;
 
@@ -261,7 +259,7 @@ if (process.env.PUPPETEER_CORE) {
   if (SHOTS) await p.screenshot({ path: `${SHOTS}/54-tdb-admin-aujourdhui.png`, fullPage: true });
   await p.goto(W + '/caisse', { waitUntil: 'networkidle2' }); await pause(1500);
   txt = await p.evaluate(() => document.body.innerText);
-  ok(/Part de JAX/.test(txt) && /À recevoir de JAX/.test(txt), 'caisse : part de JAX et « À recevoir de JAX »');
+  ok(/Part de JAX/.test(txt) && /Reversé par JAX/.test(txt), 'caisse : part de JAX et « Reversé par JAX »');
   if (SHOTS) await p.screenshot({ path: `${SHOTS}/54-caisse.png`, fullPage: true });
   await p.goto(W + '/sous-traitance', { waitUntil: 'networkidle2' });
   await p.click('[data-testid=onglet-afaire]'); await pause(1500);
