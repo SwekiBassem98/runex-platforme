@@ -2244,6 +2244,7 @@ export interface ListeSousTraitance {
   lignes: LigneSousTraitance[];
   compteurs: Record<string, number>;
   codARecevoir: { colis: number; total: number; fraisJax?: number };
+  codRecu?: { colis: number; total: number; fraisJax: number };
 }
 
 export interface ColisEligibleJax {

@@ -29,7 +29,9 @@
  *  - un colis reporté, ou déjà présenté par un livreur Runex, reste chez Runex :
  *    son livreur le livre à nouveau ;
  *  - JAX garde sa part (6,500 DT par défaut, JAX_FRAIS_COLIS) sur chaque colis
- *    qu'il livre : il reverse le contre-remboursement moins cette part.
+ *    qu'il livre : il reverse le contre-remboursement moins cette part. Depuis
+ *    le 13/11 ce reversement est enregistré d'office à la livraison (plus de
+ *    confirmation manuelle) : caisse, finance et bordereaux suivent seuls.
  */
 
 import { Prisma, type EtatSousTraitance as EtatPrisma } from '@prisma/client';
@@ -1312,8 +1314,12 @@ export class SousTraitanceService {
                 statutExterneLe: statut.le ?? (libelleChange ? maintenant : r.statutExterneLe),
               }),
           etat: cible as EtatPrisma,
-          // Livré par JAX : il encaisse le contre-remboursement et garde sa part.
-          ...(cible === 'LIVRE' && actuel !== 'LIVRE' ? { codMontant: r.package.totalPrice, fraisPartenaire: fraisJaxParColis() } : {}),
+          // Livré par JAX : il encaisse le contre-remboursement, garde sa part et
+          // reverse le reste à Runex — réglé d'office (13/11), le colis entre
+          // aussitôt en caisse, en finance et dans les bordereaux expéditeurs.
+          ...(cible === 'LIVRE' && actuel !== 'LIVRE'
+            ? { codMontant: r.package.totalPrice, fraisPartenaire: fraisJaxParColis(), codRecuLe: maintenant }
+            : {}),
         },
       });
       if (!etatChange && !libelleChange && !statutChange) return;
@@ -1501,11 +1507,13 @@ export class SousTraitanceService {
     const depot = asUuid(filtres.depositId ?? null);
     if (depot) where.depositId = depot;
     if (filtres.cod === 'a_recevoir') Object.assign(where, { etat: 'LIVRE', codRecuLe: null });
+    // Reversements JAX (automatiques à la livraison), les plus récents d'abord.
+    if (filtres.cod === 'recu') Object.assign(where, { etat: 'LIVRE', codRecuLe: { not: null } });
     if (filtres.q?.trim()) {
       const q = filtres.q.trim();
       where.OR = [{ codeExterne: { contains: q, mode: 'insensitive' } }, { package: { trackingNumber: { contains: q } } }];
     }
-    const [rows, compte, codAttendu] = await Promise.all([
+    const [rows, compte, codAttendu, codRecu] = await Promise.all([
       this.prisma.sousTraitance.findMany({
         where,
         include: {
@@ -1522,11 +1530,12 @@ export class SousTraitanceService {
             },
           },
         },
-        orderBy: { updatedAt: 'desc' },
+        orderBy: filtres.cod === 'recu' ? { codRecuLe: 'desc' } : { updatedAt: 'desc' },
         take: 500,
       }),
       this.prisma.sousTraitance.groupBy({ by: ['etat'], where: { partenaire: PARTENAIRE }, _count: { _all: true } }),
       this.prisma.sousTraitance.aggregate({ where: { partenaire: PARTENAIRE, etat: 'LIVRE', codRecuLe: null }, _sum: { codMontant: true, fraisPartenaire: true }, _count: { _all: true } }),
+      this.prisma.sousTraitance.aggregate({ where: { partenaire: PARTENAIRE, etat: 'LIVRE', codRecuLe: { not: null } }, _sum: { codMontant: true, fraisPartenaire: true }, _count: { _all: true } }),
     ]);
     const compteurs = Object.fromEntries(Object.keys(ETATS_SOUS_TRAITANCE).map((e) => [e, 0])) as Record<EtatSousTraitance, number>;
     for (const c of compte) compteurs[c.etat as EtatSousTraitance] = c._count._all;
@@ -1543,6 +1552,8 @@ export class SousTraitanceService {
       })),
       compteurs,
       // Reversement attendu de JAX : contre-remboursement moins sa part.
+      // Reversé par JAX (automatique à la livraison), depuis toujours.
+      codRecu: { colis: codRecu._count._all, total: n3(Number(codRecu._sum.codMontant ?? 0) - Number(codRecu._sum.fraisPartenaire ?? 0)), fraisJax: n3(codRecu._sum.fraisPartenaire) },
       codARecevoir: { colis: codAttendu._count._all, total: n3(Number(codAttendu._sum.codMontant ?? 0) - Number(codAttendu._sum.fraisPartenaire ?? 0)), fraisJax: n3(codAttendu._sum.fraisPartenaire) },
     };
   }
