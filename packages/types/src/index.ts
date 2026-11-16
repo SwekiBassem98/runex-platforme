@@ -1155,3 +1155,22 @@ export interface ScanResultDto {
   actions: ScanAction[];
   package: PackageDto;
 }
+
+/* ------------------------------------------------------------------ */
+/* Identité de la société (documents imprimés)                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Identité légale de RUNEX imprimée sur ses documents (bons de livraison,
+ * bordereaux, bons de retour, feuilles de tournée…). La base (`Company`) porte
+ * les mêmes valeurs ; ces constantes servent aux documents produits côté web
+ * et de repli quand la fiche société n'est pas renseignée.
+ */
+export const RUNEX_SOCIETE = {
+  nom: 'RUNEX',
+  /** Matricule fiscal. */
+  matriculeFiscal: '1906149',
+} as const;
+
+/** « RUNEX · M.F. 1906149 » : mention légale courte des documents. */
+export const RUNEX_MENTION_LEGALE = `${RUNEX_SOCIETE.nom} · M.F. ${RUNEX_SOCIETE.matriculeFiscal}`;

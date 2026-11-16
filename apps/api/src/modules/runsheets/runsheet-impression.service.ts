@@ -13,6 +13,7 @@
  * l'article repris.
  */
 
+import { RUNEX_SOCIETE } from '@logixpress/types';
 import { getPrisma } from '../../common/database/prisma-context';
 import { notFound } from '../../common/errors/api-error';
 
@@ -141,7 +142,7 @@ export async function impressionTournee(
     agence: t.deposit.name,
     voiture: t.driver.licensePlate,
     livreur: t.driver.user.fullName,
-    matriculeFiscal: societe?.taxRegistration ?? null,
+    matriculeFiscal: societe?.taxRegistration?.trim() || RUNEX_SOCIETE.matriculeFiscal,
     totalColis: colis.length,
     totalPieces: colis.reduce((s, c) => s + (c.pieces || 1), 0),
     total: Math.round(colis.reduce((s, c) => s + c.montant, 0) * 1000) / 1000,
