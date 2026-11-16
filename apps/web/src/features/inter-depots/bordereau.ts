@@ -7,6 +7,7 @@
  */
 import type { InterDepotDto } from '@/lib/api';
 import { code128Svg } from '@/features/expediteur/colis/code128';
+import { RUNEX_SOCIETE } from '@logixpress/types';
 
 const esc = (v: unknown) =>
   String(v ?? '')
@@ -57,7 +58,7 @@ export function genererBordereauHtml(t: InterDepotDto): string {
   tr { break-inside:avoid; }
 </style></head><body>
 <div class="head">
-  <div><div class="brand">RUNEX</div><div class="sub">${retour ? 'Inter-dépôt retours et échanges' : 'Inter-dépôt livraison'}</div></div>
+  <div><div class="brand">RUNEX</div><div class="sub">${retour ? 'Inter-dépôt retours et échanges' : 'Inter-dépôt livraison'}</div><div class="sub" data-champ="mf-runex">M.F. ${RUNEX_SOCIETE.matriculeFiscal}</div></div>
   <div style="text-align:right">
     <h1 class="mono">${esc(t.transferNumber)}</h1>
     <div>${code128Svg(t.transferNumber, { height: 34, moduleWidth: 1.2 })}</div>

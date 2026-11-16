@@ -29,6 +29,7 @@
  * recalculé ici, hormis la mise en forme.
  */
 
+import { RUNEX_SOCIETE } from '@logixpress/types';
 import qrcode from 'qrcode-generator';
 import type { BonLivraisonDto } from '@logixpress/types';
 import { code128Svg } from '@/features/expediteur/colis/code128';
@@ -98,6 +99,7 @@ function styles(): string {
   .bon { width: 100%; border: 1.2px solid #000; padding: 3mm 4mm 4mm; position: relative; }
   .entete { display: grid; grid-template-columns: 42mm 1fr 42mm; align-items: center; border-bottom: 1.2px solid #000; padding-bottom: 2mm; }
   .logo img { max-height: 17mm; max-width: 40mm; display: block; }
+  .mf-runex { font-size: 7.5pt; font-weight: 700; margin-top: .6mm; }
   .numero { text-align: center; }
   .numero small { display: block; font-size: 8pt; color: #333; }
   .numero b { font-size: 14pt; letter-spacing: .5px; font-family: "DejaVu Sans Mono", Menlo, Consolas, monospace; }
@@ -150,6 +152,8 @@ export interface OptionsBonLivraison {
 
 function pageBon(bon: BonLivraisonDto, pieceIndex: number, opts: OptionsBonLivraison): string {
   const piece = bon.pieces[pieceIndex] ?? { index: 1, code: bon.barcode };
+  // Matricule fiscal de RUNEX (transporteur) : en tête et au pied du bon.
+  const mfRunex = bon.carrier.taxRegistration?.trim() || RUNEX_SOCIETE.matriculeFiscal;
   const tel = [bon.recipient.phone, bon.recipient.phoneSecondary].filter(Boolean).join(' / ');
   const zone = [bon.governorate, bon.delegation].filter(Boolean).join('/');
   // « SFAX route de sokra km 3.5 » : le gouvernorat en tête, sauf s'il figure déjà dans l'adresse.
@@ -182,7 +186,7 @@ function pageBon(bon: BonLivraisonDto, pieceIndex: number, opts: OptionsBonLivra
         : ''
     }
     <div class="entete">
-      <div class="logo">${opts.logoUrl ? `<img src="${esc(opts.logoUrl)}" alt="Logo"/>` : ''}</div>
+      <div class="logo">${opts.logoUrl ? `<img src="${esc(opts.logoUrl)}" alt="Logo"/>` : ''}<div class="mf-runex" data-champ="mf-runex">M.F. : ${esc(mfRunex)}</div></div>
       <div class="numero"><small>Bon de Livraison N°:</small><b data-champ="numero">${esc(bon.number)}</b></div>
       <div class="date" data-champ="date">${esc(dateBon(bon.date))}</div>
     </div>
@@ -226,7 +230,7 @@ function pageBon(bon: BonLivraisonDto, pieceIndex: number, opts: OptionsBonLivra
 
     <div class="pied">
       <div class="transporteur" data-champ="transporteur">
-        Transporteur : ${esc(bon.carrier.name)}<br/>MF: ${esc(bon.carrier.taxRegistration ?? '—')}
+        Transporteur : ${esc(bon.carrier.name)}<br/>MF: ${esc(mfRunex)}
       </div>
       <div class="code">
         ${code128Svg(piece.code, { height: 48, moduleWidth: 1.25 })}

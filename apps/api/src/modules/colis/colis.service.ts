@@ -40,6 +40,7 @@ import {
   PACKAGE_SIZE_SHORT_LABELS,
   BON_LIVRAISON_RIEN_A_SIGNALER,
   pieceBarcode,
+  RUNEX_SOCIETE,
 } from '@logixpress/types';
 import type {
   BonLivraisonDto,
@@ -607,7 +608,8 @@ export class ColisService {
         isFragile: r.isFragile,
         lines,
         total,
-        carrier: { name: company.legalName, taxRegistration: company.taxRegistration ?? undefined },
+        // Transporteur : RUNEX et son matricule fiscal (fiche société, à défaut celui de RUNEX).
+        carrier: { name: company.legalName, taxRegistration: company.taxRegistration?.trim() || RUNEX_SOCIETE.matriculeFiscal },
         // Code JAX : imprimé pour que le livreur JAX puisse scanner et réceptionner le colis.
         partnerCode:
           r.sousTraitance?.codeExterne && !['ANNULE', 'ECHEC_ENVOI'].includes(String(r.sousTraitance.etat))

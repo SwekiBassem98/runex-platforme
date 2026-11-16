@@ -19,7 +19,7 @@
 
 import type { PackageDto } from '@logixpress/types';
 import { code128Svg } from './code128';
-import { pieceBarcode } from '@logixpress/types';
+import { pieceBarcode, RUNEX_SOCIETE } from '@logixpress/types';
 
 const MAX_IMPRESSION_COLIS = 500;
 const PAGE_SIZE_IMPRESSION = 100;
@@ -115,6 +115,7 @@ function headerHtml(ctx: ContexteImpression, titre: string, sousTitre: string): 
       <div class="brand-mark">RX</div>
       <div class="brand-text">
         <div class="brand-name">RUNEX</div>
+        <div class="brand-sub" data-champ="mf-runex">M.F. ${esc(RUNEX_SOCIETE.matriculeFiscal)}</div>
         <div class="brand-sub">Espace Expéditeur${ctx.entreprise ? ` · ${esc(ctx.entreprise)}` : ''}</div>
       </div>
     </div>
@@ -130,7 +131,7 @@ function footerHtml(ctx: ContexteImpression, total: number, affiche: number): st
   const lim = affiche < total ? ` — Affichés ${affiche}/${total} (limite ${MAX_IMPRESSION_COLIS})` : '';
   return `
   <div class="footer">
-    <span>RUNEX — Espace Expéditeur · Document généré automatiquement · ${esc(new Date().toLocaleDateString(ctx.langue === 'ar' ? 'ar-TN' : 'fr-TN'))}${lim}</span>
+    <span>RUNEX · M.F. ${esc(RUNEX_SOCIETE.matriculeFiscal)} — Espace Expéditeur · Document généré automatiquement · ${esc(new Date().toLocaleDateString(ctx.langue === 'ar' ? 'ar-TN' : 'fr-TN'))}${lim}</span>
     <span>Page <span class="pageNumber"></span></span>
   </div>`;
 }

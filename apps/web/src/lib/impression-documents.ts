@@ -4,6 +4,7 @@
  * fenêtre d'impression. Les codes de remise ne sont jamais imprimés.
  */
 import type { PaymentVoucherDto } from '@logixpress/types';
+import { RUNEX_MENTION_LEGALE, RUNEX_SOCIETE } from '@logixpress/types';
 import type { BonRetourDetail, ImpressionTournee, ValidationTournee } from './api';
 import { code128Svg } from '@/features/expediteur/colis/code128';
 import { qrSvg } from '@/features/colis/bonLivraison';
@@ -26,7 +27,8 @@ const STYLE = `
 `;
 
 function page(titre: string, corps: string): string {
-  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>${esc(titre)}</title><style>${STYLE}</style></head><body>${corps}<script>window.onload=()=>{window.focus();window.print()}</script></body></html>`;
+  // Mention légale de RUNEX (matricule fiscal) au pied de chaque document.
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>${esc(titre)}</title><style>${STYLE}.mention-legale{margin-top:14px;padding-top:6px;border-top:1px solid #cbd5e1;font-size:10px;color:#334155;text-align:center}</style></head><body>${corps}<div class="mention-legale" data-champ="mention-legale">${esc(RUNEX_MENTION_LEGALE)}</div><script>window.onload=()=>{window.focus();window.print()}</script></body></html>`;
 }
 
 /**
@@ -91,7 +93,7 @@ export function imprimerBordereau(v: PaymentVoucherDto): void {
   ouvrirImpression(
     page(
       `Bordereau ${v.voucherNumber}`,
-      `<div class="tete"><div><h1>RUNEX — Bordereau de paiement</h1><div class="muted">N° ${esc(v.voucherNumber)} · ${date(v.createdAt)}</div></div>
+      `<div class="tete"><div><h1>RUNEX — Bordereau de paiement</h1><div class="muted">N° ${esc(v.voucherNumber)} · ${date(v.createdAt)}</div><div class="muted" data-champ="mf-runex">M.F. RUNEX : ${esc(RUNEX_SOCIETE.matriculeFiscal)}</div></div>
       <div><strong>${esc(v.shipperName)}</strong><br>${v.deliveredCount} livré(s) · ${v.returnedCount} retour(s)</div></div>
       <table><thead><tr><th>#</th><th>Colis</th><th>Destinataire</th><th>Type</th><th class="r">Encaissé</th><th class="r">Frais</th></tr></thead><tbody>${lignes}</tbody></table>
       <table style="width:50%;margin-left:auto"><tbody>
@@ -349,7 +351,8 @@ export function imprimerProduitsEchange(t: ImpressionTournee): void {
             <p><b>Nom :</b> <span dir="auto">${esc(e.expediteur.nom)}</span></p>
             <p><b>Adresse :</b> <span dir="auto">${esc(e.expediteur.adresse)}</span></p>
             <p><b>Téléphone :</b> ${esc(e.expediteur.telephone)}</p>
-            <p><b>M/F :</b> ${esc(e.expediteur.matriculeFiscal ?? '—')}</p></div>
+            <p><b>M/F :</b> ${esc(e.expediteur.matriculeFiscal ?? '—')}</p>
+            <p><b>Transporteur :</b> ${esc(RUNEX_SOCIETE.nom)} — M/F ${esc(t.matriculeFiscal ?? RUNEX_SOCIETE.matriculeFiscal)}</p></div>
           <div><h2>Destinataire</h2>
             <p><b>Nom :</b> <span dir="auto">${esc(e.destinataire.nom)}</span></p>
             <p><b>Adresse :</b> <span dir="auto">${esc(e.destinataire.adresse)}</span></p>

@@ -159,8 +159,8 @@ async function seedReferenceData(): Promise<SeedContext> {
     where: { code: 'LOGIXPRESS-TN' },
     create: {
       code: 'LOGIXPRESS-TN',
-      legalName: 'LogiXpress Tunisie SARL',
-      taxRegistration: '9876543/M/000',
+      legalName: 'RUNEX',
+      taxRegistration: '1906149',
       headquarters: 'Zone industrielle, Ben Arous 4061, Tunisie',
       contactPhone: '27400000',
       contactEmail: 'contact@logixpress.tn',
