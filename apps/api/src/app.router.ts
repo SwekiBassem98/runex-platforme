@@ -383,6 +383,16 @@ export function createApiRouter(): Router {
     asyncHandler((req, res) => colisController.returnPackage(req, res))
   );
 
+  // Corriger un geste du livreur (erreur, ou client qui veut finalement son
+  // colis) tant que sa tournée n'est pas rentrée au dépôt.
+  router.post(
+    withColisSuffix('/corriger'),
+    authenticateToken,
+    requireRoles(...FIELD_ROLES),
+    requireAnyPermission(PermissionCode.COLIS_DELIVER, PermissionCode.COLIS_UPDATE),
+    asyncHandler((req, res) => colisController.corrigerAction(req, res))
+  );
+
   // Sous-zone du colis, choisie par le livreur pour ranger sa tournée.
   router.put(
     withColisSuffix('/sous-zone'),

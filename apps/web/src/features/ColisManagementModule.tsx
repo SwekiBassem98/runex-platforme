@@ -1616,6 +1616,40 @@ export function ColisManagementModule({ currentUser, token, initialColisId = nul
                 </button>
               )}
 
+              {/* Corriger le dernier geste du livreur (livré / retour / report par
+                  erreur, ou client qui veut finalement son colis) tant que la
+                  tournée n'est pas clôturée : le colis repart « en livraison ». */}
+              {['LIVRE', 'LIVRAISON_PARTIELLE', 'REPORTE', 'ECHEC_LIVRAISON', 'RETOUR_DEPOT'].includes(String(colis.status)) &&
+                !!colis.assignedDriverName && (
+                  <>
+                    <button
+                      type="button"
+                      disabled={isSubmittingAction}
+                      data-testid="corriger-erreur"
+                      onClick={() => {
+                        if (window.confirm('Annuler le dernier geste du livreur sur ce colis (déclaré par erreur) ? Le colis redevient « En cours de livraison ».'))
+                          void executeColisAction('corriger', { motif: 'ERREUR' }, 'Geste annulé : le colis est de nouveau en cours de livraison.');
+                      }}
+                      className="px-3 py-1.5 bg-white border border-slate-300 hover:bg-slate-50 text-slate-800 rounded text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
+                      <span>Corriger une erreur</span>
+                    </button>
+                    {String(colis.status) !== 'LIVRE' && String(colis.status) !== 'LIVRAISON_PARTIELLE' && (
+                      <button
+                        type="button"
+                        disabled={isSubmittingAction}
+                        data-testid="relivrer"
+                        onClick={() => void executeColisAction('corriger', { motif: 'CLIENT' }, 'Colis remis en livraison : le livreur peut le livrer.')}
+                        className="px-3 py-1.5 bg-white border border-emerald-300 hover:bg-emerald-50 text-emerald-800 rounded text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+                      >
+                        <Truck className="w-3.5 h-3.5" aria-hidden="true" />
+                        <span>Le client veut son colis</span>
+                      </button>
+                    )}
+                  </>
+                )}
+
               {/* Bon de livraison : l'étiquette collée sur chaque pièce */}
               <button
                 type="button"
