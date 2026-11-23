@@ -108,6 +108,22 @@ const cleGouvernorat = (v: string) => norm(v).replace(/^(la|le|el) /, '').replac
 const n3 = (v: unknown) => Math.round(Number(v ?? 0) * 1000) / 1000;
 
 /**
+ * Retour terminé chez JAX : « Reçu par l'expéditeur », « Retourné à
+ * l'expéditeur », « Remis à l'expéditeur »… Pour JAX, l'expéditeur est RUNEX
+ * (son client) : le colis est de retour chez Runex, qui le traite comme un
+ * retour (« Retour au dépôt ») — il ne doit ni rester « chez JAX » ni passer
+ * pour un colis livré ou rendu au client final de Runex (retour client, 23/11).
+ */
+export function estRetourRecuParRunex(libelle: string | null | undefined): boolean {
+  const l = norm(libelle);
+  if (!l || /preparation|en cours|vers l/.test(l)) return false;
+  return (
+    /\b(recu|remis|rendu|livre|retourne|restitue)\w* (par |a |chez |au )?l ?(exped|vendeur|fournisseur|client expediteur)/.test(l) ||
+    /\bretour (recu|effectue|termine|cloture|livre)/.test(l)
+  );
+}
+
+/**
  * Étape Runex proposée pour un libellé de statut JAX. Les libellés JAX ne sont
  * pas documentés : la correspondance part des mots, et l'administrateur peut
  * la corriger statut par statut.
@@ -115,6 +131,8 @@ const n3 = (v: unknown) => Math.round(Number(v ?? 0) * 1000) / 1000;
 export function etatDepuisLibelle(libelle: string): EtatSousTraitance | null {
   const l = norm(libelle);
   if (!l) return null;
+  // Retour remis à Runex (« Reçu par l'expéditeur ») : fin du parcours JAX.
+  if (estRetourRecuParRunex(libelle)) return 'RETOURNE';
   // Chez JAX, « Annulé » est rangé dans « En retour » : le colis revient.
   if (/annul/.test(l)) return 'RETOUR_EN_COURS';
   if (/retour|retourne|rtn/.test(l)) return 'RETOUR_EN_COURS';
@@ -138,14 +156,16 @@ export function etatDepuisLibelle(libelle: string): EtatSousTraitance | null {
  *   Reportés          « reçu à l'entrepôt » après une sortie en livraison → Reporté
  *   En retour         « annulé »                                       → Retour au dépôt
  *   Retour expéditeur « en cours de préparation au retour vers l'exp. » → En retour fournisseur
- *   (et « livré » → Livré, « retourné à l'expéditeur » → Retourné à l'expéditeur)
+ *   Retour reçu       « reçu par l'expéditeur », « retourné à l'exp. »  → Retour au dépôt
+ *   (et « livré » → Livré). Pour JAX l'expéditeur est RUNEX : un retour
+ *   terminé chez JAX revient à l'agence Runex, qui le rend ensuite à son
+ *   expéditeur par son propre circuit des retours.
  */
 export function statutRunexDepuisLibelle(libelle: string): string | null {
   const l = norm(libelle);
   if (!l) return null;
-  if (/retour/.test(l) && /exped|fournisseur|vendeur|client final/.test(l)) {
-    return /retourne|rendu|remis|livre a l exp/.test(l) && !/preparation|cours/.test(l) ? 'RETOURNE_EXPEDITEUR' : 'EN_RUNSHEET_RETOUR';
-  }
+  if (estRetourRecuParRunex(libelle)) return 'RETOUR_DEPOT';
+  if (/retour/.test(l) && /exped|fournisseur|vendeur|client final/.test(l)) return 'EN_RUNSHEET_RETOUR';
   if (/annul|retour/.test(l)) return 'RETOUR_DEPOT';
   if (/report/.test(l)) return 'REPORTE';
   if (/(non|pas) livr|echec|refus|injoignable/.test(l)) return 'REPORTE';
@@ -966,6 +986,25 @@ export class SousTraitanceService {
     return { repris, reportes };
   }
 
+  /**
+   * Retours déjà terminés chez JAX (dernier statut lu « Reçu par
+   * l'expéditeur »…) restés « chez JAX » : ils redeviennent des retours Runex
+   * à leur agence. Sans appel à JAX — fait au démarrage, et à chaque relecture.
+   */
+  async corrigerRetoursRecus(): Promise<number> {
+    const rows = await this.prisma.sousTraitance.findMany({
+      where: { partenaire: PARTENAIRE, etat: { in: ACTIFS }, statutExterne: { not: null } },
+      include: { deposit: { select: { name: true } }, package: { select: { trackingNumber: true, status: true, totalPrice: true, shipperId: true, currentRunsheetId: true } } },
+    });
+    let n = 0;
+    for (const r of rows) {
+      if (!estRetourRecuParRunex(r.statutExterne)) continue;
+      if (await this.appliquer(r, { code: r.statutExterneCode ?? null, libelle: r.statutExterne!, le: r.statutExterneLe ?? null }, r.problemes)) n++;
+    }
+    if (n) console.log(`[RUNEX API] JAX — ${n} retour(s) reçu(s) rendu(s) à l'exploitation.`);
+    return n;
+  }
+
   /** Gestes à faire à la main chez JAX (annuler un code, corriger un prix). */
   async actionsAFaire() {
     const rows = await this.prisma.sousTraitance.findMany({
@@ -1179,8 +1218,10 @@ export class SousTraitanceService {
   private async etatPourStatut(statut: StatutJax): Promise<EtatSousTraitance | null> {
     if (statut.code) {
       const s = await this.prisma.partenaireStatut.findUnique({ where: { partenaire_code: { partenaire: PARTENAIRE, code: statut.code } } });
-      if (s?.etat) return s.etat as EtatSousTraitance;
-      if (s && !statut.libelle.startsWith('Statut ')) return etatDepuisLibelle(statut.libelle) ?? etatDepuisLibelle(s.libelle);
+      // Correspondance fixée par l'administrateur ; sinon toujours d'après le
+      // libellé (une correspondance automatique enregistrée peut être ancienne).
+      if (s?.etat && s.manuel) return s.etat as EtatSousTraitance;
+      if (s && !statut.libelle.startsWith('Statut ')) return etatDepuisLibelle(statut.libelle) ?? etatDepuisLibelle(s.libelle) ?? (s.etat as EtatSousTraitance | null);
       if (s) return etatDepuisLibelle(s.libelle);
     }
     return etatDepuisLibelle(statut.libelle);
@@ -1300,7 +1341,16 @@ export class SousTraitanceService {
     if (statutCible === 'RECU_DEPOT' && (pkgStatus === 'EN_COURS_LIVRAISON' || pkgStatus === 'REPORTE' || (!!problemes && actuel === 'EN_LIVRAISON'))) statutCible = 'REPORTE';
     // « En attente » chez JAX : le colis garde son statut Runex (créé, ou confié en agence).
     if (statutCible === 'CREE' && pkgStatus !== 'CREE') statutCible = null;
-    const statutChange = !!statutCible && statutCible !== pkgStatus && !STATUTS_RUNEX_FINAUX.includes(pkgStatus);
+    // Retour terminé chez JAX (« Reçu par l'expéditeur » = reçu par Runex) : le
+    // colis redevient un retour Runex, en stock retour à l'agence qui l'avait
+    // confié — l'exploitation le traite (bon de retour, nouvelle livraison…).
+    const retourRecu = cible === 'RETOURNE' && actuel !== 'RETOURNE';
+    if (retourRecu) statutCible = 'RETOUR_DEPOT';
+    const statutChange =
+      !!statutCible &&
+      !STATUTS_RUNEX_FINAUX.includes(pkgStatus) &&
+      // Retour reçu : toujours ramené à l'agence, même si le statut était déjà « Retour ».
+      (statutCible !== pkgStatus || retourRecu);
     await this.prisma.$transaction(async (tx) => {
       await tx.sousTraitance.update({
         where: { id: r.id },
@@ -1330,8 +1380,9 @@ export class SousTraitanceService {
           where: { id: r.packageId },
           data: {
             status: statutCible as never,
-            // Chez JAX : dans aucune agence ni tournée Runex.
-            currentDepositId: null,
+            // Chez JAX : dans aucune agence ni tournée Runex ; retour reçu : à
+            // l'agence qui l'avait confié.
+            currentDepositId: retourRecu ? r.depositId : null,
             currentRunsheetId: null,
             assignedDriverId: null,
             ...(statutCible === 'LIVRE' ? { collectedAmount: r.package.totalPrice, deliveredAt: statut.le ?? maintenant } : {}),
@@ -1353,9 +1404,16 @@ export class SousTraitanceService {
         data: {
           packageId: r.packageId,
           status: (statutChange && statutCible ? statutCible : r.package.status) as never,
-          title: (statutChange && statutCible ? PACKAGE_STATUS_LABELS[statutCible as PackageStatus] : etatChange ? ETATS_SOUS_TRAITANCE[cible] : `JAX : ${statut.libelle}`).slice(0, 150),
+          title: (retourRecu
+            ? `Retour reçu de JAX à ${r.deposit?.name ?? 'l’agence'}`
+            : statutChange && statutCible
+              ? PACKAGE_STATUS_LABELS[statutCible as PackageStatus]
+              : etatChange
+                ? ETATS_SOUS_TRAITANCE[cible]
+                : `JAX : ${statut.libelle}`
+          ).slice(0, 150),
           description: [`Statut JAX : ${statut.libelle}`, problemes ? `Problème signalé : ${problemes}` : null].filter(Boolean).join(' — ').slice(0, 500),
-          locationName: 'Réseau JAX',
+          locationName: retourRecu ? (r.deposit?.name ?? 'Agence') : 'Réseau JAX',
           operatorName: acteur.fullName,
           createdAt: maintenant,
         },
@@ -1583,6 +1641,14 @@ export function demarrerSynchronisationJax(): void {
       Number(process.env.JAX_RATTRAPAGE_DELAI_MS ?? 60_000)
     ).unref();
   }
+  // Retours terminés chez JAX restés « chez JAX » : rendus à l'exploitation.
+  setTimeout(
+    () =>
+      void sousTraitanceService
+        .corrigerRetoursRecus()
+        .catch((e: unknown) => console.warn('[RUNEX API] Correction des retours JAX impossible :', e instanceof Error ? e.message : String(e))),
+    Number(process.env.JAX_CORRECTION_DELAI_MS ?? 15_000)
+  ).unref();
   // Réunion du 10/11 : colis reportés et zones Runex rendus à Runex, une fois.
   if (cfg.token && process.env.JAX_CORRECTION_AUTO !== '0') {
     setTimeout(
