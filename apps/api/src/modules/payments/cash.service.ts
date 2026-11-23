@@ -225,7 +225,12 @@ export class CashService {
     };
 
     if (existing) {
-      await client.payment.update({ where: { id: existing.id }, data });
+      // Encaissement annulé (livraison déclarée par erreur, puis corrigée) :
+      // la nouvelle livraison le rouvre, à valider par la caisse.
+      await client.payment.update({
+        where: { id: existing.id },
+        data: existing.status === PrismaPaymentStatus.ANNULE ? { ...data, status: PrismaPaymentStatus.EN_ATTENTE, amountRefunded: new Prisma.Decimal(0) } : data,
+      });
       // Une reprise — une livraison partielle suivie d'une reprise, par
       // exemple — réécrit l'encodage sans rouvrir l'alerte : la caisse a déjà
       // reçu la ligne, et la notifier de nouveau l'obligerait à recompter.

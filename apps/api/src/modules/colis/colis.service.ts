@@ -41,6 +41,7 @@ import {
   BON_LIVRAISON_RIEN_A_SIGNALER,
   pieceBarcode,
   RUNEX_SOCIETE,
+  PACKAGE_STATUS_LABELS,
 } from '@logixpress/types';
 import type {
   BonLivraisonDto,
@@ -2477,6 +2478,175 @@ export class ColisService {
 
     const fresh = await this.findRecord(record.id);
     return toPackageDto(fresh);
+  }
+
+  /**
+   * Corriger un geste du livreur sur un colis de sa tournée, tant que la
+   * tournée n'est pas rentrée au dépôt (demande client, 23/11) :
+   *
+   *  - `ERREUR` : le livreur s'est trompé (« Livré » au lieu de « Reporté »,
+   *    retour déclaré sur le mauvais colis…). Le geste est effacé : statut,
+   *    tentative, encaissement (et le solde du livreur), livraison partielle,
+   *    échange non encore remis, fiche de retour.
+   *  - `CLIENT` : le client rappelle et veut finalement son colis (après un
+   *    retour, un échec ou un report). La tentative reste dans l'historique.
+   *
+   * Dans les deux cas le colis redevient « En cours de livraison » dans la
+   * même tournée : le livreur refait le bon geste (livrer, reporter, retour).
+   * Refus quand l'argent ou le colis a déjà été pris en charge par le dépôt :
+   * encaissement validé par la caisse ou dans un bordereau, retour rescanné
+   * ou contrôlé au dépôt, tournée clôturée.
+   */
+  async corrigerAction(
+    identifier: string,
+    payload: { motif?: unknown; commentaire?: unknown },
+    user: DriverActor
+  ): Promise<PackageDto> {
+    const record = await this.findRecord(identifier);
+    assertDriverOwnsPackage(record, user);
+    const motif = payload.motif === 'CLIENT' ? 'CLIENT' : payload.motif === 'ERREUR' || payload.motif === undefined ? 'ERREUR' : null;
+    if (!motif) throw new BusinessRuleError('Motif inconnu : ERREUR (geste fait par erreur) ou CLIENT (le client veut son colis).', 400);
+    const commentaire = typeof payload.commentaire === 'string' ? payload.commentaire.trim().slice(0, 300) : '';
+    const statut = String(record.status);
+    const CORRIGEABLES = ['LIVRE', 'LIVRAISON_PARTIELLE', 'REPORTE', 'ECHEC_LIVRAISON', 'RETOUR_DEPOT'];
+    if (!CORRIGEABLES.includes(statut)) {
+      throw new BusinessRuleError(
+        `Rien à corriger : le colis est « ${PACKAGE_STATUS_LABELS[statut as PackageStatus] ?? statut} ».`,
+        409
+      );
+    }
+    if (motif === 'CLIENT' && (statut === 'LIVRE' || statut === 'LIVRAISON_PARTIELLE')) {
+      throw new BusinessRuleError('Ce colis est livré : utilisez « Corriger une erreur » si la livraison a été déclarée par erreur.', 400);
+    }
+
+    // La tournée du livreur qui porte ce colis, encore ouverte.
+    const OUVERTES = ['BROUILLON', 'EN_ATTENTE', 'VALIDEE_DEPART', 'EN_COURS'];
+    const exploitation = user.role === RoleType.ADMIN || user.role === RoleType.GESTIONNAIRE;
+    const item = await this.prisma.runsheetItem.findFirst({
+      where: {
+        packageId: record.id,
+        runsheet: {
+          status: { in: (exploitation ? [...OUVERTES, 'RETOUR_DEPOT'] : OUVERTES) as never },
+          ...(user.role === RoleType.LIVREUR ? { driverId: user.driverId } : {}),
+        },
+      },
+      include: { runsheet: { select: { id: true, runsheetNumber: true, driverId: true, depositId: true } } },
+      orderBy: { runsheet: { createdAt: 'desc' } },
+    });
+    if (!item) {
+      throw new BusinessRuleError(
+        user.role === RoleType.LIVREUR
+          ? 'Ce colis n’est pas dans une tournée ouverte : sa tournée est rentrée au dépôt. Demandez la correction à l’exploitation.'
+          : 'Ce colis n’est dans aucune tournée en cours ou à clôturer : la correction n’est plus possible ici.',
+        409
+      );
+    }
+    if (item.scannedAtReturn) {
+      throw new BusinessRuleError('Ce colis a déjà été rendu au dépôt : il doit être réaffecté par l’exploitation.', 409);
+    }
+    if (record.returnSlipId) {
+      throw new BusinessRuleError('Ce colis est déjà sur un bon de retour expéditeur.', 409);
+    }
+
+    const [paiement, retours, echange] = await Promise.all([
+      this.prisma.payment.findUnique({ where: { packageId: record.id }, select: { id: true, status: true, amountCollected: true, amountRefunded: true, driverId: true } }),
+      this.prisma.returnRecord.findMany({ where: { packageId: record.id }, select: { id: true, isPhysicalChecked: true, restoredToShipperAt: true } }),
+      this.prisma.exchangeRecord.findUnique({ where: { packageId: record.id }, select: { id: true, isOldItemReceived: true, returnSlipId: true } }),
+    ]);
+    const paiementActif = paiement && paiement.status !== 'ANNULE';
+    if (paiementActif && (paiement.status === 'VALIDE' || record.paymentVoucherId)) {
+      throw new BusinessRuleError('L’encaissement de ce colis est déjà validé par la caisse : la correction doit passer par l’exploitation.', 409);
+    }
+    if (paiementActif && !['LIVRE', 'LIVRAISON_PARTIELLE'].includes(statut)) {
+      throw new BusinessRuleError('Ce colis porte un encaissement : la correction doit passer par l’exploitation.', 409);
+    }
+    if (statut === 'RETOUR_DEPOT' && retours.some((r) => r.isPhysicalChecked || r.restoredToShipperAt)) {
+      throw new BusinessRuleError('Ce retour a déjà été contrôlé au dépôt : il doit être réaffecté par l’exploitation.', 409);
+    }
+    if (echange && (echange.isOldItemReceived || echange.returnSlipId)) {
+      throw new BusinessRuleError('L’article d’échange a déjà été reçu au dépôt : la correction doit passer par l’exploitation.', 409);
+    }
+
+    const derniere = await this.prisma.deliveryAttempt.findFirst({
+      where: { packageId: record.id },
+      orderBy: { attemptNumber: 'desc' },
+      select: { id: true, runsheetId: true },
+    });
+    // Une erreur se corrige dans la tournée où elle a été faite (un colis
+    // reporté hier et repris aujourd'hui n'a pas de geste à annuler).
+    if (motif === 'ERREUR' && (!derniere || derniere.runsheetId !== item.runsheet.id)) {
+      throw new BusinessRuleError('Aucun geste de cette tournée à annuler sur ce colis : livrez-le, reportez-le ou retournez-le normalement.', 409);
+    }
+    const libelle = PACKAGE_STATUS_LABELS[statut as PackageStatus] ?? statut;
+    const titre = motif === 'ERREUR' ? `« ${libelle} » annulé (erreur du livreur)` : 'Nouvelle livraison : le client veut son colis';
+    const description =
+      motif === 'ERREUR'
+        ? `Le geste « ${libelle} » a été déclaré par erreur et a été annulé${commentaire ? ` — ${commentaire}` : ''}.`
+        : `Après « ${libelle} », le client a demandé à être livré${commentaire ? ` — ${commentaire}` : ''}.`;
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Package" WHERE id = ${record.id}::uuid FOR UPDATE`;
+      // Encaissement annulé : l'argent n'a jamais été pris, le solde du livreur redescend.
+      if (paiementActif) {
+        const montant = new Prisma.Decimal(paiement.amountCollected).minus(paiement.amountRefunded);
+        await tx.payment.update({
+          where: { id: paiement.id },
+          data: { status: 'ANNULE', notes: `Annulé : ${titre}`.slice(0, 255) },
+        });
+        const livreur = paiement.driverId ?? item.runsheet.driverId;
+        if (montant.greaterThan(0)) {
+          await tx.driver.update({ where: { id: livreur }, data: { currentBalance: { decrement: montant } } });
+        }
+      }
+      if (statut === 'LIVRAISON_PARTIELLE') await tx.partialDelivery.deleteMany({ where: { packageId: record.id } });
+      if (echange) await tx.exchangeRecord.delete({ where: { id: echange.id } });
+      if (statut === 'RETOUR_DEPOT' && retours.length) await tx.returnRecord.deleteMany({ where: { id: { in: retours.map((r) => r.id) } } });
+      await tx.packageItem.updateMany({ where: { packageId: record.id }, data: { isDelivered: false, isReturned: false } });
+      // Erreur : la tentative déclarée n'a pas eu lieu.
+      if (motif === 'ERREUR' && derniere) {
+        await tx.deliveryAttempt.delete({ where: { id: derniere.id } });
+        await tx.package.update({ where: { id: record.id }, data: { deliveryAttemptsCount: { decrement: 1 } } });
+      }
+      await tx.package.update({
+        where: { id: record.id },
+        data: {
+          status: 'EN_COURS_LIVRAISON',
+          assignedDriverId: item.runsheet.driverId,
+          currentRunsheetId: item.runsheet.id,
+          collectedAmount: 0,
+          deliveredAt: null,
+        },
+      });
+      await tx.runsheetItem.update({
+        where: { id: item.id },
+        data: { isHandled: false, statusAtClose: null, collectedAmount: 0 },
+      });
+      await tx.packageTimeline.create({
+        data: {
+          packageId: record.id,
+          status: 'EN_COURS_LIVRAISON',
+          title: titre.slice(0, 150),
+          description: description.slice(0, 500),
+          locationName: `${record.customerAddress.delegation}, ${record.customerAddress.governorate}`,
+          operatorName: user.fullName,
+        },
+      });
+      await auditService.record(
+        {
+          entityType: 'PACKAGE',
+          entityId: record.id,
+          action: motif === 'ERREUR' ? 'DELIVERY_ACTION_UNDONE' : 'DELIVERY_RETRY_CUSTOMER',
+          userId: user.id ?? null,
+          reason: `${record.trackingNumber} (tournée ${item.runsheet.runsheetNumber}) : ${description}`.slice(0, 255),
+          previousValues: { status: statut, paiement: paiementActif ? paiement.status : null },
+          newValues: { status: 'EN_COURS_LIVRAISON' },
+        },
+        tx
+      );
+    });
+
+    await this.notifyStatusChanged(record.id, PackageStatus.EN_COURS_LIVRAISON, user.fullName, user.id);
+    return toPackageDto(await this.findRecord(record.id));
   }
 
   /**

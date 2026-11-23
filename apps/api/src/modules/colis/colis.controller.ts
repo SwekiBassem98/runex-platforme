@@ -381,6 +381,30 @@ export class ColisController {
     }
   }
 
+  /**
+   * `POST /colis/:id/corriger` — `{ motif: 'ERREUR' | 'CLIENT', commentaire? }` :
+   * le livreur annule un geste fait par erreur, ou relivre un colis que le
+   * client veut finalement ; le colis redevient « En cours de livraison ».
+   */
+  async corrigerAction(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const { identifier } = req.params;
+    try {
+      const pkg = await colisService.corrigerAction(identifier, req.body ?? {}, {
+        id: req.user?.id,
+        fullName: req.user?.fullName || 'Livreur',
+        role: req.user?.role!,
+        driverId: req.user?.driverId,
+      });
+      res.json({
+        success: true,
+        data: pkg,
+        message: req.body?.motif === 'CLIENT' ? 'Colis remis en livraison : vous pouvez le livrer.' : 'Action annulée : le colis est de nouveau en cours de livraison.',
+      });
+    } catch (err: unknown) {
+      respondError(res, err, 'Correction impossible.');
+    }
+  }
+
   async returnPackage(req: AuthenticatedRequest, res: Response): Promise<void> {
     const { identifier } = req.params;
     try {
