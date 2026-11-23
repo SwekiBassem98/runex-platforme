@@ -75,7 +75,7 @@ r = await api(admin, 'GET', '/sous-traitance/jax/parametres');
 ok(r.status === 200 && r.data.configure === true && /4010/.test(r.data.url), 'JAX connecté (jeton présent), URL de l’API');
 ok(!JSON.stringify(r.data).includes('test-jax'), 'le jeton JAX n’est jamais renvoyé');
 r = await api(admin, 'POST', '/sous-traitance/jax/referentiels');
-ok(r.status === 200 && r.data.gouvernorats === 24 && r.data.statuts === 11, 'référentiels JAX relus : 24 gouvernorats, 11 statuts', r.message);
+ok(r.status === 200 && r.data.gouvernorats === 24 && r.data.statuts === 12, 'référentiels JAX relus : 24 gouvernorats, 12 statuts', r.message);
 const p1 = (await api(admin, 'GET', '/sous-traitance/jax/parametres')).data;
 const prop = (lib) => p1.statuts.find((s) => s.libelle === lib)?.etatPropose;
 ok(prop('Enlevé') === 'PRIS_EN_CHARGE' && prop('En cours de livraison') === 'EN_LIVRAISON' && prop('Livré') === 'LIVRE' && prop('Retour expéditeur') === 'RETOUR_EN_COURS' && prop('Annulé') === 'RETOUR_EN_COURS', 'statuts JAX : correspondance proposée d’après le libellé');

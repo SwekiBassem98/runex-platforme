@@ -36,6 +36,8 @@ const STATUTS = [
   { id: 9, libelle: "reçu à l'entrepôt" },
   { id: 10, libelle: 'en cours de préparation au transfert à une autre agence' },
   { id: 11, libelle: "en cours de préparation au retour vers l'expéditeur" },
+  // Retour terminé : JAX a rendu le colis à son expéditeur (RUNEX) — 23/11.
+  { id: 12, libelle: "Reçu par l'expediteur" },
 ];
 
 let colis = new Map();
