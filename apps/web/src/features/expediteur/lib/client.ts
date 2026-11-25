@@ -157,6 +157,19 @@ export async function annulerRamassage(reference: string): Promise<PickupAppoint
   });
 }
 
+/** Ce qui entrera dans le prochain bordereau (livrés encaissés, retours) — même calcul que l'exploitation. */
+export interface ARegler {
+  livres: number;
+  retournes: number;
+  encaisse: number;
+  fraisLivraison: number;
+  fraisRetour: number;
+  netEstime: number;
+}
+export async function lireARegler(): Promise<ARegler> {
+  return requestData<ARegler>('/payments/vouchers/a-regler');
+}
+
 /** Bordereaux de l'expéditeur : ce que RUNEX lui doit. */
 export async function listerBordereaux(): Promise<PaymentVoucherDto[]> {
   const enveloppe = await request<PaymentVoucherDto[]>('/payments/vouchers');

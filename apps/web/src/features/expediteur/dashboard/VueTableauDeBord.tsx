@@ -51,8 +51,10 @@ import { Card, EmptyState, ErrorBanner, Spinner } from '@logixpress/ui';
 import { useAuth } from '@/lib/auth';
 import {
   lireTableauDeBord,
+  lireARegler,
   listerBordereaux,
   listerColis,
+  type ARegler,
   notificationsApi,
   type TableauDeBordExpediteur,
 } from '@/features/expediteur/lib/client';
@@ -161,6 +163,7 @@ export function VueTableauDeBord() {
   const [recents, setRecents] = React.useState<PackageDto[]>([]);
   const [bordereaux, setBordereaux] = React.useState<PaymentVoucherDto[]>([]);
   const [notifications, setNotifications] = React.useState<NotificationDto[]>([]);
+  const [aRegler, setARegler] = React.useState<ARegler | null>(null);
   const [chargement, setChargement] = React.useState(true);
   const [erreur, setErreur] = React.useState<string | null>(null);
   const [majLe, setMajLe] = React.useState<string | null>(null);
@@ -170,11 +173,12 @@ export function VueTableauDeBord() {
     async (periode: number, discret = false) => {
       if (!discret) setChargement(true);
       try {
-        const [tdbR, recentsR, bordereauxR, notifsR] = await Promise.allSettled([
+        const [tdbR, recentsR, bordereauxR, notifsR, aReglerR] = await Promise.allSettled([
           lireTableauDeBord(periode),
           listerColis({ limit: 6 }),
           listerBordereaux(),
           notificationsApi.list({ limit: 6 }),
+          lireARegler(),
         ]);
         if (tdbR.status === 'fulfilled') {
           setDonnees(tdbR.value);
@@ -185,6 +189,7 @@ export function VueTableauDeBord() {
         if (recentsR.status === 'fulfilled') setRecents(recentsR.value.colis);
         if (bordereauxR.status === 'fulfilled') setBordereaux(bordereauxR.value);
         if (notifsR.status === 'fulfilled') setNotifications(notifsR.value.items);
+        if (aReglerR.status === 'fulfilled') setARegler(aReglerR.value);
         setMajLe(new Date().toISOString());
       } finally {
         setChargement(false);
@@ -460,6 +465,12 @@ export function VueTableauDeBord() {
             montant={netEnAttente}
             aide={t('dashboard.bordereauxEnAttente', { n: bordereauxEnAttente.length })}
             accent="bg-sky-500"
+          />
+          <LigneArgent
+            libelle={t('tdb.argent.prochain')}
+            montant={aRegler?.netEstime}
+            aide={aRegler ? t('tdb.argent.prochainAide', { livres: aRegler.livres, rendus: aRegler.retournes }) : undefined}
+            accent="bg-violet-500"
           />
           <LigneArgent libelle={t('tdb.argent.regle')} montant={netRegle} accent="bg-emerald-500" />
           <Link

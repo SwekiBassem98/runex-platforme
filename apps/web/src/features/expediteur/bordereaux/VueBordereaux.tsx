@@ -36,7 +36,7 @@ import {
   SearchInput,
   SkeletonTable,
 } from '@logixpress/ui';
-import { listerBordereaux } from '@/features/expediteur/lib/client';
+import { listerBordereaux, lireARegler, type ARegler } from '@/features/expediteur/lib/client';
 import { VARIANTE_STATUT_BORDEREAU, useVocabulaire } from '@/features/expediteur/lib/libelles';
 import { useI18n } from '@/i18n';
 
@@ -54,30 +54,50 @@ export function VueBordereaux() {
   const [recherche, setRecherche] = React.useState('');
   const [statut, setStatut] = React.useState('ALL');
 
-  React.useEffect(() => {
-    let annule = false;
-    setChargement(true);
-    setErreur(null);
-    listerBordereaux()
-      .then((liste) => {
-        if (annule) return;
-        setBordereaux(liste);
-      })
-      .catch((err: unknown) => {
-        if (annule) return;
-        setBordereaux([]);
-        setErreur(err instanceof Error ? err.message : t('bordereaux.erreur'));
-      })
-      .finally(() => {
-        if (!annule) setChargement(false);
-      });
-    return () => {
-      annule = true;
-    };
+  // Prochain bordereau (estimé) : ce que l'exploitation voit « À régler ».
+  const [aRegler, setARegler] = React.useState<ARegler | null>(null);
+
+  /*
+   * Lecture des bordereaux, puis relecture discrète : quand l'exploitation
+   * crée ou paie un bordereau, la page de l'expéditeur suit sans qu'il ait à
+   * la recharger (toutes les 30 s onglet visible, et au retour sur l'onglet).
+   */
+  const charger = React.useCallback(async (discret: boolean) => {
+    if (!discret) {
+      setChargement(true);
+      setErreur(null);
+    }
+    const [liste, prochain] = await Promise.allSettled([listerBordereaux(), lireARegler()]);
+    if (liste.status === 'fulfilled') {
+      setBordereaux(liste.value);
+      setErreur(null);
+    } else if (!discret) {
+      setBordereaux([]);
+      setErreur(liste.reason instanceof Error ? liste.reason.message : t('bordereaux.erreur'));
+    }
+    if (prochain.status === 'fulfilled') setARegler(prochain.value);
+    if (!discret) setChargement(false);
     // `t` n'est pas une dépendance : rejouer la requête au changement de langue
     // ferait clignoter une liste pourtant déjà chargée.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  React.useEffect(() => {
+    void charger(false);
+    const minuteur = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void charger(true);
+    }, 30_000);
+    const auRetour = () => {
+      if (document.visibilityState === 'visible') void charger(true);
+    };
+    document.addEventListener('visibilitychange', auRetour);
+    window.addEventListener('focus', auRetour);
+    return () => {
+      window.clearInterval(minuteur);
+      document.removeEventListener('visibilitychange', auRetour);
+      window.removeEventListener('focus', auRetour);
+    };
+  }, [charger]);
 
   /*
    * Filtres appliqués sur la réponse déjà reçue.
@@ -100,18 +120,23 @@ export function VueBordereaux() {
     });
   }, [bordereaux, recherche, statut]);
 
-  const totaux = React.useMemo(
-    () =>
-      visibles.reduce(
-        (acc, b) => ({
-          livre: acc.livre + b.deliveredCount,
-          rendu: acc.rendu + b.returnedCount,
-          net: acc.net + Number(b.netPayable ?? 0),
-        }),
-        { livre: 0, rendu: 0, net: 0 }
-      ),
-    [visibles]
-  );
+  /*
+   * Mêmes montants que l'exploitation : « À percevoir » = bordereaux prêts, pas
+   * encore payés (« À payer » chez l'exploitation) ; « Déjà réglé » = payés.
+   * Un bordereau annulé ne compte nulle part.
+   */
+  const totaux = React.useMemo(() => {
+    const actifs = visibles.filter((b) => b.status !== 'ANNULE');
+    const aPayer = actifs.filter((b) => b.status !== 'PAYE');
+    const payes = actifs.filter((b) => b.status === 'PAYE');
+    const somme = (l: PaymentVoucherDto[]) => l.reduce((s, b) => s + Number(b.netPayable ?? 0), 0);
+    return {
+      aPercevoir: somme(aPayer),
+      nbAPercevoir: aPayer.length,
+      regle: somme(payes),
+      nbRegle: payes.length,
+    };
+  }, [visibles]);
 
   const filtresActifs = recherche.trim() !== '' || statut !== 'ALL';
 
@@ -128,10 +153,25 @@ export function VueBordereaux() {
       </div>
 
       {!chargement && bordereaux.length > 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <Recapitulatif libelle={t('bordereaux.recap.livres')} valeur={String(totaux.livre)} />
-          <Recapitulatif libelle={t('bordereaux.recap.rendus')} valeur={String(totaux.rendu)} />
-          <Recapitulatif libelle={t('bordereaux.recap.net')} valeur={formatTND(totaux.net)} />
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3" data-testid="bordereaux-recap">
+          <Recapitulatif
+            libelle={t('bordereaux.recap.aPercevoir')}
+            valeur={formatTND(totaux.aPercevoir)}
+            aide={t('bordereaux.recap.aPercevoirAide', { n: totaux.nbAPercevoir })}
+            testId="recap-a-percevoir"
+          />
+          <Recapitulatif
+            libelle={t('bordereaux.recap.regle')}
+            valeur={formatTND(totaux.regle)}
+            aide={t('bordereaux.recap.regleAide', { n: totaux.nbRegle })}
+            testId="recap-regle"
+          />
+          <Recapitulatif
+            libelle={t('bordereaux.recap.prochain')}
+            valeur={formatTND(aRegler?.netEstime ?? 0)}
+            aide={t('bordereaux.recap.prochainAide', { livres: aRegler?.livres ?? 0, rendus: aRegler?.retournes ?? 0 })}
+            testId="recap-prochain"
+          />
         </div>
       )}
 
@@ -304,13 +344,14 @@ export function VueBordereaux() {
   );
 }
 
-function Recapitulatif({ libelle, valeur }: { libelle: string; valeur: string }) {
+function Recapitulatif({ libelle, valeur, aide, testId }: { libelle: string; valeur: string; aide?: string; testId?: string }) {
   return (
-    <div className="bg-white border border-slate-200 rounded-lg px-4 py-3">
+    <div className="bg-white border border-slate-200 rounded-lg px-4 py-3" data-testid={testId}>
       <p className="text-[11px] text-slate-500">{libelle}</p>
       <p className="text-lg font-bold text-slate-900 font-mono truncate" dir="ltr">
         {valeur}
       </p>
+      {aide && <p className="text-[11px] text-slate-400">{aide}</p>}
     </div>
   );
 }
