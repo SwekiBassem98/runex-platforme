@@ -937,6 +937,13 @@ export function createApiRouter(): Router {
     })
   );
 
+  // L'expéditeur : ce qui entrera dans son prochain bordereau.
+  router.get(
+    '/payments/vouchers/a-regler',
+    authenticateToken,
+    requirePermissions(PermissionCode.PAYMENT_READ),
+    asyncHandler((req, res) => paymentsController.aRegler(req, res))
+  );
   router.get(
     '/payments/vouchers/candidats',
     authenticateToken,

@@ -69,6 +69,24 @@ export class PaymentsController {
     res.json({ success: true, data: await paymentsService.candidats(shipperId) });
   }
 
+  /**
+   * `GET /payments/vouchers/a-regler` — pour l'expéditeur connecté : ce qui
+   * entrera dans son prochain bordereau (même calcul que « À régler » de
+   * l'exploitation). Zéro quand rien n'attend.
+   */
+  async aRegler(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const shipperId = req.user?.shipperId;
+    if (!shipperId) {
+      res.status(403).json({ success: false, message: 'Réservé à l’espace expéditeur.' });
+      return;
+    }
+    const [ligne] = await paymentsService.candidats(shipperId);
+    res.json({
+      success: true,
+      data: ligne ?? { shipperId, livres: 0, retournes: 0, encaisse: 0, fraisLivraison: 0, fraisRetour: 0, fraisGestion: 0, ras: 0, netEstime: 0 },
+    });
+  }
+
   /** `POST /payments/vouchers` — `{ shipperId, packageIds?, notes? }`. */
   async creer(req: AuthenticatedRequest, res: Response): Promise<void> {
     const data = await paymentsService.creerBordereau(req.body ?? {}, {
