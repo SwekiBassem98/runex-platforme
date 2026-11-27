@@ -40,6 +40,7 @@ import {
   Search,
   Truck,
   User,
+  Wallet,
 } from 'lucide-react';
 import { Sidebar, type NavItem } from '@logixpress/ui';
 import { NotificationProvider, useNotifications } from '@/lib/notification-provider';
@@ -60,6 +61,13 @@ const ENTREES: Array<{ id: string; href: string; cle: Cle; icon: React.ReactNode
     cle: 'nav.tableau-de-bord',
     icon: <LayoutDashboard className="w-4 h-4" />,
     href: '/expediteur/tableau-de-bord',
+  },
+  {
+    // L'argent en premier après le tableau de bord : c'est la question n° 1.
+    id: 'argent',
+    cle: 'nav.argent',
+    icon: <Wallet className="w-4 h-4" />,
+    href: '/expediteur/argent',
   },
   {
     id: 'colis',

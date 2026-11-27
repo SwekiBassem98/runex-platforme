@@ -150,7 +150,7 @@ console.log('\n5. Tableau de bord');
 await p.goto(`${W}/expediteur/tableau-de-bord`, { waitUntil: 'networkidle2' }).catch(() => {});
 await sleep(1500);
 const tdb = await p.evaluate(() => document.body.innerText);
-ok(/Prochain bordereau \(estimé\)/.test(tdb), 'tableau de bord : ligne « Prochain bordereau (estimé) »');
+ok(/Prochain paiement/.test(tdb) && /RUNEX vous doit/.test(tdb), 'tableau de bord : « RUNEX vous doit » et « Prochain paiement »');
 ok(errs.length === 0, 'aucune erreur JavaScript', errs.join(' | '));
 await b.close();
 

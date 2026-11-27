@@ -51,10 +51,10 @@ import { Card, EmptyState, ErrorBanner, Spinner } from '@logixpress/ui';
 import { useAuth } from '@/lib/auth';
 import {
   lireTableauDeBord,
-  lireARegler,
+  lireMonArgent,
   listerBordereaux,
   listerColis,
-  type ARegler,
+  type MonArgent,
   notificationsApi,
   type TableauDeBordExpediteur,
 } from '@/features/expediteur/lib/client';
@@ -163,7 +163,7 @@ export function VueTableauDeBord() {
   const [recents, setRecents] = React.useState<PackageDto[]>([]);
   const [bordereaux, setBordereaux] = React.useState<PaymentVoucherDto[]>([]);
   const [notifications, setNotifications] = React.useState<NotificationDto[]>([]);
-  const [aRegler, setARegler] = React.useState<ARegler | null>(null);
+  const [argent, setArgent] = React.useState<MonArgent | null>(null);
   const [chargement, setChargement] = React.useState(true);
   const [erreur, setErreur] = React.useState<string | null>(null);
   const [majLe, setMajLe] = React.useState<string | null>(null);
@@ -178,7 +178,7 @@ export function VueTableauDeBord() {
           listerColis({ limit: 6 }),
           listerBordereaux(),
           notificationsApi.list({ limit: 6 }),
-          lireARegler(),
+          lireMonArgent({ etape: 'AUCUN' }),
         ]);
         if (tdbR.status === 'fulfilled') {
           setDonnees(tdbR.value);
@@ -189,7 +189,7 @@ export function VueTableauDeBord() {
         if (recentsR.status === 'fulfilled') setRecents(recentsR.value.colis);
         if (bordereauxR.status === 'fulfilled') setBordereaux(bordereauxR.value);
         if (notifsR.status === 'fulfilled') setNotifications(notifsR.value.items);
-        if (aReglerR.status === 'fulfilled') setARegler(aReglerR.value);
+        if (aReglerR.status === 'fulfilled') setArgent(aReglerR.value);
         setMajLe(new Date().toISOString());
       } finally {
         setChargement(false);
@@ -225,9 +225,6 @@ export function VueTableauDeBord() {
   const heure = new Date().getHours();
   const salut = t(heure < 12 ? 'tdb.salut.matin' : heure < 18 ? 'tdb.salut.apresMidi' : 'tdb.salut.soir');
 
-  const bordereauxEnAttente = bordereaux.filter((b) => b.status !== 'PAYE' && b.status !== 'ANNULE');
-  const netEnAttente = bordereauxEnAttente.reduce((s, b) => s + Number(b.netPayable ?? 0), 0);
-  const netRegle = bordereaux.filter((b) => b.status === 'PAYE').reduce((s, b) => s + Number(b.netPayable ?? 0), 0);
 
   const d = donnees;
   const formatDuree = (h: number | null) =>
@@ -454,30 +451,44 @@ export function VueTableauDeBord() {
             <Wallet className="w-4 h-4 text-red-500" aria-hidden="true" />
             {t('tdb.argent.titre')}
           </h2>
+          {/* Mêmes mots et mêmes chiffres que la page « Mon argent ». */}
+          <div className="rounded-xl bg-slate-900 text-white px-4 py-3" data-testid="tdb-argent-du">
+            <p className="text-xs text-slate-300">{t('tdb.argent.du')}</p>
+            <p className="text-2xl font-extrabold font-mono" dir="ltr">
+              {argent ? formatTND(argent.aRecevoir) : '—'}
+            </p>
+          </div>
           <LigneArgent
-            libelle={t('tdb.argent.cod')}
-            montant={d?.money.codInProgress}
-            aide={d ? t('tdb.argent.codAide', { n: d.money.codInProgressCount }) : undefined}
+            libelle={t('argent.etape1.titre')}
+            montant={argent?.etapes.enLivraison.montant}
+            aide={argent ? t('argent.etape1.aide', { n: argent.etapes.enLivraison.colis }) : undefined}
             accent="bg-amber-500"
           />
           <LigneArgent
-            libelle={t('tdb.argent.bordereaux')}
-            montant={netEnAttente}
-            aide={t('dashboard.bordereauxEnAttente', { n: bordereauxEnAttente.length })}
+            libelle={t('argent.etape2.titre')}
+            montant={argent?.etapes.verification.pourVous}
+            aide={argent ? t('argent.etape2.aide', { n: argent.etapes.verification.colis }) : undefined}
             accent="bg-sky-500"
           />
           <LigneArgent
-            libelle={t('tdb.argent.prochain')}
-            montant={aRegler?.netEstime}
-            aide={aRegler ? t('tdb.argent.prochainAide', { livres: aRegler.livres, rendus: aRegler.retournes }) : undefined}
+            libelle={t('argent.etape3.titre')}
+            montant={argent?.etapes.prochain.net}
+            aide={argent ? t('argent.etape3.aide', { n: argent.etapes.prochain.colis }) : undefined}
             accent="bg-violet-500"
           />
-          <LigneArgent libelle={t('tdb.argent.regle')} montant={netRegle} accent="bg-emerald-500" />
+          <LigneArgent
+            libelle={t('argent.etape4.titre')}
+            montant={argent?.etapes.aPayer.montant}
+            aide={argent ? t('argent.etape4.aide', { n: argent.etapes.aPayer.bordereaux.length }) : undefined}
+            accent="bg-emerald-500"
+          />
+          <LigneArgent libelle={t('argent.etape5.titre')} montant={argent?.etapes.paye.montant} accent="bg-green-700" />
           <Link
-            href="/expediteur/bordereaux"
+            href="/expediteur/argent"
+            data-testid="tdb-voir-argent"
             className="inline-flex items-center gap-1 text-xs text-red-600 hover:text-red-700 font-semibold"
           >
-            {t('dashboard.derniersBordereaux')}
+            {t('tdb.argent.voir')}
             <ArrowRight className="w-3.5 h-3.5 rtl:rotate-180" aria-hidden="true" />
           </Link>
         </section>

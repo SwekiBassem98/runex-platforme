@@ -994,14 +994,24 @@ export class SousTraitanceService {
   async corrigerRetoursRecus(): Promise<number> {
     const rows = await this.prisma.sousTraitance.findMany({
       where: { partenaire: PARTENAIRE, etat: { in: ACTIFS }, statutExterne: { not: null } },
-      include: { deposit: { select: { name: true } }, package: { select: { trackingNumber: true, status: true, totalPrice: true, shipperId: true, currentRunsheetId: true } } },
+      include: {
+        deposit: { select: { name: true } },
+        package: { select: { trackingNumber: true, status: true, totalPrice: true, shipperId: true, currentRunsheetId: true, currentDepositId: true, returnSlipId: true } },
+      },
     });
     let n = 0;
     for (const r of rows) {
-      if (!estRetourRecuParRunex(r.statutExterne)) continue;
+      // Retour en cours chez JAX affiché « Reçu au dépôt », « Reporté »… ou
+      // « Retour » sans agence (avant le 27/11) : redevient un retour Runex.
+      const retourMalClasse =
+        r.etat === 'RETOUR_EN_COURS' &&
+        !r.package.returnSlipId &&
+        !STATUTS_RUNEX_FINAUX.includes(String(r.package.status)) &&
+        (String(r.package.status) !== 'RETOUR_DEPOT' || !r.package.currentDepositId);
+      if (!estRetourRecuParRunex(r.statutExterne) && !retourMalClasse) continue;
       if (await this.appliquer(r, { code: r.statutExterneCode ?? null, libelle: r.statutExterne!, le: r.statutExterneLe ?? null }, r.problemes)) n++;
     }
-    if (n) console.log(`[RUNEX API] JAX — ${n} retour(s) reçu(s) rendu(s) à l'exploitation.`);
+    if (n) console.log(`[RUNEX API] JAX — ${n} retour(s) remis en « Retour au dépôt » pour l'exploitation.`);
     return n;
   }
 
@@ -1346,11 +1356,31 @@ export class SousTraitanceService {
     // confié — l'exploitation le traite (bon de retour, nouvelle livraison…).
     const retourRecu = cible === 'RETOURNE' && actuel !== 'RETOURNE';
     if (retourRecu) statutCible = 'RETOUR_DEPOT';
+    /*
+     * Colis en retour chez JAX (annulé, refusé, « retour expéditeur »…) : pour
+     * Runex c'est un retour, quel que soit le statut JAX qui suit. JAX range
+     * ses retours dans son entrepôt (« reçu à l'entrepôt », « Au dépôt JAX ») :
+     * ce n'est pas un colis « Reçu au dépôt » à livrer, et il ne doit pas
+     * tomber dans « Colis à affecter » (27/11). Il reste « Retour au dépôt »,
+     * rattaché à l'agence qui l'avait confié, que l'exploitation et ses
+     * livreurs reprennent et rendent à l'expéditeur (bon de retour).
+     * Une fois sur un bon de retour Runex, JAX ne change plus son statut.
+     */
+    const enRetourJax = !enRetard && (cible === 'RETOUR_EN_COURS' || cible === 'RETOURNE');
+    let sansAgence = false;
+    if (enRetourJax) {
+      const pkg = await this.prisma.package.findUnique({ where: { id: r.packageId }, select: { returnSlipId: true, currentDepositId: true } });
+      if (pkg?.returnSlipId) statutCible = null;
+      else {
+        statutCible = 'RETOUR_DEPOT';
+        sansAgence = !pkg?.currentDepositId && !!r.depositId;
+      }
+    }
     const statutChange =
       !!statutCible &&
       !STATUTS_RUNEX_FINAUX.includes(pkgStatus) &&
-      // Retour reçu : toujours ramené à l'agence, même si le statut était déjà « Retour ».
-      (statutCible !== pkgStatus || retourRecu);
+      // Retour reçu, ou retour sans agence : ramené à l'agence, même si le statut était déjà « Retour ».
+      (statutCible !== pkgStatus || retourRecu || sansAgence);
     await this.prisma.$transaction(async (tx) => {
       await tx.sousTraitance.update({
         where: { id: r.id },
@@ -1382,7 +1412,7 @@ export class SousTraitanceService {
             status: statutCible as never,
             // Chez JAX : dans aucune agence ni tournée Runex ; retour reçu : à
             // l'agence qui l'avait confié.
-            currentDepositId: retourRecu ? r.depositId : null,
+            currentDepositId: statutCible === 'RETOUR_DEPOT' ? r.depositId : null,
             currentRunsheetId: null,
             assignedDriverId: null,
             ...(statutCible === 'LIVRE' ? { collectedAmount: r.package.totalPrice, deliveredAt: statut.le ?? maintenant } : {}),
@@ -1406,7 +1436,9 @@ export class SousTraitanceService {
           status: (statutChange && statutCible ? statutCible : r.package.status) as never,
           title: (retourRecu
             ? `Retour reçu de JAX à ${r.deposit?.name ?? 'l’agence'}`
-            : statutChange && statutCible
+            : statutChange && statutCible === 'RETOUR_DEPOT'
+              ? `Retour — à reprendre chez JAX par ${r.deposit?.name ?? 'l’agence'}`
+              : statutChange && statutCible
               ? PACKAGE_STATUS_LABELS[statutCible as PackageStatus]
               : etatChange
                 ? ETATS_SOUS_TRAITANCE[cible]
