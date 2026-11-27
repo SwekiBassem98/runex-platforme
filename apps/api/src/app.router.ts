@@ -937,6 +937,13 @@ export function createApiRouter(): Router {
     })
   );
 
+  // L'expéditeur : son argent, par étape et colis par colis.
+  router.get(
+    '/payments/mon-argent',
+    authenticateToken,
+    requirePermissions(PermissionCode.PAYMENT_READ),
+    asyncHandler((req, res) => paymentsController.monArgent(req, res))
+  );
   // L'expéditeur : ce qui entrera dans son prochain bordereau.
   router.get(
     '/payments/vouchers/a-regler',

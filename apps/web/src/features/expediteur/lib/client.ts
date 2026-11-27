@@ -208,3 +208,45 @@ export interface TableauDeBordExpediteur {
 export async function lireTableauDeBord(jours: number): Promise<TableauDeBordExpediteur> {
   return requestData<TableauDeBordExpediteur>('/shipper/dashboard', { query: { days: jours } });
 }
+
+/** Où est l'argent d'un colis (voir `GET /payments/mon-argent`). */
+export type EtapeArgent = 'EN_LIVRAISON' | 'VERIFICATION' | 'PROCHAIN' | 'A_PAYER' | 'PAYE' | 'RETOUR' | 'AUCUN';
+export interface ColisArgent {
+  id: string;
+  trackingNumber: string;
+  client: string;
+  ville: string;
+  statut: string;
+  etape: EtapeArgent;
+  prix: number;
+  encaisse: number;
+  frais: number;
+  pourVous: number;
+  bordereau: string | null;
+  payeLe: string | null;
+  date: string;
+}
+export interface MonArgent {
+  /** Ce que RUNEX doit à l'expéditeur aujourd'hui. */
+  aRecevoir: number;
+  etapes: {
+    enLivraison: { colis: number; montant: number };
+    verification: { colis: number; encaisse: number; pourVous: number };
+    prochain: { colis: number; livres: number; retournes: number; encaisse: number; fraisLivraison: number; fraisRetour: number; fraisGestion: number; tauxRas: number; ras: number; net: number };
+    aPayer: { bordereaux: Array<{ numero: string; net: number; creeLe: string; colis: number }>; montant: number };
+    paye: { bordereaux: number; montant: number; dernier: { numero: string; net: number; le: string | null } | null };
+    retour: { colis: number };
+  };
+  colis: ColisArgent[];
+  totalColis: number;
+  parEtape: Record<EtapeArgent, number>;
+  majLe: string;
+}
+/** L'argent de l'expéditeur : par étape, et colis par colis. */
+export async function lireMonArgent(filtres: { etape?: EtapeArgent; search?: string } = {}): Promise<MonArgent> {
+  const q = new URLSearchParams();
+  if (filtres.etape) q.set('etape', filtres.etape);
+  if (filtres.search) q.set('search', filtres.search);
+  const s = q.toString();
+  return requestData<MonArgent>(`/payments/mon-argent${s ? `?${s}` : ''}`);
+}

@@ -13,6 +13,7 @@
  */
 
 import { paymentsService } from './payments.service';
+import { monArgent } from './mon-argent.service';
 import { cashService, type CashActor } from './cash.service';
 import type { Response } from 'express';
 import type { AuthenticatedRequest } from '../../common/auth/auth.middleware';
@@ -67,6 +68,18 @@ export class PaymentsController {
   async candidats(req: AuthenticatedRequest, res: Response): Promise<void> {
     const shipperId = typeof req.query.shipperId === 'string' ? req.query.shipperId : undefined;
     res.json({ success: true, data: await paymentsService.candidats(shipperId) });
+  }
+
+  /**
+   * `GET /payments/mon-argent?etape=&search=` — l'expéditeur connecté : ce que
+   * RUNEX lui doit, l'argent par étape et colis par colis.
+   */
+  async monArgent(req: AuthenticatedRequest, res: Response): Promise<void> {
+    const shipperId = req.user?.shipperId;
+    if (!shipperId) { res.status(403).json({ success: false, message: 'Réservé à l’espace expéditeur.' }); return; }
+    const etape = typeof req.query.etape === 'string' ? req.query.etape : undefined;
+    const search = typeof req.query.search === 'string' ? req.query.search.slice(0, 100) : undefined;
+    res.json({ success: true, data: await monArgent(shipperId, { etape, search }) });
   }
 
   /**

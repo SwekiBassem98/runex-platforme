@@ -345,6 +345,14 @@ function Confies({ depots, notifier, onChange }: { depots: { id: string; name: s
                   <td className="py-2.5 pr-3 text-xs">{l.agence ?? '—'}</td>
                   <td className="py-2.5 pr-3">
                     <EtatJax etat={l.etat} court />
+                    {/* Statut du colis chez Runex : un retour reste « Retour au dépôt », à reprendre par l'agence. */}
+                    <span
+                      data-testid={`statut-runex-${l.trackingNumber}`}
+                      className={`block text-[11px] mt-1 ${l.statutRunex === 'RETOUR_DEPOT' ? 'font-semibold text-rose-800' : 'text-slate-500'}`}
+                    >
+                      Runex : {libelleStatut(l.statutRunex)}
+                      {l.statutRunex === 'RETOUR_DEPOT' && l.etat === 'RETOUR_EN_COURS' ? ' — à reprendre chez JAX' : ''}
+                    </span>
                     {l.derniereErreur && <span className="block text-[11px] text-red-700 mt-1 max-w-[220px]">{l.derniereErreur}</span>}
                   </td>
                   <td className="py-2.5 pr-3 text-xs">

@@ -177,7 +177,7 @@ console.log('\n8. Retour, reprise, correspondance manuelle');
 await jax('/__control/statut', { ean: eanB, statutId: 6 });
 await api(admin, 'POST', '/sous-traitance/jax/sync', { packageIds: [cHorsZone.id] });
 d = await lire(cHorsZone.id);
-ok(d.status === 'EN_RUNSHEET_RETOUR' && d.sousTraitance.etat === 'RETOUR_EN_COURS', 'retour chez JAX → retour en cours, colis « En retour fournisseur »', d.status);
+ok(d.status === 'RETOUR_DEPOT' && d.sousTraitance.etat === 'RETOUR_EN_COURS', 'retour chez JAX → retour en cours, colis « Retour au dépôt » (27/11 : un retour reste un retour Runex)', d.status);
 r = await api(admin, 'POST', `/sous-traitance/jax/colis/${cHorsZone.id}/reprendre`);
 ok(r.status === 409, 'déjà enlevé : reprise refusée');
 r = await api(admin, 'POST', `/sous-traitance/jax/colis/${cHorsZone.id}/retour-recu`);
